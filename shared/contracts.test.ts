@@ -73,6 +73,7 @@ test("every RPC input schema accepts its own parsed output", () => {
     [contracts.previewTagRpc, { tag: "auth" }],
     [contracts.fetchItemRpc, { tag: "auth", ref: "PROJ-1", provider: "codex", notifyAgentId: "a" }],
     [contracts.pinAgentRpc, { agentId: "a", pinned: true }],
+    [contracts.describeAgentRpc, { agentId: "a" }],
     [contracts.fetchRouteRpc, { ref: "PROJ-1" }],
     [contracts.refreshNoteRpc, { tag: "auth", noteId: "n" }],
     [contracts.removeNoteRpc, { tag: "auth", noteId: "n" }],

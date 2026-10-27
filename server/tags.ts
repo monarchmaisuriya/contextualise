@@ -1,4 +1,4 @@
-import { normalizeTagName, tagKey, type AgentMember, type PinnedAgent, type TagSummary, type WorkspaceMember } from "../shared/contracts";
+import { normalizeTagName, tagKey, type AgentInfo, type AgentMember, type PinnedAgent, type TagSummary, type WorkspaceMember } from "../shared/contracts";
 import type { PaseoApi } from "./paseo-types";
 import type { StoredPin, StoredTags } from "./tag-store";
 
@@ -48,6 +48,21 @@ export async function readDirectory(paseo: PaseoApi): Promise<Directory> {
   return { workspaces, agents };
 }
 
+// What the daemon knows about one agent; `fallbackWorkspaceId` is where it was when it was tagged.
+export function describeAgent(directory: Directory, agentId: string, fallbackWorkspaceId: string | null = null): AgentInfo {
+  const agent = directory.agents.find((candidate) => candidate.id === agentId);
+  const workspaceId = agent?.workspaceId ?? fallbackWorkspaceId;
+  const workspace = workspaceId ? directory.workspaces.find((candidate) => candidate.id === workspaceId) : undefined;
+  return {
+    agentId,
+    title: agent?.title ?? null,
+    provider: agent?.provider ?? null,
+    workspaceId: agent ? (agent.workspaceId ?? null) : null,
+    workspaceName: workspace?.name ?? null,
+    state: !agent ? "missing" : agent.archivedAt ? "archived" : "active",
+  };
+}
+
 // One list of tags: every workspace label name joined with the agents, links, and fetched items
 // under the same name. Most recently tagged first; tags that exist only as workspace labels follow, by name.
 export function mergeTags(stored: StoredTags, directory: Directory): TagSummary[] {
@@ -77,19 +92,11 @@ export function mergeTags(stored: StoredTags, directory: Directory): TagSummary[
     }
   }
 
-  const agentsById = new Map(directory.agents.map((agent) => [agent.id, agent]));
   for (const storedTag of Object.values(stored)) {
     const tag = entry(storedTag.name);
     for (const member of storedTag.agents) {
-      const agent = agentsById.get(member.agentId);
-      const summary: AgentMember = {
-        agentId: member.agentId,
-        workspaceId: member.workspaceId,
-        taggedAt: member.taggedAt,
-        title: agent?.title ?? null,
-        provider: agent?.provider ?? null,
-        state: !agent ? "missing" : agent.archivedAt ? "archived" : "active",
-      };
+      const { title, provider, workspaceName, state } = describeAgent(directory, member.agentId, member.workspaceId);
+      const summary: AgentMember = { agentId: member.agentId, workspaceId: member.workspaceId, taggedAt: member.taggedAt, title, provider, workspaceName, state };
       tag.agents.push(summary);
     }
     tag.links.push(...storedTag.links);
@@ -102,9 +109,5 @@ export function mergeTags(stored: StoredTags, directory: Directory): TagSummary[
 
 // Pinned agents as the Tags screen shows them: what the daemon still knows about each, in pin order.
 export function mergePins(pins: readonly StoredPin[], directory: Directory): PinnedAgent[] {
-  const agentsById = new Map(directory.agents.map((agent) => [agent.id, agent]));
-  return pins.map(({ agentId, pinnedAt }) => {
-    const agent = agentsById.get(agentId);
-    return { agentId, pinnedAt, title: agent?.title ?? null, provider: agent?.provider ?? null, workspaceId: agent?.workspaceId ?? null, state: !agent ? "missing" : agent.archivedAt ? "archived" : "active" };
-  });
+  return pins.map(({ agentId, pinnedAt }) => ({ ...describeAgent(directory, agentId), pinnedAt }));
 }

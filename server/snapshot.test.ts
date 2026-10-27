@@ -9,7 +9,7 @@ const tool = () => ({ type: "tool_call", name: "shell", status: "completed" }) a
 const thinking = () => ({ type: "reasoning", text: "secret plan" }) as AgentTimelineItem;
 
 function agent(overrides: Partial<AgentMember>): AgentMember {
-  return { agentId: "a1", workspaceId: "w1", taggedAt: "2026-10-27T10:00:00Z", title: "Fix login", provider: "claude", state: "active", ...overrides };
+  return { agentId: "a1", workspaceId: "w1", taggedAt: "2026-10-27T10:00:00Z", title: "Fix login", provider: "claude", workspaceName: null, state: "active", ...overrides };
 }
 
 function tag(overrides: Partial<TagSummary> = {}): TagSummary {

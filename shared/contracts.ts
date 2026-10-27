@@ -192,6 +192,8 @@ export const agentMemberSchema = z.object({
   taggedAt: z.string(),
   title: z.string().nullable(),
   provider: z.string().nullable(),
+  // Named by the server: plugin screens cannot read Paseo's workspace state themselves.
+  workspaceName: z.string().nullable(),
   // "missing": the daemon no longer knows the agent. It stays in the tag until M removes it.
   state: z.enum(["active", "archived", "missing"]),
 });
@@ -247,6 +249,7 @@ export const pinnedAgentSchema = z.object({
   title: z.string().nullable(),
   provider: z.string().nullable(),
   workspaceId: z.string().nullable(),
+  workspaceName: z.string().nullable(),
   state: z.enum(["active", "archived", "missing"]),
 });
 export type PinnedAgent = z.infer<typeof pinnedAgentSchema>;
@@ -256,6 +259,19 @@ export const listTagsRpc = defineRpc({
   input: z.object({}),
   output: z.object({ tags: z.array(tagSummarySchema), pinnedAgents: z.array(pinnedAgentSchema) }),
 });
+
+// One agent's title and workspace, for the Tags pill and the Tags screen opened for that agent.
+export const agentInfoSchema = z.object({
+  agentId: z.string(),
+  title: z.string().nullable(),
+  provider: z.string().nullable(),
+  workspaceId: z.string().nullable(),
+  workspaceName: z.string().nullable(),
+  state: z.enum(["active", "archived", "missing"]),
+});
+export type AgentInfo = z.infer<typeof agentInfoSchema>;
+
+export const describeAgentRpc = defineRpc({ name: "agents.describe", input: z.object({ agentId: z.string().min(1) }), output: agentInfoSchema });
 
 export const pinAgentRpc = defineRpc({
   name: "agents.pin",

@@ -1,9 +1,9 @@
-import { useAgent, useRpc } from "@getpaseo/plugin/client";
+import { useRpc } from "@getpaseo/plugin/client";
 import { Icon, TextInput, useToast } from "@getpaseo/plugin/client/ui";
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { Text, View } from "react-native";
-import { addTagRpc, listTagsRpc, parseTagNames, pinAgentRpc, removeTagRpc } from "../shared/contracts";
+import { addTagRpc, describeAgentRpc, listTagsRpc, parseTagNames, pinAgentRpc, removeTagRpc } from "../shared/contracts";
 import { errorText } from "./errors";
 import { FetchForm } from "./fetch-form";
 import { ICONS } from "./icons";
@@ -15,7 +15,9 @@ export function AgentTags({ agentId, fallbackWorkspaceId, styles, footer }: { ag
   const list = useRpc(listTagsRpc);
   const query = useQuery({ queryKey: TAGS_QUERY, queryFn: () => list({}) });
   const tags = query.data?.tags ?? [];
-  const agent = useAgent(agentId, (snapshot) => ({ title: snapshot.title, workspaceId: snapshot.workspaceId }));
+  // From the server, not useAgent: this also renders on the Tags screen, where Paseo's state hooks throw.
+  const describe = useRpc(describeAgentRpc);
+  const { data: agent } = useQuery({ queryKey: ["contextualise", "agent", agentId], queryFn: () => describe({ agentId }) });
   const workspaceId = agent?.workspaceId ?? fallbackWorkspaceId;
   const add = useRpc(addTagRpc);
   const remove = useRpc(removeTagRpc);
@@ -23,7 +25,7 @@ export function AgentTags({ agentId, fallbackWorkspaceId, styles, footer }: { ag
   const [names, setNames] = useState("");
   const adding = useTagChange(
     (list: string[]) => {
-      if (!workspaceId) throw new Error("This agent's workspace is not loaded yet; open the agent once and try again");
+      if (!workspaceId) throw new Error(agent ? "Paseo has no workspace for this agent, so it cannot be tagged" : "Still loading this agent; try again in a moment");
       return add({ tags: list, agentId, workspaceId });
     },
     () => setNames(""),

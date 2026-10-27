@@ -1,4 +1,4 @@
-import { openExternalUrl, type PluginScreenProps, useRpc, useWorkspace } from "@getpaseo/plugin/client";
+import { openExternalUrl, type PluginScreenProps, useRpc } from "@getpaseo/plugin/client";
 import { copyText, Icon, Markdown, Modal, ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useState } from "react";
@@ -32,7 +32,6 @@ type Navigation = PluginScreenProps["navigation"];
 
 // One agent: opens it when tapped (unless Paseo no longer has it), with `action` at the end.
 function AgentLine({ agent, when, action, styles, navigation }: { agent: AgentMember | PinnedAgent; when: string; action: ReactNode; styles: Styles; navigation: Navigation }) {
-  const workspaceName = useWorkspace(agent.workspaceId ?? "", (workspace) => workspace.name);
   const open = navigation && agent.state !== "missing" ? () => navigation.openAgent({ agentId: agent.agentId }) : undefined;
   const state = agent.state === "missing" ? "missing: Paseo no longer has this agent" : agent.state === "archived" ? "archived" : null;
   return (
@@ -43,7 +42,7 @@ function AgentLine({ agent, when, action, styles, navigation }: { agent: AgentMe
           {agent.title ?? agent.agentId}
         </Text>
         <Text style={agent.state === "missing" ? styles.danger : styles.muted} numberOfLines={1}>
-          {[agent.provider ?? "unknown provider", workspaceName, state, when].filter(Boolean).join(" · ")}
+          {[agent.provider ?? "unknown provider", agent.workspaceName, state, when].filter(Boolean).join(" · ")}
         </Text>
       </Pressable>
       {action}

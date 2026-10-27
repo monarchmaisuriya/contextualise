@@ -47,7 +47,7 @@ function tag(key: string, agentIds: string[]): TagSummary {
     workspaces: [],
     links: [],
     notes: [],
-    agents: agentIds.map((agentId) => ({ agentId, workspaceId: "w1", taggedAt: "t", title: agentId, provider: "claude", state: "active" as const })),
+    agents: agentIds.map((agentId) => ({ agentId, workspaceId: "w1", taggedAt: "t", title: agentId, provider: "claude", workspaceName: null, state: "active" as const })),
   };
 }
 
@@ -247,4 +247,11 @@ test("token estimates read as short approximate counts", () => {
   expect(tokenEstimate(4_000)).toBe("~1k tokens");
   expect(tokenEstimate(4_800)).toBe("~1.2k tokens");
   expect(tokenEstimate(48_000)).toBe("~12k tokens");
+});
+
+test("a workspace whose name is its project's name is shown once", async () => {
+  const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
+  const folder = { workspaces: [{ id: "w1", name: "checkout-web", projectDisplayName: "checkout-web", projectRootPath: "/src/checkout-web" }], agents: [{ id: "a", title: "Fix", provider: "claude", workspaceId: "w1" }] };
+  const [item] = await searchAgents(fakePaseo({ a: page() }).paseo, new Memo(30_000), folder, NO_PINS, "srv", "", snapshotSettingsSchema.parse({ showTokenEstimates: false, agentShowActivity: false }));
+  expect(item.subtitle).toBe("checkout-web");
 });

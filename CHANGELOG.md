@@ -2,6 +2,14 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.11.2 - 2026-10-28
+
+### Fixed
+
+- The Tags screen failed with "Plugin state hooks must run inside a workspace panel" as soon as it had an agent to show (a tagged or pinned agent, or the screen opened for one agent). Paseo's agent and workspace hooks work only in panels and popovers, not plugin screens, so the server now sends each agent's title and workspace name (`tags.list`, new `agents.describe`), and a test keeps those hooks out of the plugin.
+- Agent picker rows name a plain-folder workspace once ("checkout-web", not "checkout-web / checkout-web").
+- Adding a tag before the agent has loaded, or to an agent Paseo has no workspace for, now says which of the two happened.
+
 ## 0.11.1 - 2026-10-28
 
 ### Added

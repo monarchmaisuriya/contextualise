@@ -2,6 +2,7 @@ import type { PluginServerContext } from "@getpaseo/plugin/server";
 import {
   addLinkRpc,
   addTagRpc,
+  describeAgentRpc,
   fetchItemRpc,
   fetchRouteRpc,
   refreshNoteRpc,
@@ -26,7 +27,7 @@ import { configuredServers } from "./provider-config";
 import type { PaseoApi } from "./paseo-types";
 import { Memo, searchAgents, searchTags, searchTerminals, tagAttachment } from "./sources";
 import { TagStore } from "./tag-store";
-import { type Directory, mergePins, mergeTags, readDirectory } from "./tags";
+import { describeAgent, type Directory, mergePins, mergeTags, readDirectory } from "./tags";
 
 const READINGS_CACHE_MS = 30_000;
 // Long enough to cover one burst of keystrokes in the picker, short enough that a new agent or
@@ -97,6 +98,7 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
     const [tags, pins, current] = await Promise.all([listTags(paseo), store.pinnedAgents(), directory(paseo)]);
     return { tags, pinnedAgents: mergePins(pins, current) };
   });
+  server.handle(describeAgentRpc, async ({ agentId }, { paseo }) => describeAgent(await directory(paseo), agentId));
   server.handle(pinAgentRpc, ({ agentId, pinned }) => store.pinAgent(agentId, pinned));
 
   server.handle(previewTagRpc, async ({ tag }, { paseo }) => {

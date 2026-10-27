@@ -21,7 +21,7 @@ test("tag names are grouped by agent in list order", () => {
     workspaces: [],
     links: [],
     notes: [],
-    agents: agentIds.map((agentId) => ({ agentId, workspaceId: "w", taggedAt: "t", title: null, provider: null, state: "active" })),
+    agents: agentIds.map((agentId) => ({ agentId, workspaceId: "w", taggedAt: "t", title: null, provider: null, workspaceName: null, state: "active" })),
   });
   const byAgent = tagNamesByAgent([tag("newest", ["a1"]), tag("older", ["a1", "a2"])]);
   expect(byAgent.get("a1")).toEqual(["newest", "older"]);

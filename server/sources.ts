@@ -141,16 +141,18 @@ function matches(haystack: string, query: string): boolean {
 }
 
 function workspaceNames(directory: Directory): Map<string, string> {
-  return new Map(directory.workspaces.map((workspace) => [workspace.id, `${workspace.projectDisplayName} / ${workspace.name}`]));
+  // A plain-folder workspace has its project's name; "checkout-web / checkout-web" says nothing more.
+  return new Map(directory.workspaces.map((workspace) => [workspace.id, workspace.name === workspace.projectDisplayName ? workspace.name : `${workspace.projectDisplayName} / ${workspace.name}`]));
 }
 
-function asMember(agent: DirectoryAgent): AgentMember {
+function asMember(agent: DirectoryAgent, workspaceName: string | null): AgentMember {
   return {
     agentId: agent.id,
     workspaceId: agent.workspaceId ?? "",
     taggedAt: "",
     title: agent.title,
     provider: agent.provider,
+    workspaceName,
     state: agent.archivedAt ? "archived" : "active",
   };
 }
@@ -171,8 +173,8 @@ export async function searchAgents(paseo: PaseoApi, memo: Memo, directory: Direc
     .slice(0, options.resultsPerSearch);
   return Promise.all(
     found.map(async (agent) => {
-      const member = asMember(agent);
       const workspaceName = names.get(agent.workspaceId ?? "") ?? null;
+      const member = asMember(agent, workspaceName);
       const reading = await memo.get(`agent:${agent.id}:${options.turnsPerAgent}`, () => readAgent(paseo, agent.id, options.turnsPerAgent));
       const state = isUnreadable(reading) ? "unreadable" : agent.archivedAt ? "archived" : agent.status === "running" ? "running" : null;
       const active = agent.updatedAt ? timeAgo(agent.updatedAt) : "";
