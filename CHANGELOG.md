@@ -2,7 +2,7 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
-## Unreleased
+## 0.11.1 - 2026-10-28
 
 ### Added
 
