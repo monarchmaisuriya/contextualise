@@ -8,7 +8,7 @@ export const LINK_TITLE_MAX_CHARS = 200;
 // Where a tag or terminal attachment's pill leads when clicked: the section that explains it.
 export const DOCS_URL = "https://github.com/monarchmaisuriya/contextualise#readme";
 
-// The same rule Paseo applies to workspace label names, so `/tag Auth Rewrite` and a workspace
+// The same rule Paseo applies to workspace label names, so a tag "Auth Rewrite" and a workspace
 // label "auth rewrite" are one tag. Mirrors normalizeWorkspaceLabelName and workspaceLabelKey in
 // @getpaseo/protocol/workspace-labels; plugins may not import that package at runtime.
 export function normalizeTagName(name: string): string {
@@ -22,16 +22,16 @@ export function tagKey(name: string): string {
 // Rejects what cannot be a tag instead of storing it; the caller shows the message.
 export function parseTagName(raw: string): string {
   const name = normalizeTagName(raw);
-  if (name === "") throw new Error("A tag needs a name, for example: /tag auth-rewrite");
+  if (name === "") throw new Error("A tag needs a name, for example: auth-rewrite");
   if (name.length > TAG_NAME_MAX_CHARS) throw new Error(`Expected a tag name of at most ${TAG_NAME_MAX_CHARS} characters, got ${name.length}`);
   return name;
 }
 
-// "/tag auth, billing" tags with both. Duplicates by key collapse to the first spelling.
+// "auth, billing" means both tags. Duplicates by key collapse to the first spelling.
 export function parseTagNames(raw: string): string[] {
   const names = new Map<string, string>();
   for (const part of raw.split(",")) if (part.trim() !== "") names.set(tagKey(part), names.get(tagKey(part)) ?? parseTagName(part));
-  if (names.size === 0) throw new Error("A tag needs a name, for example: /tag auth-rewrite (several: /tag auth, billing)");
+  if (names.size === 0) throw new Error("A tag needs a name, for example: auth-rewrite (several: auth, billing)");
   if (names.size > TAGS_PER_COMMAND) throw new Error(`Expected at most ${TAGS_PER_COMMAND} tags at once, got ${names.size}`);
   return [...names.values()];
 }
@@ -177,9 +177,9 @@ export const terminalAttachmentSource = defineAttachmentSource({
   search: searchTerminalsRpc,
 });
 
-// One confirmation row per agent, replaced on every /tag or /untag in that agent.
+// Confirmation rows that v0.2.1 added to agent timelines after /tag and /untag. Nothing adds them
+// any more; the renderer stays so rows already in timelines still display.
 export const RECEIPT_KIND = "receipt";
-export const RECEIPT_ROW_ID = "contextualise-receipt";
 export const receiptSchema = z.object({
   action: z.enum(["tag", "untag"]),
   entries: z.array(z.object({ name: z.string(), changed: z.boolean(), agents: z.number(), workspaces: z.number(), links: z.number() })),

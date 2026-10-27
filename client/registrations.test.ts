@@ -19,19 +19,38 @@ test("every name the plugin registers in the app is one Paseo accepts", async ()
     seen.set(kind, names.add(name));
     return () => {};
   };
+  const pills: { agentId: string; id: string; label?: string }[] = [];
+  const subscription = {
+    subscribe: (observer: { snapshot(s: unknown): void }) => {
+      observer.snapshot({ entries: [{ agent: { id: "a1", workspaceId: "w1" } }, { agent: { id: "a2", workspaceId: "w1", archivedAt: "t" } }] });
+      return () => {};
+    },
+  };
+  const tags = [{ key: "auth", name: "auth", hasWorkspaceLabel: false, workspaces: [], links: [], agents: [{ agentId: "a1", workspaceId: "w1", taggedAt: "t", title: null, provider: "claude", state: "active" }] }];
   const client = new Proxy(
     {
+      paseo: { agents: { list: async () => ({ subscription }) } },
+      rpc: async () => ({ tags }),
       addTimelineRenderer: (r: { kind: string; version: number }) => {
         expect(Number.isInteger(r.version) && r.version >= 1).toBe(true);
         return accept("timeline renderer kind", r.kind);
       },
       addSlashCommand: (c: { name: string }) => accept("slash command name", c.name),
+      addComposerPill: (p: { id: string; agentId: string; button: { label?: string } }) => {
+        expect(p.id).toMatch(PASEO_NAME);
+        const pill = { agentId: p.agentId, id: p.id, label: p.button.label };
+        pills.push(pill);
+        return { update: (patch: { label?: string }) => Object.assign(pill, patch), remove: () => {} };
+      },
     },
     { get: (target, prop: string) => (target as Record<string, unknown>)[prop] ?? ((c: { id: string }) => accept(prop, c.id)) },
   );
   const { default: contribute } = await import("../index.client");
   const cleanup = contribute(client as never);
+  await new Promise((resolve) => setTimeout(resolve, 0));
   expect(seen.get("timeline renderer kind")?.size).toBe(1);
   expect(seen.get("addAttachmentSource")?.size).toBe(3);
+  expect([...(seen.get("slash command name") ?? [])]).toEqual(["tag-link"]);
+  expect(pills).toEqual([{ agentId: "a1", id: "tags", label: "auth" }]);
   cleanup();
 });

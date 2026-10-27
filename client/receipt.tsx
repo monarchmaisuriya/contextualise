@@ -19,7 +19,7 @@ function describe(action: Receipt["action"], entry: Receipt["entries"][number]):
   return entry.changed ? `Removed from "${entry.name}"` : `Was not tagged "${entry.name}"`;
 }
 
-// The one confirmation row /tag and /untag leave in an agent's timeline; each new one replaces it.
+// The confirmation row v0.2.1 left in an agent's timeline after /tag and /untag.
 export function ReceiptRow({ theme, item, agentId, openTags }: PluginTimelineItemProps<Receipt> & { openTags(agentId: string): void }) {
   return (
     <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8, paddingVertical: 4 }}>

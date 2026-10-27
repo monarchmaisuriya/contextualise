@@ -2,6 +2,17 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.3.0 - 2026-10-27
+
+### Added
+
+- A **Tags** pill on every active agent's composer. Its label shows the agent's tags; pressing it opens a popover to remove tags, add new ones, add existing ones with one tap, or open the Tags screen.
+
+### Removed
+
+- `/tag`, `/untag`, and `/tags`. The Tags pill replaces them. `/tag-link` stays.
+- Tagging no longer adds a confirmation row to the agent's timeline; the pill label shows the result. Rows added by 0.2.1 still display.
+
 ## 0.2.1 - 2026-10-27
 
 ### Fixed

@@ -7,23 +7,23 @@ Requires Paseo 0.13.
 ## Install
 
 ```bash
-paseo plugin install git:monarchmaisuriya/contextualise --ref v0.2.1
+paseo plugin install git:monarchmaisuriya/contextualise --ref v0.3.0
 ```
 
 ## Tags
 
-| Command | What it does |
-| --- | --- |
-| `/tag auth-rewrite` | Tag the current agent. Several at once: `/tag auth, billing` |
-| `/untag auth-rewrite` | Remove the current agent from a tag (also takes several) |
-| `/tag-link https://example.com/spec auth-rewrite` | Add a web link to a tag |
-| `/tags` | Show and edit the current agent's tags |
+Every agent's composer has a **Tags** pill next to Tasks and Subagents. Its label shows the agent's tags ("Tag" when it has none, "auth rewrite +2" when it has three). Press it to:
 
-After `/tag` or `/untag`, the agent's timeline shows one small confirmation row (each new one replaces the last) with an "Open tags" link.
+- remove a tag (tap its chip),
+- add new tags (type names, separated by commas),
+- add an existing tag (tap its chip),
+- open the Tags screen.
+
+`/tag-link https://example.com/spec auth-rewrite` adds a web link to a tag.
 
 Tags share names with Paseo's workspace labels. A workspace labeled "Auth Rewrite" belongs to the tag `auth rewrite` automatically; case and spacing do not matter. Contextualise reads workspace labels and never changes them.
 
-The **Tags** screen (sidebar footer, or "Open tags" in the Command Center) lists every tag with its labeled workspaces, tagged agents, and links. Each tag has **Preview**, which shows exactly what Attach > Tag sends (with a Copy button), and **Add link**. Opened for one agent ("Tag this agent..." in the Command Center, `/tags`, or the confirmation row), it shows that agent's tags as chips to remove and every other tag as a chip to add.
+The **Tags** screen (sidebar footer, or "Open tags" in the Command Center) lists every tag with its labeled workspaces, tagged agents, and links. Each tag has **Preview**, which shows exactly what Attach > Tag sends (with a Copy button), and **Add link**. "Tag this agent..." in the Command Center opens it for one agent, with the same chips as the pill.
 
 ## Attaching context
 

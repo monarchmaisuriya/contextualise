@@ -4,16 +4,14 @@ import { readable } from "./client/errors";
 import { ReceiptRow } from "./client/receipt";
 import { SnapshotSettingsScreen } from "./client/settings-screen";
 import { tagsChanged } from "./client/tag-events";
+import { followAgentPills } from "./client/tag-pills";
 import { TagsScreen } from "./client/tags-screen";
 import {
   addLinkRpc,
-  addTagRpc,
   agentAttachmentSource,
   parseLinkCommand,
-  parseTagNames,
   RECEIPT_KIND,
   receiptSchema,
-  removeTagRpc,
   tagAttachmentSource,
   terminalAttachmentSource,
 } from "./shared/contracts";
@@ -32,29 +30,10 @@ export default function contribute(client: PluginClientContext) {
     client.addAttachmentSource(tagAttachmentSource),
     client.addAttachmentSource(agentAttachmentSource),
     client.addAttachmentSource(terminalAttachmentSource),
+    // Tagging no longer adds timeline rows; this still draws the rows v0.2.1 added.
     client.addTimelineRenderer({ kind: RECEIPT_KIND, version: 1, schema: receiptSchema, Component: (props) => <ReceiptRow {...props} openTags={openTagsFor} /> }),
-    // Paseo shows a thrown error as a toast and clears the composer either way. Success shows as a
-    // confirmation row in the agent's timeline, added by the server.
-    client.addSlashCommand({
-      name: "tag",
-      description: "Tag this agent (several: /tag auth, billing)",
-      argumentHint: "<tag>[, <tag>...]",
-      context: "agent",
-      async onSubmit({ args, agent, rpc }) {
-        await readable(() => rpc(addTagRpc, { tags: parseTagNames(args), agentId: agent.id, workspaceId: agent.workspaceId }));
-        tagsChanged();
-      },
-    }),
-    client.addSlashCommand({
-      name: "untag",
-      description: "Remove this agent from a tag (several: /untag auth, billing)",
-      argumentHint: "<tag>[, <tag>...]",
-      context: "agent",
-      async onSubmit({ args, agent, rpc }) {
-        await readable(() => rpc(removeTagRpc, { tags: parseTagNames(args), agentId: agent.id }));
-        tagsChanged();
-      },
-    }),
+    followAgentPills(client, openTagsFor),
+    // Paseo shows a thrown error as a toast and clears the composer either way.
     client.addSlashCommand({
       name: "tag-link",
       description: "Add a web link to a tag; it is listed when the tag is attached",
@@ -65,15 +44,6 @@ export default function contribute(client: PluginClientContext) {
         const outcome = await readable(() => rpc(addLinkRpc, { tag, url }));
         if (!outcome.changed) throw new Error(`"${outcome.name}" already has this link`);
         tagsChanged();
-      },
-    }),
-    client.addSlashCommand({
-      name: "tags",
-      description: "Show and edit this agent's tags",
-      argumentHint: "",
-      context: "agent",
-      onSubmit({ agent }) {
-        openTagsFor(agent.id, agent.workspaceId);
       },
     }),
     client.addCommandCenterItem({

@@ -4,8 +4,6 @@ import {
   addTagRpc,
   listTagsRpc,
   previewTagRpc,
-  RECEIPT_KIND,
-  RECEIPT_ROW_ID,
   removeLinkRpc,
   removeTagRpc,
   searchAgentsRpc,
@@ -13,13 +11,12 @@ import {
   searchTerminalsRpc,
   snapshotSettings,
   tagKey,
-  type Receipt,
   type SnapshotSettings,
   type TagSummary,
 } from "../shared/contracts";
 import type { PaseoApi } from "./paseo-types";
 import { Memo, searchAgents, searchTags, searchTerminals, tagAttachment } from "./sources";
-import { TagStore, type Outcome } from "./tag-store";
+import { TagStore } from "./tag-store";
 import { type Directory, mergeTags, readDirectory } from "./tags";
 
 const READINGS_CACHE_MS = 30_000;
@@ -47,38 +44,8 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
     return mergeTags(stored, current);
   }
 
-  // Replaces this agent's one confirmation row, so /tag and /untag answer in place without piling up.
-  async function confirm(paseo: PaseoApi, agentId: string, action: Receipt["action"], outcomes: Outcome[]): Promise<void> {
-    const tags = new Map((await listTags(paseo)).map((tag) => [tag.key, tag]));
-    const data: Receipt = {
-      action,
-      entries: outcomes.map((outcome) => {
-        const tag = tags.get(outcome.tag);
-        return { name: tag?.name ?? outcome.name, changed: outcome.changed, agents: tag?.agents.length ?? 0, workspaces: tag?.workspaces.length ?? 0, links: tag?.links.length ?? 0 };
-      }),
-    };
-    try {
-      const timeline = paseo.agents.ref(agentId).timeline;
-      // The daemon appends only to an agent it has loaded; after a restart, an agent nobody has
-      // opened yet is "unknown" until its timeline is read once.
-      await timeline.refetch({ direction: "tail", limit: 1, projection: "projected" });
-      await timeline.append({ type: "plugin", id: RECEIPT_ROW_ID, kind: RECEIPT_KIND, version: 1, data });
-    } catch (error) {
-      throw new Error(`Saved, but the confirmation row could not be added: ${String((error as Error).message ?? error)}`);
-    }
-  }
-
-  server.handle(addTagRpc, async ({ tags, agentId, workspaceId }, { paseo }) => {
-    const results = await store.add(tags, { agentId, workspaceId });
-    await confirm(paseo, agentId, "tag", results);
-    return { results };
-  });
-
-  server.handle(removeTagRpc, async ({ tags, agentId }, { paseo }) => {
-    const results = await store.remove(tags, agentId);
-    await confirm(paseo, agentId, "untag", results);
-    return { results };
-  });
+  server.handle(addTagRpc, async ({ tags, agentId, workspaceId }) => ({ results: await store.add(tags, { agentId, workspaceId }) }));
+  server.handle(removeTagRpc, async ({ tags, agentId }) => ({ results: await store.remove(tags, agentId) }));
 
   server.handle(addLinkRpc, ({ tag, url, title }) => store.addLink(tag, { url, title }));
   server.handle(removeLinkRpc, ({ tag, url }) => store.removeLink(tag, url));

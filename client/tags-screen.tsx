@@ -1,96 +1,24 @@
-import { type PluginScreenProps, useAgent, useRpc, useWorkspace } from "@getpaseo/plugin/client";
+import { type PluginScreenProps, useRpc, useWorkspace } from "@getpaseo/plugin/client";
 import { copyText, Markdown, Modal, ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/ui";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import {
   addLinkRpc,
-  addTagRpc,
   type AgentMember,
   type LinkMember,
   listTagsRpc,
-  parseTagNames,
   previewTagRpc,
   removeLinkRpc,
   removeTagRpc,
   type TagSummary,
 } from "../shared/contracts";
+import { AgentTags } from "./agent-tags";
 import { errorText } from "./errors";
+import { ago, Button, plural, type Styles, summary, TAGS_QUERY, useStyles, useTagChange } from "./kit";
 import { onTagsChanged } from "./tag-events";
 
-const TAGS_QUERY = ["contextualise", "tags"];
-type Theme = PluginScreenProps["theme"];
 type Navigation = PluginScreenProps["navigation"];
-
-function useStyles(theme: Theme, compact: boolean) {
-  return useMemo(
-    () => ({
-      screen: { flex: 1, backgroundColor: theme.colors.surface0 },
-      content: { padding: compact ? 16 : 24, gap: 14, maxWidth: 860, width: "100%" as const, alignSelf: "center" as const },
-      card: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: compact ? 12 : 16, gap: 10, backgroundColor: theme.colors.surface1 },
-      title: { color: theme.colors.foreground, fontSize: 16, fontWeight: "600" as const },
-      section: { color: theme.colors.foregroundMuted, fontSize: 12, fontWeight: "600" as const, textTransform: "uppercase" as const, marginTop: 4 },
-      text: { color: theme.colors.foreground },
-      muted: { color: theme.colors.foregroundMuted, fontSize: 13 },
-      danger: { color: theme.colors.statusDanger, fontSize: 13 },
-      link: { color: theme.colors.accent, fontSize: 13 },
-      row: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },
-      wrap: { flexDirection: "row" as const, flexWrap: "wrap" as const, gap: 6 },
-      grow: { flex: 1, minWidth: 0 },
-      input: { flex: 1, minWidth: 120, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, color: theme.colors.foreground, backgroundColor: theme.colors.surface2 },
-      button: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: theme.colors.accent },
-      buttonText: { color: theme.colors.accentForeground },
-      ghost: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: theme.colors.border },
-      ghostText: { color: theme.colors.foreground, fontSize: 13 },
-      chip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 },
-      chipOn: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: theme.colors.accent },
-      chipText: { color: theme.colors.foreground, fontSize: 13 },
-      chipOnText: { color: theme.colors.accentForeground, fontSize: 13 },
-    }),
-    [theme, compact],
-  );
-}
-type Styles = ReturnType<typeof useStyles>;
-
-function plural(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? "" : "s"}`;
-}
-
-function summary(tag: TagSummary): string {
-  const parts = [[tag.agents.length, "agent"], [tag.workspaces.length, "workspace"], [tag.links.length, "link"]] as const;
-  return parts.filter(([n]) => n > 0).map(([n, word]) => plural(n, word)).join(" · ");
-}
-
-function ago(iso: string): string {
-  const minutes = Math.round((Date.now() - Date.parse(iso)) / 60_000);
-  if (!Number.isFinite(minutes)) return "";
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} min ago`;
-  if (minutes < 60 * 24) return `${Math.round(minutes / 60)} h ago`;
-  return `${Math.round(minutes / 60 / 24)} d ago`;
-}
-
-// Mutations that change tags refresh the list and report failures as readable toasts.
-function useTagChange<Input, Output>(run: (input: Input) => Promise<Output>, onDone?: (output: Output, input: Input) => void) {
-  const queryClient = useQueryClient();
-  const toast = useToast();
-  return useMutation({
-    mutationFn: run,
-    onSuccess: (output, input) => {
-      void queryClient.invalidateQueries({ queryKey: TAGS_QUERY });
-      onDone?.(output, input);
-    },
-    onError: (error) => toast.error(errorText(error)),
-  });
-}
-
-function Button({ label, onPress, styles, disabled, kind = "ghost" }: { label: string; onPress(): void; styles: Styles; disabled?: boolean; kind?: "ghost" | "primary" }) {
-  return (
-    <Pressable style={kind === "primary" ? styles.button : styles.ghost} onPress={onPress} disabled={disabled} accessibilityRole="button" accessibilityLabel={label}>
-      <Text style={kind === "primary" ? styles.buttonText : styles.ghostText}>{label}</Text>
-    </Pressable>
-  );
-}
 
 function AgentRow({ agent, tag, styles, navigation }: { agent: AgentMember; tag: TagSummary; styles: Styles; navigation: Navigation }) {
   const workspaceName = useWorkspace(agent.workspaceId, (workspace) => workspace.name);
@@ -241,65 +169,6 @@ function TagCard({ tag, styles, navigation }: { tag: TagSummary; styles: Styles;
   );
 }
 
-// Opened for one agent (/tags, "Tag this agent...", or a confirmation row): its tags as chips to
-// remove, every other tag as a chip to add, and a box for new names.
-function AgentTags({ agentId, fallbackWorkspaceId, tags, styles }: { agentId: string; fallbackWorkspaceId: string | undefined; tags: TagSummary[]; styles: Styles }) {
-  const agent = useAgent(agentId, (snapshot) => ({ title: snapshot.title, workspaceId: snapshot.workspaceId }));
-  const workspaceId = agent?.workspaceId ?? fallbackWorkspaceId;
-  const add = useRpc(addTagRpc);
-  const remove = useRpc(removeTagRpc);
-  const toast = useToast();
-  const [names, setNames] = useState("");
-  const adding = useTagChange(
-    (list: string[]) => {
-      if (!workspaceId) throw new Error("This agent's workspace is not loaded yet; open the agent once and try again");
-      return add({ tags: list, agentId, workspaceId });
-    },
-    () => setNames(""),
-  );
-  const removing = useTagChange((name: string) => remove({ tags: [name], agentId }));
-  const mine = tags.filter((tag) => tag.agents.some((member) => member.agentId === agentId));
-  const others = tags.filter((tag) => !mine.includes(tag)).slice(0, 24);
-  const submit = () => {
-    try {
-      adding.mutate(parseTagNames(names));
-    } catch (error) {
-      toast.error(errorText(error));
-    }
-  };
-  return (
-    <View style={styles.card}>
-      <Text style={styles.title}>{agent?.title ?? "This agent"}</Text>
-      <Text style={styles.muted}>{mine.length === 0 ? "No tags yet." : "Tagged with (tap to remove):"}</Text>
-      {mine.length > 0 ? (
-        <View style={styles.wrap}>
-          {mine.map((tag) => (
-            <Pressable key={tag.key} style={styles.chipOn} onPress={() => removing.mutate(tag.name)} accessibilityRole="button" accessibilityLabel={`Remove tag ${tag.name}`}>
-              <Text style={styles.chipOnText}>{tag.name} ×</Text>
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
-      <View style={styles.row}>
-        <TextInput style={styles.input} value={names} onChangeText={setNames} placeholder="New tags, separated by commas" onSubmitEditing={submit} accessibilityLabel="Tag names" />
-        <Button label="Add" kind="primary" styles={styles} onPress={submit} disabled={adding.isPending} />
-      </View>
-      {others.length > 0 ? (
-        <>
-          <Text style={styles.muted}>Add an existing tag:</Text>
-          <View style={styles.wrap}>
-            {others.map((tag) => (
-              <Pressable key={tag.key} style={styles.chip} onPress={() => adding.mutate([tag.name])} accessibilityRole="button" accessibilityLabel={`Add tag ${tag.name}`}>
-                <Text style={styles.chipText}>+ {tag.name}</Text>
-              </Pressable>
-            ))}
-          </View>
-        </>
-      ) : null}
-    </View>
-  );
-}
-
 export function TagsScreen({ theme, layout, params, navigation }: PluginScreenProps) {
   const styles = useStyles(theme, layout.compact);
   const list = useRpc(listTagsRpc);
@@ -313,14 +182,14 @@ export function TagsScreen({ theme, layout, params, navigation }: PluginScreenPr
   );
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      {params.agentId && tags.data ? <AgentTags agentId={params.agentId} fallbackWorkspaceId={params.workspaceId} tags={tags.data.tags} styles={styles} /> : null}
+      {params.agentId ? <AgentTags agentId={params.agentId} fallbackWorkspaceId={params.workspaceId} styles={styles} /> : null}
       <TextInput style={styles.input} value={filter} onChangeText={setFilter} placeholder="Filter tags, agents, and links" accessibilityLabel="Filter tags" />
       {tags.isPending ? <Text style={styles.muted}>Loading tags</Text> : null}
       {tags.error ? <Text style={styles.danger}>Could not load tags: {errorText(tags.error)}</Text> : null}
       {tags.data && tags.data.tags.length === 0 ? (
         <View style={styles.card}>
           <Text style={styles.title}>No tags yet</Text>
-          <Text style={styles.text}>In any agent, type /tag auth-rewrite (or several: /tag auth, billing).</Text>
+          <Text style={styles.text}>In any agent, press the Tags pill next to the message box and type a name, for example auth-rewrite.</Text>
           <Text style={styles.text}>Workspaces you label in Paseo join the tag with the same name.</Text>
           <Text style={styles.text}>Add a web link with /tag-link https://example.com/spec auth-rewrite.</Text>
           <Text style={styles.text}>Then, in any prompt, Attach &gt; Tag sends everything under it.</Text>
