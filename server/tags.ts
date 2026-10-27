@@ -21,6 +21,7 @@ export interface DirectoryAgent {
   workspaceId?: string;
   cwd?: string;
   updatedAt?: string;
+  status?: string;
 }
 
 export interface Directory {

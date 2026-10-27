@@ -2,6 +2,18 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.9.0 - 2026-10-28
+
+### Changed
+
+- Icons throughout the Tags screen, the Tags pill's popover, the fetch form, and the item reader: tag headers, section headers with counts (agents, workspaces, links, fetched items), vendor icons on fetched items (Jira, Sentry, Slack, Notion), colored status icons (fetching, ready, failed), and icon buttons for read, refresh, remove, copy, and open. Collapse uses chevrons; sorting, expand all, and collapse all are chips; the filter has a search icon and a clear button.
+- Links on the Tags screen open when tapped.
+- Attach > Agent conversation: titles drop Markdown marks (`**`, backticks, headings) and extra spaces, and the subtitle shows the workspace, whether the agent is running or archived, and how long ago it was active.
+
+### Notes
+
+- Paseo's Attach picker draws each row from text only, so plugins cannot put an icon on a row; the source's icon shows in the Attach menu and on the attached pill.
+
 ## 0.8.0 - 2026-10-27
 
 ### Fixed

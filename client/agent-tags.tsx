@@ -1,12 +1,13 @@
 import { useAgent, useRpc } from "@getpaseo/plugin/client";
-import { TextInput, useToast } from "@getpaseo/plugin/client/ui";
+import { Icon, TextInput, useToast } from "@getpaseo/plugin/client/ui";
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { addTagRpc, listTagsRpc, parseTagNames, removeTagRpc } from "../shared/contracts";
 import { errorText } from "./errors";
 import { FetchForm } from "./fetch-form";
-import { Button, type Styles, TAGS_QUERY, useTagChange } from "./kit";
+import { ICONS } from "./icons";
+import { Button, Chip, SectionTitle, type Styles, TAGS_QUERY, useTagChange } from "./kit";
 
 // One agent's tags, used by the composer pill's popover and the Tags screen opened for an agent:
 // its tags as chips to remove, every other tag as a chip to add, and a box for new names.
@@ -39,37 +40,38 @@ export function AgentTags({ agentId, fallbackWorkspaceId, styles, footer }: { ag
   };
   return (
     <View style={styles.card}>
-      <Text style={styles.title}>{agent?.title ?? "This agent"}</Text>
-      <Text style={styles.muted}>{mine.length === 0 ? "No tags yet." : "Tagged with (tap to remove):"}</Text>
+      <View style={styles.inline}>
+        <Icon name={ICONS.agent} size={16} color={styles.colors.foregroundMuted} />
+        <Text style={[styles.title, styles.grow]} numberOfLines={1}>
+          {agent?.title ?? "This agent"}
+        </Text>
+      </View>
+      <SectionTitle icon={ICONS.tags} label={mine.length === 0 ? "No tags yet" : "Tagged with (tap to remove)"} count={mine.length || undefined} styles={styles} />
       {mine.length > 0 ? (
         <View style={styles.wrap}>
           {mine.map((tag) => (
-            <Pressable key={tag.key} style={styles.chipOn} onPress={() => removing.mutate(tag.name)} accessibilityRole="button" accessibilityLabel={`Remove tag ${tag.name}`}>
-              <Text style={styles.chipOnText}>{tag.name} ×</Text>
-            </Pressable>
+            <Chip key={tag.key} label={tag.name} icon={ICONS.close} on onPress={() => removing.mutate(tag.name)} accessibilityLabel={`Remove tag ${tag.name}`} styles={styles} />
           ))}
         </View>
       ) : null}
       <View style={styles.row}>
         <TextInput style={styles.input} value={names} onChangeText={setNames} placeholder="New tags, separated by commas" onSubmitEditing={submit} accessibilityLabel="Tag names" />
-        <Button label="Add" kind="primary" styles={styles} onPress={submit} disabled={adding.isPending} />
+        <Button label="Add" icon={ICONS.add} kind="primary" styles={styles} onPress={submit} disabled={adding.isPending} />
       </View>
       {query.error ? <Text style={styles.danger}>Could not load tags: {errorText(query.error)}</Text> : null}
       {others.length > 0 ? (
         <>
-          <Text style={styles.muted}>Add an existing tag:</Text>
+          <SectionTitle icon={ICONS.add} label="Add an existing tag" styles={styles} />
           <View style={styles.wrap}>
             {others.map((tag) => (
-              <Pressable key={tag.key} style={styles.chip} onPress={() => adding.mutate([tag.name])} accessibilityRole="button" accessibilityLabel={`Add tag ${tag.name}`}>
-                <Text style={styles.chipText}>+ {tag.name}</Text>
-              </Pressable>
+              <Chip key={tag.key} label={tag.name} icon={ICONS.tag} onPress={() => adding.mutate([tag.name])} accessibilityLabel={`Add tag ${tag.name}`} styles={styles} />
             ))}
           </View>
         </>
       ) : null}
       {mine.length > 0 ? (
         <>
-          <Text style={styles.section}>Fetch an item into a tag</Text>
+          <SectionTitle icon={ICONS.fetch} label="Fetch an item into a tag" styles={styles} />
           <FetchForm tagNames={mine.map((tag) => tag.name)} styles={styles} />
         </>
       ) : null}

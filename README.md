@@ -7,7 +7,7 @@ Requires Paseo 0.13.
 ## Install
 
 ```bash
-paseo plugin install git:monarchmaisuriya/contextualise --ref v0.8.0
+paseo plugin install git:monarchmaisuriya/contextualise --ref v0.9.0
 ```
 
 ## Tags

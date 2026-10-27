@@ -1,7 +1,8 @@
 import { expect, test, vi } from "vitest";
 import { DOCS_URL, snapshotSettingsSchema, type TagSummary } from "../shared/contracts";
 import type { PaseoApi } from "./paseo-types";
-import { agentLink, includedParts, Memo, readAgent, searchAgents, searchTags, searchTerminals } from "./sources";
+import { timeAgo } from "../shared/time";
+import { agentLink, cleanTitle, includedParts, Memo, readAgent, searchAgents, searchTags, searchTerminals } from "./sources";
 import type { Directory } from "./tags";
 
 const options = snapshotSettingsSchema.parse({ snapshotMaxChars: 40_000, turnsPerAgent: 2, terminalLines: 50 });
@@ -95,8 +96,9 @@ test("agent search matches every word, puts archived agents last, and links to t
   const { paseo } = fakePaseo({ old: page(), new: page(), other: page() });
   const items = await searchAgents(paseo, new Memo(30_000), directory, "srv_1", "fix log", options);
   expect(items.map((item) => item.id)).toEqual(["new", "old"]);
-  expect(items[0]).toMatchObject({ identifier: "Codex", title: "Fix logout", subtitle: "payments / api", url: agentLink("srv_1", "new"), resourceType: "agent" });
-  expect(items[1]).toMatchObject({ identifier: "Claude", subtitle: "payments / api · archived" });
+  expect(items[0]).toMatchObject({ identifier: "Codex", title: "Fix logout", url: agentLink("srv_1", "new"), resourceType: "agent" });
+  expect(items[0].subtitle).toMatch(/^payments \/ api · active \d+ d ago$/);
+  expect(items[1].subtitle).toMatch(/^payments \/ api · archived · active \d+ d ago$/);
   expect(items[0].text).toContain("**User:** hi");
   expect((await searchAgents(paseo, new Memo(30_000), directory, "srv_1", "payments", options)).map((item) => item.id)).toEqual(["other", "new", "old"]);
 });
@@ -153,4 +155,28 @@ test("each source returns as many results as the setting allows, so the picker c
   const tags = Array.from({ length: 12 }, (_, i) => tag(`t${i}`, []));
   expect(await searchTags(paseo, new Memo(30_000), tags, "", options)).toHaveLength(12);
   expect(await searchTags(paseo, new Memo(30_000), tags, "", snapshotSettingsSchema.parse({ resultsPerSearch: 5 }))).toHaveLength(5);
+});
+
+test("agent titles lose Markdown marks and extra spaces, so the picker shows more of them", () => {
+  expect(cleanTitle("verify this - **Ticket, your call:** Shopline   produ `x`")).toBe("verify this - Ticket, your call: Shopline produ x");
+  expect(cleanTitle("  ## Plan __things__  ")).toBe("Plan things");
+  expect(cleanTitle("   ")).toBe("");
+});
+
+test("times read as short relative phrases", () => {
+  const now = Date.parse("2026-10-27T12:00:00Z");
+  expect(timeAgo("2026-10-27T11:59:40Z", now)).toBe("just now");
+  expect(timeAgo("2026-10-27T11:55:00Z", now)).toBe("5 min ago");
+  expect(timeAgo("2026-10-27T09:00:00Z", now)).toBe("3 h ago");
+  expect(timeAgo("2026-10-20T12:00:00Z", now)).toBe("7 d ago");
+  expect(timeAgo("not a date", now)).toBe("");
+});
+
+test("a running agent says so in its picker row", async () => {
+  const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
+  const { paseo } = fakePaseo({ r: page() });
+  const running = { workspaces: directory.workspaces, agents: [{ id: "r", title: "**Live** task", provider: "claude", workspaceId: "w1", status: "running", updatedAt: new Date().toISOString() }] };
+  const [item] = await searchAgents(paseo, new Memo(30_000), running, "srv", "", options);
+  expect(item.title).toBe("Live task");
+  expect(item.subtitle).toBe("payments / api · running · active just now");
 });

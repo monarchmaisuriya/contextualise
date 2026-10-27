@@ -1,10 +1,11 @@
 import type { PluginScreenProps } from "@getpaseo/plugin/client";
-import { useToast } from "@getpaseo/plugin/client/ui";
+import { Icon, useToast } from "@getpaseo/plugin/client/ui";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
-import { Pressable, Text } from "react-native";
-import type { TagSummary } from "../shared/contracts";
+import { Pressable, Text, View } from "react-native";
+import type { NoteMember, TagSummary } from "../shared/contracts";
 import { errorText } from "./errors";
+import { ICONS } from "./icons";
 import { tagsChanged } from "./tag-events";
 
 export const TAGS_QUERY = ["contextualise", "tags"];
@@ -34,6 +35,10 @@ export function useStyles(theme: Theme, compact: boolean) {
       chipOn: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: theme.colors.accent },
       chipText: { color: theme.colors.foreground, fontSize: 13 },
       chipOnText: { color: theme.colors.accentForeground, fontSize: 13 },
+      iconButton: { padding: 6, borderRadius: 8 },
+      inline: { flexDirection: "row" as const, alignItems: "center" as const, gap: 6 },
+      // Icon colors: icons take a color value, not a text style.
+      colors: theme.colors,
     }),
     [theme, compact],
   );
@@ -49,14 +54,7 @@ export function summary(tag: TagSummary): string {
   return parts.filter(([n]) => n > 0).map(([n, word]) => plural(n, word)).join(" · ");
 }
 
-export function ago(iso: string): string {
-  const minutes = Math.round((Date.now() - Date.parse(iso)) / 60_000);
-  if (!Number.isFinite(minutes)) return "";
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} min ago`;
-  if (minutes < 60 * 24) return `${Math.round(minutes / 60)} h ago`;
-  return `${Math.round(minutes / 60 / 24)} d ago`;
-}
+export { timeAgo as ago } from "../shared/time";
 
 // Mutations that change tags refresh every tag list (screens, popovers, pill labels) and report
 // failures as readable toasts.
@@ -74,10 +72,49 @@ export function useTagChange<Input, Output>(run: (input: Input) => Promise<Outpu
   });
 }
 
-export function Button({ label, onPress, styles, disabled, kind = "ghost" }: { label: string; onPress(): void; styles: Styles; disabled?: boolean; kind?: "ghost" | "primary" }) {
+export function Button({ label, icon, onPress, styles, disabled, kind = "ghost" }: { label: string; icon?: string; onPress(): void; styles: Styles; disabled?: boolean; kind?: "ghost" | "primary" }) {
+  const color = kind === "primary" ? styles.colors.accentForeground : styles.colors.foreground;
   return (
-    <Pressable style={kind === "primary" ? styles.button : styles.ghost} onPress={onPress} disabled={disabled} accessibilityRole="button" accessibilityLabel={label}>
+    <Pressable style={[kind === "primary" ? styles.button : styles.ghost, styles.inline, disabled ? { opacity: 0.5 } : null]} onPress={onPress} disabled={disabled} accessibilityRole="button" accessibilityLabel={label}>
+      {icon ? <Icon name={icon} size={14} color={color} /> : null}
       <Text style={kind === "primary" ? styles.buttonText : styles.ghostText}>{label}</Text>
     </Pressable>
   );
+}
+
+// An icon with no text; the label is what screen readers say and what the action does.
+export function IconButton({ icon, label, onPress, styles, disabled, tone = "muted" }: { icon: string; label: string; onPress(): void; styles: Styles; disabled?: boolean; tone?: "muted" | "danger" | "accent" }) {
+  const color = tone === "danger" ? styles.colors.statusDanger : tone === "accent" ? styles.colors.accent : styles.colors.foregroundMuted;
+  return (
+    <Pressable style={[styles.iconButton, disabled ? { opacity: 0.4 } : null]} onPress={onPress} disabled={disabled} accessibilityRole="button" accessibilityLabel={label} hitSlop={6}>
+      <Icon name={icon} size={16} color={color} />
+    </Pressable>
+  );
+}
+
+export function Chip({ label, icon, on, onPress, styles, accessibilityLabel }: { label: string; icon?: string; on?: boolean; onPress(): void; styles: Styles; accessibilityLabel?: string }) {
+  return (
+    <Pressable style={[on ? styles.chipOn : styles.chip, styles.inline, { gap: 4 }]} onPress={onPress} accessibilityRole="button" accessibilityState={{ selected: Boolean(on) }} accessibilityLabel={accessibilityLabel ?? label}>
+      {icon ? <Icon name={icon} size={13} color={on ? styles.colors.accentForeground : styles.colors.foregroundMuted} /> : null}
+      <Text style={on ? styles.chipOnText : styles.chipText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+export function SectionTitle({ icon, label, count, styles }: { icon: string; label: string; count?: number; styles: Styles }) {
+  return (
+    <View style={[styles.inline, { marginTop: 4 }]}>
+      <Icon name={icon} size={13} color={styles.colors.foregroundMuted} />
+      <Text style={[styles.section, { marginTop: 0 }]}>
+        {label}
+        {count !== undefined ? ` · ${count}` : ""}
+      </Text>
+    </View>
+  );
+}
+
+export function NoteStatusIcon({ status, styles }: { status: NoteMember["status"]; styles: Styles }) {
+  const [name, color] =
+    status === "ready" ? [ICONS.ready, styles.colors.statusSuccess] : status === "failed" ? [ICONS.failed, styles.colors.statusDanger] : [ICONS.fetching, styles.colors.statusWarning];
+  return <Icon name={name} size={14} color={color} />;
 }

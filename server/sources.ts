@@ -1,4 +1,5 @@
 import type { PluginAttachmentItem } from "@getpaseo/plugin";
+import { timeAgo } from "../shared/time";
 import { DOCS_URL, type AgentMember, type SnapshotSettings, type TagSummary } from "../shared/contracts";
 import type { AgentTimelineItem, PaseoApi } from "./paseo-types";
 import { describeMembers, isUnreadable, lastTurns, matchTags, renderConversation, renderSnapshot, renderTerminal, type AgentReading } from "./snapshot";
@@ -51,6 +52,15 @@ export async function readAgent(paseo: PaseoApi, agentId: string, turnsPerAgent:
     console.error(`[contextualise] could not read agent ${agentId}: ${String((error as Error).message ?? error)}`);
     return { agentId, error: String((error as Error).message ?? error) };
   }
+}
+
+// Agent titles are often the first prompt, with Markdown in it; the picker shows one plain line.
+export function cleanTitle(title: string): string {
+  return title
+    .replace(/^\s*#+\s*/, "")
+    .replace(/(\*\*|__|`)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 // "claude" -> "Claude", "codex" -> "Codex"; a provider id with a model ("claude/opus") keeps only the provider.
@@ -133,14 +143,15 @@ export async function searchAgents(paseo: PaseoApi, memo: Memo, directory: Direc
       const member = asMember(agent);
       const workspaceName = names.get(agent.workspaceId ?? "") ?? null;
       const reading = await memo.get(`agent:${agent.id}:${options.turnsPerAgent}`, () => readAgent(paseo, agent.id, options.turnsPerAgent));
-      const state = isUnreadable(reading) ? "unreadable" : agent.archivedAt ? "archived" : null;
+      const state = isUnreadable(reading) ? "unreadable" : agent.archivedAt ? "archived" : agent.status === "running" ? "running" : null;
+      const active = agent.updatedAt ? timeAgo(agent.updatedAt) : "";
       return {
         id: agent.id,
         // Paseo labels a row "<identifier> <title>" and the attached pill "<source> <identifier>";
         // the provider makes both informative instead of repeating "Agent".
         identifier: providerLabel(agent.provider),
-        title: agent.title ?? agent.id,
-        subtitle: [workspaceName, state].filter(Boolean).join(" · ") || "no workspace",
+        title: cleanTitle(agent.title ?? "") || agent.id,
+        subtitle: [workspaceName ?? "no workspace", state, active ? `active ${active}` : null].filter(Boolean).join(" · "),
         url: serverId ? agentLink(serverId, agent.id) : DOCS_URL,
         text: renderConversation(member, workspaceName, reading, options.snapshotMaxChars),
         resourceType: "agent",

@@ -1,11 +1,12 @@
 import { useRpc } from "@getpaseo/plugin/client";
-import { TextInput, useToast } from "@getpaseo/plugin/client/ui";
+import { Icon, TextInput, useToast } from "@getpaseo/plugin/client/ui";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { FETCH_PROVIDER_LABELS, type FetchPreference, fetchItemRpc, fetchRouteRpc, parseItemRef, parseTagName, VENDOR_LABELS } from "../shared/contracts";
 import { errorText } from "./errors";
-import { Button, type Styles, useTagChange } from "./kit";
+import { ICONS, VENDOR_ICONS } from "./icons";
+import { Button, Chip, type Styles, useTagChange } from "./kit";
 
 const AGENT_CHOICES: ReadonlyArray<{ value: FetchPreference | undefined; label: string }> = [
   { value: undefined, label: "Default" },
@@ -52,16 +53,17 @@ export function FetchForm({ tagNames, styles, onDone }: { tagNames: readonly str
     <View style={{ gap: 8 }}>
       <View style={styles.wrap}>
         <TextInput style={styles.input} value={ref} onChangeText={setRef} placeholder="PROJ-123 or a link" autoCapitalize="none" autoCorrect={false} accessibilityLabel="Item to fetch" onSubmitEditing={() => !blocked && fetching.mutate(undefined)} />
-        <Button label={fetching.isPending ? "Starting" : "Fetch"} kind="primary" styles={styles} onPress={() => fetching.mutate(undefined)} disabled={blocked} />
+        <Button label={fetching.isPending ? "Starting" : "Fetch"} icon={ICONS.fetch} kind="primary" styles={styles} onPress={() => fetching.mutate(undefined)} disabled={blocked} />
       </View>
-      <Text style={route.error ? styles.danger : styles.muted}>{hint}</Text>
+      <View style={styles.inline}>
+        <Icon name={route.error ? ICONS.failed : route.data ? VENDOR_ICONS[route.data.vendor] : ICONS.search} size={14} color={route.error ? styles.colors.statusDanger : styles.colors.foregroundMuted} />
+        <Text style={[route.error ? styles.danger : styles.muted, styles.grow]}>{hint}</Text>
+      </View>
       {tagNames.length > 1 ? (
         <View style={styles.wrap}>
           <Text style={styles.muted}>Into:</Text>
           {tagNames.map((name) => (
-            <Pressable key={name} style={name === tag ? styles.chipOn : styles.chip} onPress={() => setTag(name)} accessibilityRole="button" accessibilityLabel={`Fetch into ${name}`}>
-              <Text style={name === tag ? styles.chipOnText : styles.chipText}>{name}</Text>
-            </Pressable>
+            <Chip key={name} label={name} icon={ICONS.tag} on={name === tag} onPress={() => setTag(name)} accessibilityLabel={`Fetch into ${name}`} styles={styles} />
           ))}
         </View>
       ) : tagNames.length === 0 ? (
@@ -70,9 +72,7 @@ export function FetchForm({ tagNames, styles, onDone }: { tagNames: readonly str
       <View style={styles.wrap}>
         <Text style={styles.muted}>Agent:</Text>
         {AGENT_CHOICES.map((choice) => (
-          <Pressable key={choice.label} style={choice.value === provider ? styles.chipOn : styles.chip} onPress={() => setProvider(choice.value)} accessibilityRole="button" accessibilityLabel={`Fetch with ${choice.label}`}>
-            <Text style={choice.value === provider ? styles.chipOnText : styles.chipText}>{choice.label}</Text>
-          </Pressable>
+          <Chip key={choice.label} label={choice.label} icon={ICONS.agent} on={choice.value === provider} onPress={() => setProvider(choice.value)} accessibilityLabel={`Fetch with ${choice.label}`} styles={styles} />
         ))}
       </View>
     </View>
