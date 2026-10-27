@@ -7,7 +7,7 @@ Requires Paseo 0.13.
 ## Install
 
 ```bash
-paseo plugin install git:monarchmaisuriya/contextualise --ref v0.4.0
+paseo plugin install git:monarchmaisuriya/contextualise --ref v0.5.0
 ```
 
 ## Tags
@@ -19,7 +19,7 @@ Every agent's composer has a **Tags** pill next to Tasks and Subagents. Its labe
 - add an existing tag (tap its chip),
 - open the Tags screen.
 
-`/tag auth-rewrite` tags the current agent from the message box (several: `/tag auth, billing`). `/tag-link https://example.com/spec auth-rewrite` adds a web link to a tag.
+`/tag auth-rewrite` tags the current agent from the message box and `/untag auth-rewrite` removes it (both take several: `/tag auth, billing`). `/tag-link https://example.com/spec auth-rewrite` adds a web link to a tag.
 
 Tags share names with Paseo's workspace labels. A workspace labeled "Auth Rewrite" belongs to the tag `auth rewrite` automatically; case and spacing do not matter. Contextualise reads workspace labels and never changes them.
 

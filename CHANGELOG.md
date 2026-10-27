@@ -2,6 +2,12 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.5.0 - 2026-10-27
+
+### Added
+
+- `/untag` is back: `/untag auth-rewrite`, or several with `/untag auth, billing`. The pill's label confirms it; an `/untag` that changes nothing says "Not tagged".
+
 ## 0.4.0 - 2026-10-27
 
 ### Added

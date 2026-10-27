@@ -12,6 +12,7 @@ import {
   agentAttachmentSource,
   parseLinkCommand,
   parseTagNames,
+  removeTagRpc,
   RECEIPT_KIND,
   receiptSchema,
   tagAttachmentSource,
@@ -46,6 +47,17 @@ export default function contribute(client: PluginClientContext) {
         const { results } = await readable(() => rpc(addTagRpc, { tags: parseTagNames(args), agentId: agent.id, workspaceId: agent.workspaceId }));
         tagsChanged();
         if (!results.some((result) => result.changed)) throw new Error(`Already tagged: ${results.map((result) => result.name).join(", ")}`);
+      },
+    }),
+    client.addSlashCommand({
+      name: "untag",
+      description: "Remove this agent from a tag (several: /untag auth, billing)",
+      argumentHint: "<tag>[, <tag>...]",
+      context: "agent",
+      async onSubmit({ args, agent, rpc }) {
+        const { results } = await readable(() => rpc(removeTagRpc, { tags: parseTagNames(args), agentId: agent.id }));
+        tagsChanged();
+        if (!results.some((result) => result.changed)) throw new Error(`Not tagged: ${results.map((result) => result.name).join(", ")}`);
       },
     }),
     client.addSlashCommand({

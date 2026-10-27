@@ -2,7 +2,7 @@ Contextualise lets you tag agents across workspaces and providers, find them aga
 
 ## Tagging
 
-Every agent's composer gets a Tags pill beside Tasks and Subagents. Its label shows the agent's tags; pressing it lets you remove a tag, add new ones (comma-separated), or add an existing tag with one tap. You can also type `/tag auth-rewrite` (several: `/tag auth, billing`). `/tag-link https://example.com/spec auth-rewrite` adds a web link to a tag.
+Every agent's composer gets a Tags pill beside Tasks and Subagents. Its label shows the agent's tags; pressing it lets you remove a tag, add new ones (comma-separated), or add an existing tag with one tap. You can also type `/tag auth-rewrite` and `/untag auth-rewrite` (both take several: `/tag auth, billing`). `/tag-link https://example.com/spec auth-rewrite` adds a web link to a tag.
 
 Tags share names with Paseo's own workspace labels. A workspace labeled "Auth Rewrite" belongs to the tag `auth rewrite` with no extra step; names match regardless of case and spacing. Contextualise reads workspace labels but never changes them: manage those with Paseo's "Manage labels".
 
