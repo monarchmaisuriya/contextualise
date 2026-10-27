@@ -1,0 +1,8 @@
+{
+  "id": "contextualise",
+  "name": "Contextualise",
+  "description": "Tag agents across workspaces and providers, find them by tag, and attach a whole tag to a prompt.",
+  "requirements": {
+    "paseo": ">=0.13.0 <0.14.0"
+  }
+}
