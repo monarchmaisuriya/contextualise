@@ -178,7 +178,7 @@ export const terminalAttachmentSource = defineAttachmentSource({
 });
 
 // One confirmation row per agent, replaced on every /tag or /untag in that agent.
-export const RECEIPT_KIND = "contextualise.receipt";
+export const RECEIPT_KIND = "receipt";
 export const RECEIPT_ROW_ID = "contextualise-receipt";
 export const receiptSchema = z.object({
   action: z.enum(["tag", "untag"]),

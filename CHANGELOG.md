@@ -2,6 +2,12 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.2.1 - 2026-10-27
+
+### Fixed
+
+- The plugin failed to load in the Paseo app ("Invalid timeline renderer kind: contextualise.receipt"): Paseo accepts only lower-case letters, digits, and hyphens in registered names. The confirmation row's kind is now `receipt`. A new test runs the real app-side registration against Paseo's naming rule, so a bad name fails the tests instead of the app.
+
 ## 0.2.0 - 2026-10-27
 
 ### Added
