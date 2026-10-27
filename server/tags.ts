@@ -47,15 +47,15 @@ export async function readDirectory(paseo: PaseoApi): Promise<Directory> {
   return { workspaces, agents };
 }
 
-// One list of tags: every workspace label name joined with the agents and links tagged under the
-// same name. Most recently tagged first; tags that exist only as workspace labels follow, by name.
+// One list of tags: every workspace label name joined with the agents, links, and fetched items
+// under the same name. Most recently tagged first; tags that exist only as workspace labels follow, by name.
 export function mergeTags(stored: StoredTags, directory: Directory): TagSummary[] {
   const byKey = new Map<string, TagSummary>();
   const entry = (name: string) => {
     const key = tagKey(name);
     let tag = byKey.get(key);
     if (!tag) {
-      tag = { key, name: normalizeTagName(name), hasWorkspaceLabel: false, workspaces: [], agents: [], links: [] };
+      tag = { key, name: normalizeTagName(name), hasWorkspaceLabel: false, workspaces: [], agents: [], links: [], notes: [] };
       byKey.set(key, tag);
     }
     return tag;
@@ -92,8 +92,9 @@ export function mergeTags(stored: StoredTags, directory: Directory): TagSummary[
       tag.agents.push(summary);
     }
     tag.links.push(...storedTag.links);
+    tag.notes.push(...storedTag.notes);
   }
 
-  const lastTagged = (tag: TagSummary) => [...tag.agents, ...tag.links].reduce((latest, member) => (member.taggedAt > latest ? member.taggedAt : latest), "");
+  const lastTagged = (tag: TagSummary) => [...tag.agents.map((m) => m.taggedAt), ...tag.links.map((m) => m.taggedAt), ...tag.notes.map((m) => m.addedAt)].reduce((latest, at) => (at > latest ? at : latest), "");
   return [...byKey.values()].sort((a, b) => lastTagged(b).localeCompare(lastTagged(a)) || a.name.localeCompare(b.name));
 }

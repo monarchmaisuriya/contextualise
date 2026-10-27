@@ -43,6 +43,7 @@ function tag(key: string, agentIds: string[]): TagSummary {
     hasWorkspaceLabel: false,
     workspaces: [],
     links: [],
+    notes: [],
     agents: agentIds.map((agentId) => ({ agentId, workspaceId: "w1", taggedAt: "t", title: agentId, provider: "claude", state: "active" as const })),
   };
 }

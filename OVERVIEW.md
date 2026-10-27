@@ -1,4 +1,4 @@
-Contextualise lets you tag agents across workspaces and providers, find them again by tag, and attach context to a prompt: a whole tag, another agent's conversation, or terminal output.
+Contextualise lets you tag agents across workspaces and providers, fetch Jira, Sentry, Slack, and Notion items into tags, find it all again by tag, and attach context to a prompt: a whole tag, another agent's conversation, or terminal output.
 
 ## Tagging
 
@@ -7,6 +7,10 @@ Every agent's composer gets a Tags pill beside Tasks and Subagents. Its label sh
 Tags share names with Paseo's own workspace labels. A workspace labeled "Auth Rewrite" belongs to the tag `auth rewrite` with no extra step; names match regardless of case and spacing. Contextualise reads workspace labels but never changes them: manage those with Paseo's "Manage labels".
 
 The Tags screen, in the sidebar footer, lists every tag with its labeled workspaces, tagged agents, and links, with a filter box. Preview on a tag shows exactly what attaching it sends, with Copy. Archived agents stay in their tags; agents Paseo no longer has are shown as missing until you remove them.
+
+## Fetching vendor items
+
+`/tag-fetch PROJ-123 auth-rewrite` (or Fetch item on a tag) saves a Jira, Sentry, Slack, or Notion item's content under a tag. Contextualise has no vendor accounts: a hidden background Claude agent reads the item through the connectors your Claude agents already have, and may use only that vendor's read tools; anything else it asks for is denied and every decision is logged. Each fetch is one model run. Results show under Fetched items with Refresh and Remove, and are included when the tag is attached.
 
 ## Attaching context
 

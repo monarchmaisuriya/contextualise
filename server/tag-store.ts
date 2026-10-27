@@ -1,18 +1,22 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
-import { parseLinkUrl, parseTagName, tagKey } from "../shared/contracts";
+import { randomUUID } from "node:crypto";
+import { type ItemRef, NOTE_MAX_CHARS, noteMemberSchema, parseLinkUrl, parseTagName, tagKey } from "../shared/contracts";
 
 const storedAgentSchema = z.object({ agentId: z.string(), workspaceId: z.string(), taggedAt: z.string() });
 const storedLinkSchema = z.object({ url: z.string(), title: z.string(), taggedAt: z.string() });
-const storedTagSchema = z.object({ name: z.string(), agents: z.array(storedAgentSchema), links: z.array(storedLinkSchema) });
-const storeFileSchema = z.object({ version: z.literal(2), tags: z.record(z.string(), storedTagSchema) });
-// Version 1 (plugin 0.1.0) had no links. It is read and written back as version 2; an older plugin
-// then refuses the file loudly instead of silently dropping links it does not know.
-const storeFileV1Schema = z.object({ version: z.literal(1), tags: z.record(z.string(), storedTagSchema.omit({ links: true })) });
+const storedTagSchema = z.object({ name: z.string(), agents: z.array(storedAgentSchema), links: z.array(storedLinkSchema), notes: z.array(noteMemberSchema) });
+const storeFileSchema = z.object({ version: z.literal(3), tags: z.record(z.string(), storedTagSchema) });
+// Older files are read and written back as version 3: version 1 (0.1.0) had no links, version 2
+// (0.2.0 to 0.5.0) had no notes. An older plugin then refuses the file loudly instead of silently
+// dropping members it does not know.
+const storeFileV1Schema = z.object({ version: z.literal(1), tags: z.record(z.string(), storedTagSchema.omit({ links: true, notes: true })) });
+const storeFileV2Schema = z.object({ version: z.literal(2), tags: z.record(z.string(), storedTagSchema.omit({ notes: true })) });
 
 export type StoredAgent = z.infer<typeof storedAgentSchema>;
 export type StoredLink = z.infer<typeof storedLinkSchema>;
+export type StoredNote = z.infer<typeof noteMemberSchema>;
 export type StoredTag = z.infer<typeof storedTagSchema>;
 export type StoredTags = Record<string, StoredTag>;
 type StoreFile = z.infer<typeof storeFileSchema>;
@@ -22,6 +26,8 @@ export interface Outcome {
   name: string;
   changed: boolean;
 }
+
+export type NotePatch = Partial<Pick<StoredNote, "title" | "url" | "status" | "text" | "error" | "fetchedAt">>;
 
 // Membership Paseo cannot hold for us: agents and links under a tag name. Workspace membership is
 // never stored here: it is read live from Paseo's workspace labels. Writes go through one queue and
@@ -73,16 +79,68 @@ export class TagStore {
     return outcome;
   }
 
-  // Applies `edit` to each named tag in one write. A tag left with no agents and no links is removed.
+  // Adds an item in the "fetching" state; the same reference twice in one tag is one note.
+  async addNote(rawName: string, item: ItemRef): Promise<Outcome & { noteId: string }> {
+    let noteId = "";
+    const [outcome] = await this.change([parseTagName(rawName)], (tag) => {
+      const existing = tag.notes.find((note) => note.vendor === item.vendor && note.ref === item.ref);
+      if (existing) {
+        noteId = existing.id;
+        return false;
+      }
+      noteId = randomUUID();
+      tag.notes.push({ id: noteId, vendor: item.vendor, ref: item.ref, title: item.ref, url: null, status: "fetching", text: "", error: null, addedAt: new Date().toISOString(), fetchedAt: null });
+      return true;
+    });
+    return { ...outcome, noteId };
+  }
+
+  // Changes one note in place. The text is capped here, the one place notes are written.
+  async updateNote(rawName: string, noteId: string, patch: NotePatch): Promise<Outcome> {
+    const [outcome] = await this.change([parseTagName(rawName)], (tag) => {
+      const note = tag.notes.find((candidate) => candidate.id === noteId);
+      if (!note) return false;
+      Object.assign(note, patch, patch.text === undefined ? {} : { text: patch.text.length > NOTE_MAX_CHARS ? `${patch.text.slice(0, NOTE_MAX_CHARS - 4)} […]` : patch.text });
+      return true;
+    });
+    return outcome;
+  }
+
+  async removeNote(rawName: string, noteId: string): Promise<Outcome> {
+    const [outcome] = await this.change([parseTagName(rawName)], (tag) => {
+      const before = tag.notes.length;
+      tag.notes = tag.notes.filter((note) => note.id !== noteId);
+      return tag.notes.length !== before;
+    });
+    return outcome;
+  }
+
+  // A fetch cut off by a plugin or daemon restart never reports back; its note is marked failed.
+  async failInterruptedFetches(): Promise<number> {
+    return this.enqueue(async () => {
+      const file = await this.load();
+      let count = 0;
+      for (const tag of Object.values(file.tags))
+        for (const note of tag.notes)
+          if (note.status === "fetching") {
+            Object.assign(note, { status: "failed", error: "interrupted by a restart; press Refresh to fetch again" });
+            count += 1;
+          }
+      if (count > 0) await this.save(file);
+      return count;
+    });
+  }
+
+  // Applies `edit` to each named tag in one write. A tag left with no agents, links, or notes is removed.
   private change(names: readonly string[], edit: (tag: StoredTag) => boolean): Promise<Outcome[]> {
     return this.enqueue(async () => {
       const file = await this.load();
       const outcomes: Outcome[] = [];
       for (const name of names) {
         const key = tagKey(name);
-        const tag = file.tags[key] ?? { name, agents: [], links: [] };
+        const tag = file.tags[key] ?? { name, agents: [], links: [], notes: [] };
         const changed = edit(tag);
-        if (tag.agents.length === 0 && tag.links.length === 0) delete file.tags[key];
+        if (tag.agents.length === 0 && tag.links.length === 0 && tag.notes.length === 0) delete file.tags[key];
         else file.tags[key] = tag;
         outcomes.push({ tag: key, name: tag.name, changed });
       }
@@ -107,13 +165,15 @@ export class TagStore {
     try {
       text = await readFile(path, "utf8");
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 2, tags: {} };
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 3, tags: {} };
       throw error;
     }
     try {
       const data: unknown = JSON.parse(text);
       const v1 = storeFileV1Schema.safeParse(data);
-      if (v1.success) return { version: 2, tags: Object.fromEntries(Object.entries(v1.data.tags).map(([key, tag]) => [key, { ...tag, links: [] }])) };
+      if (v1.success) return { version: 3, tags: Object.fromEntries(Object.entries(v1.data.tags).map(([key, tag]) => [key, { ...tag, links: [], notes: [] }])) };
+      const v2 = storeFileV2Schema.safeParse(data);
+      if (v2.success) return { version: 3, tags: Object.fromEntries(Object.entries(v2.data.tags).map(([key, tag]) => [key, { ...tag, notes: [] }])) };
       return storeFileSchema.parse(data);
     } catch (error) {
       throw new Error(`Contextualise cannot read ${path}: ${(error as Error).message}. Fix or move the file; it was not changed.`);

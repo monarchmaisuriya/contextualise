@@ -5,6 +5,7 @@ export const TAG_NAME_MAX_CHARS = 80;
 export const TAGS_PER_COMMAND = 10;
 export const LINK_URL_MAX_CHARS = 2_000;
 export const LINK_TITLE_MAX_CHARS = 200;
+export const NOTE_MAX_CHARS = 8_000;
 // Where a tag or terminal attachment's pill leads when clicked: the section that explains it.
 export const DOCS_URL = "https://github.com/monarchmaisuriya/contextualise#readme";
 
@@ -57,6 +58,46 @@ export function parseLinkCommand(args: string): { url: string; tag: string } {
   return { url: parseLinkUrl(first), tag: parseTagName(rest.join(" ")) };
 }
 
+// Items a worker agent can fetch through the connectors Claude agents already have.
+export const VENDORS = ["jira", "sentry", "slack", "notion"] as const;
+export type Vendor = (typeof VENDORS)[number];
+export const VENDOR_LABELS: Record<Vendor, string> = { jira: "Jira", sentry: "Sentry", slack: "Slack", notion: "Notion" };
+export interface ItemRef {
+  vendor: Vendor;
+  ref: string;
+}
+
+const ITEM_REF_FORMS = "a Jira key like PROJ-123, or a Jira, Sentry, Slack, or Notion link (or prefix it: jira:, sentry:, slack:, notion:)";
+
+function hostOf(text: string): string | null {
+  return /^https:\/\/([^/?#:\s]+)/i.exec(text)?.[1]?.toLowerCase() ?? null;
+}
+
+// Which vendor an item reference belongs to, from its shape. An explicit "vendor:" prefix wins.
+export function parseItemRef(raw: string): ItemRef {
+  const text = raw.trim();
+  if (text === "") throw new Error(`An item needs a reference: ${ITEM_REF_FORMS}`);
+  if (text.length > LINK_URL_MAX_CHARS) throw new Error(`Expected a reference of at most ${LINK_URL_MAX_CHARS} characters, got ${text.length}`);
+  const prefixed = /^(jira|sentry|slack|notion):\s*(\S.*)$/i.exec(text);
+  if (prefixed) return { vendor: prefixed[1].toLowerCase() as Vendor, ref: prefixed[2].trim() };
+  if (/^[A-Z][A-Z0-9_]+-\d+$/.test(text)) return { vendor: "jira", ref: text };
+  const host = hostOf(text);
+  if (host) {
+    if (host.endsWith(".atlassian.net")) return { vendor: "jira", ref: text };
+    if (host === "sentry.io" || host.endsWith(".sentry.io")) return { vendor: "sentry", ref: text };
+    if (host.endsWith(".slack.com")) return { vendor: "slack", ref: text };
+    if (host === "notion.so" || host === "www.notion.so" || host.endsWith(".notion.site")) return { vendor: "notion", ref: text };
+  }
+  throw new Error(`Expected ${ITEM_REF_FORMS}; got "${text.slice(0, 80)}"`);
+}
+
+// "/tag-fetch PROJ-123 auth rewrite": the reference first, since it has no spaces, then the tag.
+export function parseFetchCommand(args: string): { ref: string; tag: string } {
+  const [first = "", ...rest] = args.trim().split(/\s+/);
+  parseItemRef(first);
+  return { ref: first, tag: parseTagName(rest.join(" ")) };
+}
+
 // Wraps a parser so schema errors carry its message instead of a generic one.
 function parsed<T>(parse: (value: string) => T) {
   return z.string().transform((value, ctx) => {
@@ -98,6 +139,26 @@ export const removeLinkRpc = defineRpc({
   output: tagOutcomeSchema,
 });
 
+export const fetchItemRpc = defineRpc({
+  name: "tags.fetch",
+  // Checked here but kept as text: Paseo validates inputs on both sides, so an input schema must
+  // accept its own output. The handler reads the vendor from it with parseItemRef.
+  input: z.object({ tag: tagNameInput, ref: parsed((value) => (parseItemRef(value), value.trim())) }),
+  output: z.object({ tag: z.string(), name: z.string(), noteId: z.string(), changed: z.boolean() }),
+});
+
+export const refreshNoteRpc = defineRpc({
+  name: "tags.fetch.refresh",
+  input: z.object({ tag: tagNameInput, noteId: z.string().min(1) }),
+  output: z.object({ tag: z.string(), name: z.string(), noteId: z.string(), changed: z.boolean() }),
+});
+
+export const removeNoteRpc = defineRpc({
+  name: "tags.fetch.remove",
+  input: z.object({ tag: tagNameInput, noteId: z.string().min(1) }),
+  output: tagOutcomeSchema,
+});
+
 export const agentMemberSchema = z.object({
   agentId: z.string(),
   workspaceId: z.string(),
@@ -120,6 +181,22 @@ export type WorkspaceMember = z.infer<typeof workspaceMemberSchema>;
 export const linkMemberSchema = z.object({ url: z.string(), title: z.string(), taggedAt: z.string() });
 export type LinkMember = z.infer<typeof linkMemberSchema>;
 
+// An item a worker agent fetched (or is fetching) into a tag. The text is a stored copy; Refresh
+// fetches it again.
+export const noteMemberSchema = z.object({
+  id: z.string(),
+  vendor: z.enum(VENDORS),
+  ref: z.string(),
+  title: z.string(),
+  url: z.string().nullable(),
+  status: z.enum(["fetching", "ready", "failed"]),
+  text: z.string(),
+  error: z.string().nullable(),
+  addedAt: z.string(),
+  fetchedAt: z.string().nullable(),
+});
+export type NoteMember = z.infer<typeof noteMemberSchema>;
+
 export const tagSummarySchema = z.object({
   key: z.string(),
   name: z.string(),
@@ -128,6 +205,7 @@ export const tagSummarySchema = z.object({
   workspaces: z.array(workspaceMemberSchema),
   agents: z.array(agentMemberSchema),
   links: z.array(linkMemberSchema),
+  notes: z.array(noteMemberSchema),
 });
 export type TagSummary = z.infer<typeof tagSummarySchema>;
 

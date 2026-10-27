@@ -82,10 +82,10 @@ test("links that are not web addresses are refused", async () => {
 test("a version 1 file is read and rewritten as version 2 on the next change", async () => {
   const v1 = { version: 1, tags: { x: { name: "X", agents: [{ agentId: "a1", workspaceId: "w1", taggedAt: "t" }] } } };
   await writeFile(join(dir, "tags.json"), JSON.stringify(v1));
-  expect(await store.read()).toEqual({ x: { name: "X", agents: v1.tags.x.agents, links: [] } });
+  expect(await store.read()).toEqual({ x: { name: "X", agents: v1.tags.x.agents, links: [], notes: [] } });
   await store.addLink("x", { url: "https://example.com" });
   const saved = JSON.parse(await readFile(join(dir, "tags.json"), "utf8"));
-  expect(saved.version).toBe(2);
+  expect(saved.version).toBe(3);
   expect(saved.tags.x.agents).toEqual(v1.tags.x.agents);
 });
 
@@ -97,6 +97,36 @@ test("a corrupt file fails loudly and is not overwritten", async () => {
 });
 
 test("a file from a newer plugin version fails loudly", async () => {
-  await writeFile(join(dir, "tags.json"), JSON.stringify({ version: 3, tags: {} }));
+  await writeFile(join(dir, "tags.json"), JSON.stringify({ version: 4, tags: {} }));
   await expect(store.read()).rejects.toThrow("tags.json");
+});
+
+test("fetched items: added as fetching, updated in place with the text capped, and keep the tag alive", async () => {
+  const added = await store.addNote("Spec", { vendor: "jira", ref: "PROJ-1" });
+  expect(added).toMatchObject({ tag: "spec", changed: true });
+  expect((await store.addNote("spec", { vendor: "jira", ref: "PROJ-1" })).noteId).toBe(added.noteId);
+  await store.updateNote("spec", added.noteId, { status: "ready", title: "Login fails", text: "x".repeat(20_000), fetchedAt: "t" });
+  const [note] = (await store.read()).spec.notes;
+  expect(note).toMatchObject({ vendor: "jira", ref: "PROJ-1", title: "Login fails", status: "ready" });
+  expect(note.text.length).toBe(8_000);
+  expect(note.text.endsWith(" […]")).toBe(true);
+  expect(await store.removeNote("spec", added.noteId)).toMatchObject({ changed: true });
+  expect(await store.read()).toEqual({});
+});
+
+test("fetches cut off by a restart are marked failed", async () => {
+  const { noteId } = await store.addNote("x", { vendor: "slack", ref: "https://a.slack.com/archives/C1/p1" });
+  expect(await store.failInterruptedFetches()).toBe(1);
+  expect((await store.read()).x.notes.find((note) => note.id === noteId)).toMatchObject({ status: "failed", error: expect.stringContaining("interrupted") });
+  expect(await store.failInterruptedFetches()).toBe(0);
+});
+
+test("a version 2 file is read with no notes and written back as version 3", async () => {
+  const v2 = { version: 2, tags: { x: { name: "X", agents: [], links: [{ url: "https://e.com/", title: "e", taggedAt: "t" }] } } };
+  await writeFile(join(dir, "tags.json"), JSON.stringify(v2));
+  expect((await store.read()).x.notes).toEqual([]);
+  await store.addNote("x", { vendor: "notion", ref: "https://www.notion.so/a" });
+  const saved = JSON.parse(await readFile(join(dir, "tags.json"), "utf8"));
+  expect(saved.version).toBe(3);
+  expect(saved.tags.x.links).toEqual(v2.tags.x.links);
 });

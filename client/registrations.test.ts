@@ -50,7 +50,7 @@ test("every name the plugin registers in the app is one Paseo accepts", async ()
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(seen.get("timeline renderer kind")?.size).toBe(1);
   expect(seen.get("addAttachmentSource")?.size).toBe(3);
-  expect([...(seen.get("slash command name") ?? [])]).toEqual(["tag", "untag", "tag-link"]);
+  expect([...(seen.get("slash command name") ?? [])]).toEqual(["tag", "untag", "tag-link", "tag-fetch"]);
   expect(pills).toEqual([{ agentId: "a1", id: "tags", label: "auth" }]);
   cleanup();
 });

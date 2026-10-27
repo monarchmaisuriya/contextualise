@@ -10,6 +10,8 @@ import {
   addLinkRpc,
   addTagRpc,
   agentAttachmentSource,
+  fetchItemRpc,
+  parseFetchCommand,
   parseLinkCommand,
   parseTagNames,
   removeTagRpc,
@@ -69,6 +71,17 @@ export default function contribute(client: PluginClientContext) {
         const { url, tag } = parseLinkCommand(args);
         const outcome = await readable(() => rpc(addLinkRpc, { tag, url }));
         if (!outcome.changed) throw new Error(`"${outcome.name}" already has this link`);
+        tagsChanged();
+      },
+    }),
+    client.addSlashCommand({
+      name: "tag-fetch",
+      description: "Fetch a Jira, Sentry, Slack, or Notion item into a tag through a background Claude agent",
+      argumentHint: "<PROJ-123 or link> <tag>",
+      context: "agent",
+      async onSubmit({ args, rpc }) {
+        const { ref, tag } = parseFetchCommand(args);
+        await readable(() => rpc(fetchItemRpc, { tag, ref }));
         tagsChanged();
       },
     }),

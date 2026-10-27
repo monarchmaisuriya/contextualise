@@ -2,6 +2,18 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.6.0 - 2026-10-27
+
+### Added
+
+- Fetch Jira, Sentry, Slack, and Notion items into a tag: `/tag-fetch <ref> <tag>` or **Fetch item** on the Tags screen. A hidden background Claude agent reads the item through the connectors Claude agents already have; the plugin holds no vendor credentials.
+- The worker may use only the named read tools of that vendor's connector; every other tool request is denied, and every decision is written to the plugin log.
+- **Fetched items** on each tag (status, Refresh, Remove); ready items are included in Attach > Tag, redacted like other attachment text.
+
+### Changed
+
+- `tags.json` is now version 3 (adds fetched items). Versions 1 and 2 are read and upgraded on the first change; older plugin versions refuse a version 3 file instead of dropping items.
+
 ## 0.5.0 - 2026-10-27
 
 ### Added

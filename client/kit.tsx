@@ -45,7 +45,7 @@ export function plural(n: number, word: string): string {
 }
 
 export function summary(tag: TagSummary): string {
-  const parts = [[tag.agents.length, "agent"], [tag.workspaces.length, "workspace"], [tag.links.length, "link"]] as const;
+  const parts = [[tag.agents.length, "agent"], [tag.workspaces.length, "workspace"], [tag.links.length, "link"], [tag.notes.length, "item"]] as const;
   return parts.filter(([n]) => n > 0).map(([n, word]) => plural(n, word)).join(" · ");
 }
 

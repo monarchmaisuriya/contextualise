@@ -1,4 +1,4 @@
-import { tagKey, type AgentMember, type TagSummary } from "../shared/contracts";
+import { type AgentMember, type NoteMember, tagKey, type TagSummary, VENDOR_LABELS } from "../shared/contracts";
 import type { AgentTimelineItem } from "./paseo-types";
 import { redactSecrets } from "./secrets";
 
@@ -109,6 +109,10 @@ export function renderSnapshot(tag: TagSummary, readings: readonly AgentReading[
     for (const link of tag.links) head += `- [${link.title}](${link.url})\n`;
     head += "\n";
   }
+  if (tag.notes.length > 0) {
+    head += "## Fetched items\n\n";
+    for (const note of tag.notes) head += renderNote(note);
+  }
   if (tag.agents.length > 0) head += "## Agents\n\n";
 
   const byId = new Map(readings.map((reading) => [reading.agentId, reading]));
@@ -117,6 +121,14 @@ export function renderSnapshot(tag: TagSummary, readings: readonly AgentReading[
   const share = Math.floor((maxChars - head.length - fixed.join("").length) / Math.max(reading.length, 1));
   const sections = tag.agents.map((member) => renderAgent(agentHeading(member), byId.get(member.agentId), share));
   return clip(`${head}${sections.join("")}`.trimEnd(), maxChars);
+}
+
+// A fetched item: its source and the stored copy, redacted like every other attachment text.
+function renderNote(note: NoteMember): string {
+  const source = `${VENDOR_LABELS[note.vendor]} ${note.ref}${note.url && note.url !== note.ref ? ` (${note.url})` : ""}`;
+  if (note.status === "fetching") return `### ${source}\n\n(still being fetched)\n\n`;
+  if (note.status === "failed") return `### ${source}\n\n(fetch failed: ${note.error ?? "unknown reason"})\n\n`;
+  return `### ${note.title} (${source}, fetched ${note.fetchedAt?.slice(0, 10) ?? "unknown"})\n\n${redactSecrets(note.text.trim())}\n\n`;
 }
 
 // One agent's recent conversation, for the "Agent conversation" attachment.
@@ -156,6 +168,7 @@ export function describeMembers(tag: TagSummary, unreadable = 0): string {
   }
   if (tag.workspaces.length > 0) parts.push(count(tag.workspaces.length, "workspace"));
   if (tag.links.length > 0) parts.push(count(tag.links.length, "link"));
+  if (tag.notes.length > 0) parts.push(count(tag.notes.length, "item"));
   if (unreadable > 0) parts.push(`${unreadable} unreadable`);
   return parts.join("; ");
 }

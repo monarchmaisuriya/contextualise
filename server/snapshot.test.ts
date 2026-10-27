@@ -13,7 +13,7 @@ function agent(overrides: Partial<AgentMember>): AgentMember {
 }
 
 function tag(overrides: Partial<TagSummary> = {}): TagSummary {
-  return { key: "auth rewrite", name: "Auth Rewrite", hasWorkspaceLabel: true, workspaces: [], agents: [], links: [], ...overrides };
+  return { key: "auth rewrite", name: "Auth Rewrite", hasWorkspaceLabel: true, workspaces: [], agents: [], links: [], notes: [], ...overrides };
 }
 
 test("lastTurns keeps user and agent text only, newest turns, and counts the dropped ones", () => {
@@ -153,4 +153,22 @@ test("terminal output keeps the newest lines that fit, redacted, and says how ma
   expect(text).toMatch(/\(last \d+ of 900 lines\)/);
   expect(text.length).toBeLessThanOrEqual(1_500);
   expect(text.trimEnd().endsWith("```")).toBe(true);
+});
+
+test("fetched items are listed with their source, redacted, and counted; pending and failed ones say so", () => {
+  const note = (over: Record<string, unknown>) => ({ id: "n", vendor: "jira" as const, ref: "PROJ-1", title: "PROJ-1", url: null, status: "ready" as const, text: "", error: null, addedAt: "t", fetchedAt: "2026-10-27T10:00:00Z", ...over });
+  const withNotes = tag({
+    notes: [
+      note({ title: "Login fails", url: "https://acme.atlassian.net/browse/PROJ-1", text: "Token: xoxb-1234567890-abcdefghij" }),
+      note({ id: "n2", vendor: "slack", ref: "https://a.slack.com/archives/C1/p1", status: "fetching" }),
+      note({ id: "n3", vendor: "sentry", ref: "https://acme.sentry.io/issues/9/", status: "failed", error: "no access" }),
+    ],
+  });
+  const text = renderSnapshot(withNotes, [], 40_000);
+  expect(text).toContain("## Fetched items");
+  expect(text).toContain("### Login fails (Jira PROJ-1 (https://acme.atlassian.net/browse/PROJ-1), fetched 2026-10-27)");
+  expect(text).toContain("[removed: Slack token]");
+  expect(text).toContain("(still being fetched)");
+  expect(text).toContain("(fetch failed: no access)");
+  expect(describeMembers(withNotes)).toBe("3 items");
 });

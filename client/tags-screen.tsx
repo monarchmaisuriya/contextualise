@@ -6,12 +6,17 @@ import { Pressable, Text, View } from "react-native";
 import {
   addLinkRpc,
   type AgentMember,
+  fetchItemRpc,
   type LinkMember,
   listTagsRpc,
+  type NoteMember,
   previewTagRpc,
+  refreshNoteRpc,
   removeLinkRpc,
+  removeNoteRpc,
   removeTagRpc,
   type TagSummary,
+  VENDOR_LABELS,
 } from "../shared/contracts";
 import { AgentTags } from "./agent-tags";
 import { errorText } from "./errors";
@@ -59,6 +64,58 @@ function LinkRow({ link, tag, styles }: { link: LinkMember; tag: TagSummary; sty
       <Pressable onPress={() => removal.mutate(undefined)} disabled={removal.isPending} accessibilityRole="button" accessibilityLabel={`Remove link ${link.title} from ${tag.name}`}>
         <Text style={styles.danger}>{removal.isPending ? "Removing" : "Remove"}</Text>
       </Pressable>
+    </View>
+  );
+}
+
+function NoteRow({ note, tag, styles }: { note: NoteMember; tag: TagSummary; styles: Styles }) {
+  const refresh = useRpc(refreshNoteRpc);
+  const remove = useRpc(removeNoteRpc);
+  const refreshing = useTagChange(() => refresh({ tag: tag.name, noteId: note.id }));
+  const removal = useTagChange(() => remove({ tag: tag.name, noteId: note.id }));
+  const state =
+    note.status === "fetching" ? "fetching..." : note.status === "failed" ? `failed: ${note.error ?? "unknown reason"}` : `fetched ${note.fetchedAt ? ago(note.fetchedAt) : ""}`;
+  return (
+    <View style={styles.row}>
+      <View style={styles.grow}>
+        <Text style={styles.text} numberOfLines={1}>
+          {note.title}
+        </Text>
+        <Text style={note.status === "failed" ? styles.danger : styles.muted} numberOfLines={2}>
+          {VENDOR_LABELS[note.vendor]} {note.ref === note.title ? "" : `${note.ref} `}· {state}
+        </Text>
+      </View>
+      {note.status === "fetching" ? null : (
+        <Pressable onPress={() => refreshing.mutate(undefined)} disabled={refreshing.isPending} accessibilityRole="button" accessibilityLabel={`Fetch ${note.title} again`}>
+          <Text style={styles.link}>Refresh</Text>
+        </Pressable>
+      )}
+      <Pressable onPress={() => removal.mutate(undefined)} disabled={removal.isPending} accessibilityRole="button" accessibilityLabel={`Remove ${note.title} from ${tag.name}`}>
+        <Text style={styles.danger}>{removal.isPending ? "Removing" : "Remove"}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+// A Jira key or a Jira, Sentry, Slack, or Notion link; a background Claude agent reads it through
+// its own connector and the text is saved under the tag.
+function FetchForm({ tagName, styles, onClose }: { tagName: string; styles: Styles; onClose(): void }) {
+  const fetchItem = useRpc(fetchItemRpc);
+  const toast = useToast();
+  const [ref, setRef] = useState("");
+  const fetching = useTagChange(
+    () => fetchItem({ tag: tagName, ref }),
+    () => {
+      toast.show(`Fetching ${ref.trim()} into "${tagName}"; it appears under Fetched items when ready`, { variant: "info" });
+      setRef("");
+      onClose();
+    },
+  );
+  return (
+    <View style={styles.wrap}>
+      <TextInput style={styles.input} value={ref} onChangeText={setRef} placeholder="PROJ-123, or a Jira, Sentry, Slack, or Notion link" autoCapitalize="none" autoCorrect={false} accessibilityLabel="Item to fetch" onSubmitEditing={() => fetching.mutate(undefined)} />
+      <Button label="Fetch" kind="primary" styles={styles} onPress={() => fetching.mutate(undefined)} disabled={fetching.isPending || ref.trim() === ""} />
+      <Button label="Cancel" styles={styles} onPress={onClose} />
     </View>
   );
 }
@@ -124,6 +181,7 @@ function PreviewModal({ tag, styles, onClose }: { tag: TagSummary; styles: Style
 
 function TagCard({ tag, styles, navigation }: { tag: TagSummary; styles: Styles; navigation: Navigation }) {
   const [linking, setLinking] = useState(false);
+  const [fetchingOpen, setFetchingOpen] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   return (
     <View style={styles.card}>
@@ -134,11 +192,13 @@ function TagCard({ tag, styles, navigation }: { tag: TagSummary; styles: Styles;
         </View>
         <Button label="Preview" styles={styles} onPress={() => setPreviewing(true)} />
         <Button label="Add link" styles={styles} onPress={() => setLinking((open) => !open)} />
+        <Button label="Fetch item" styles={styles} onPress={() => setFetchingOpen((open) => !open)} />
       </View>
       {!tag.hasWorkspaceLabel ? (
         <Text style={styles.muted}>No workspace has this label. Add the label "{tag.name}" to a workspace in Paseo to include it; if you renamed a label, tag these again under the new name.</Text>
       ) : null}
       {linking ? <AddLinkForm tagName={tag.name} styles={styles} onClose={() => setLinking(false)} /> : null}
+      {fetchingOpen ? <FetchForm tagName={tag.name} styles={styles} onClose={() => setFetchingOpen(false)} /> : null}
       {tag.workspaces.length > 0 ? <Text style={styles.section}>Workspaces (Paseo label)</Text> : null}
       {tag.workspaces.map((workspace) => (
         <Pressable
@@ -160,6 +220,10 @@ function TagCard({ tag, styles, navigation }: { tag: TagSummary; styles: Styles;
       {tag.agents.map((agent) => (
         <AgentRow key={agent.agentId} agent={agent} tag={tag} styles={styles} navigation={navigation} />
       ))}
+      {tag.notes.length > 0 ? <Text style={styles.section}>Fetched items</Text> : null}
+      {tag.notes.map((note) => (
+        <NoteRow key={note.id} note={note} tag={tag} styles={styles} />
+      ))}
       {tag.links.length > 0 ? <Text style={styles.section}>Links</Text> : null}
       {tag.links.map((link) => (
         <LinkRow key={link.url} link={link} tag={tag} styles={styles} />
@@ -173,7 +237,12 @@ export function TagsScreen({ theme, layout, params, navigation }: PluginScreenPr
   const styles = useStyles(theme, layout.compact);
   const list = useRpc(listTagsRpc);
   const queryClient = useQueryClient();
-  const tags = useQuery({ queryKey: TAGS_QUERY, queryFn: () => list({}) });
+  // While a fetch is running, the list reloads every few seconds so its result shows up on its own.
+  const tags = useQuery({
+    queryKey: TAGS_QUERY,
+    queryFn: () => list({}),
+    refetchInterval: (query) => (query.state.data?.tags.some((tag) => tag.notes.some((note) => note.status === "fetching")) ? 3_000 : false),
+  });
   const [filter, setFilter] = useState("");
   useEffect(() => onTagsChanged(() => void queryClient.invalidateQueries({ queryKey: TAGS_QUERY })), [queryClient]);
   const wanted = filter.trim().toLowerCase();

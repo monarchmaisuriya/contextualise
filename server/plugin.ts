@@ -2,7 +2,11 @@ import type { PluginServerContext } from "@getpaseo/plugin/server";
 import {
   addLinkRpc,
   addTagRpc,
+  fetchItemRpc,
+  refreshNoteRpc,
+  removeNoteRpc,
   listTagsRpc,
+  parseItemRef,
   previewTagRpc,
   removeLinkRpc,
   removeTagRpc,
@@ -14,6 +18,7 @@ import {
   type SnapshotSettings,
   type TagSummary,
 } from "../shared/contracts";
+import { Fetcher } from "./fetches";
 import type { PaseoApi } from "./paseo-types";
 import { Memo, searchAgents, searchTags, searchTerminals, tagAttachment } from "./sources";
 import { TagStore } from "./tag-store";
@@ -30,6 +35,11 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
   const readings = new Memo(READINGS_CACHE_MS);
   const directories = new Memo(DIRECTORY_CACHE_MS);
   let serverId: Promise<string> | null = null;
+  const fetcher = new Fetcher(store, resolveRoot);
+  void store
+    .failInterruptedFetches()
+    .then((count) => count > 0 && console.log(`[contextualise] marked ${count} interrupted fetch(es) as failed`))
+    .catch((error: unknown) => console.error(`[contextualise] could not check for interrupted fetches: ${String(error)}`));
 
   async function currentSettings(): Promise<SnapshotSettings> {
     const state = await settings.read();
@@ -46,6 +56,20 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
 
   server.handle(addTagRpc, async ({ tags, agentId, workspaceId }) => ({ results: await store.add(tags, { agentId, workspaceId }) }));
   server.handle(removeTagRpc, async ({ tags, agentId }) => ({ results: await store.remove(tags, agentId) }));
+
+  server.handle(fetchItemRpc, ({ tag, ref }, { paseo }) => fetcher.start(paseo, tag, parseItemRef(ref)));
+  server.handle(refreshNoteRpc, ({ tag, noteId }, { paseo }) => fetcher.refresh(paseo, tag, noteId));
+  server.handle(removeNoteRpc, ({ tag, noteId }) => store.removeNote(tag, noteId));
+
+  // Fetch workers may use only the named read tools of the vendor they fetch; everything else they
+  // ask for is denied. Every decision is logged, so the plugin log shows what each worker touched. Requests from any other agent are left alone.
+  server.on("agent.permission_requested", async ({ agent, request }, { paseo }) => {
+    const decision = await fetcher.decide(agent.id, agent.cwd, request.name);
+    if (!decision) return;
+    console.log(`[contextualise] ${decision === "allow" ? "allowed" : "denied"} fetch worker ${agent.id} the tool ${request.name}`);
+    const response = decision === "allow" ? { behavior: "allow" as const } : { behavior: "deny" as const, message: "Contextualise fetch workers may only use the read tools of the item's own connector." };
+    await paseo.agents.ref(agent.id).respondToPermission({ requestId: request.id, response });
+  });
 
   server.handle(addLinkRpc, ({ tag, url, title }) => store.addLink(tag, { url, title }));
   server.handle(removeLinkRpc, ({ tag, url }) => store.removeLink(tag, url));

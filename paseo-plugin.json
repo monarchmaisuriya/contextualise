@@ -1,7 +1,7 @@
 {
   "id": "contextualise",
   "name": "Contextualise",
-  "description": "Tag agents across workspaces and providers, then attach a tag, another agent's conversation, or terminal output to a prompt.",
+  "description": "Tag agents across workspaces and providers, fetch Jira, Sentry, Slack, and Notion items into tags, and attach any of it to a prompt.",
   "requirements": {
     "paseo": ">=0.13.0 <0.14.0"
   }
