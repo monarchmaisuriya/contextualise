@@ -1,37 +1,38 @@
-import type { PluginAttachmentItem } from "@getpaseo/plugin";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { addTagRpc, listTagsRpc, removeTagRpc, searchTagsRpc, snapshotSettings, type SnapshotSettings, type TagSummary } from "../shared/contracts";
-import type { AgentTimelineItem, PaseoApi } from "./paseo-types";
-import { describeMembers, lastTurns, matchTags, renderSnapshot, type AgentTranscript } from "./snapshot";
-import { TagStore } from "./tag-store";
-import { mergeTags, readDirectory } from "./tags";
+import {
+  addLinkRpc,
+  addTagRpc,
+  listTagsRpc,
+  previewTagRpc,
+  RECEIPT_KIND,
+  RECEIPT_ROW_ID,
+  removeLinkRpc,
+  removeTagRpc,
+  searchAgentsRpc,
+  searchTagsRpc,
+  searchTerminalsRpc,
+  snapshotSettings,
+  tagKey,
+  type Receipt,
+  type SnapshotSettings,
+  type TagSummary,
+} from "../shared/contracts";
+import type { PaseoApi } from "./paseo-types";
+import { Memo, searchAgents, searchTags, searchTerminals, tagAttachment } from "./sources";
+import { TagStore, type Outcome } from "./tag-store";
+import { type Directory, mergeTags, readDirectory } from "./tags";
 
-const TAGS_PER_SEARCH = 5;
-const SNAPSHOT_CACHE_MS = 30_000;
-const TIMELINE_PAGE = 200;
-const MAX_TIMELINE_PAGES = 5;
-
-// Reads backwards from the end until it has one more user message than it needs (so it knows
-// earlier turns exist), the start of the timeline, or the page cap.
-async function readTranscript(paseo: PaseoApi, agentId: string, turnsPerAgent: number): Promise<AgentTranscript> {
-  const timeline = paseo.agents.ref(agentId).timeline;
-  const items: AgentTimelineItem[] = [];
-  let page = await timeline.refetch({ direction: "tail", limit: TIMELINE_PAGE, projection: "projected" });
-  for (let pages = 1; ; pages += 1) {
-    if (page.error) throw new Error(`Contextualise could not read agent ${agentId}: ${page.error}`);
-    items.unshift(...page.entries.map((entry) => entry.item));
-    const userMessages = items.filter((item) => item.type === "user_message").length;
-    if (!page.hasOlder || !page.startCursor || userMessages > turnsPerAgent || pages >= MAX_TIMELINE_PAGES) break;
-    page = await timeline.refetch({ direction: "before", cursor: page.startCursor, limit: TIMELINE_PAGE, projection: "projected" });
-  }
-  return { agentId, ...lastTurns(items, turnsPerAgent), olderUnread: page.hasOlder };
-}
+const READINGS_CACHE_MS = 30_000;
+// Long enough to cover one burst of keystrokes in the picker, short enough that a new agent or
+// label shows up almost at once.
+const DIRECTORY_CACHE_MS = 5_000;
 
 export function contributeTags(server: PluginServerContext, resolveRoot: () => Promise<string>) {
   const store = new TagStore(resolveRoot);
   const settings = server.registerSettings(snapshotSettings);
-  // Built snapshots by tag, members, and settings. Tagging changes members, so it clears the cache.
-  const snapshots = new Map<string, { builtAt: number; item: PluginAttachmentItem }>();
+  const readings = new Memo(READINGS_CACHE_MS);
+  const directories = new Memo(DIRECTORY_CACHE_MS);
+  let serverId: Promise<string> | null = null;
 
   async function currentSettings(): Promise<SnapshotSettings> {
     const state = await settings.read();
@@ -39,54 +40,76 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
     return state.values;
   }
 
-  async function attachmentFor(paseo: PaseoApi, tag: TagSummary, options: SnapshotSettings): Promise<PluginAttachmentItem> {
-    const members = [...tag.workspaces.map((workspace) => workspace.workspaceId), ...tag.agents.map((agent) => `${agent.agentId}:${agent.state}`)];
-    const cacheKey = JSON.stringify([tag.key, members, options]);
-    const cached = snapshots.get(cacheKey);
-    if (cached && Date.now() - cached.builtAt < SNAPSHOT_CACHE_MS) return cached.item;
-    const readable = tag.agents.filter((agent) => agent.state !== "missing");
-    const transcripts = await Promise.all(readable.map((agent) => readTranscript(paseo, agent.agentId, options.turnsPerAgent)));
-    const item: PluginAttachmentItem = {
-      id: tag.key,
-      identifier: tag.name,
-      title: tag.name,
-      subtitle: describeMembers(tag),
-      url: `paseo://contextualise/tag/${encodeURIComponent(tag.key)}`,
-      text: renderSnapshot(tag, transcripts, options.snapshotMaxChars),
-      resourceType: "tag",
-    };
-    snapshots.set(cacheKey, { builtAt: Date.now(), item });
-    return item;
-  }
+  const directory = (paseo: PaseoApi): Promise<Directory> => directories.get("directory", () => readDirectory(paseo));
 
   async function listTags(paseo: PaseoApi): Promise<TagSummary[]> {
-    const [stored, directory] = await Promise.all([store.read(), readDirectory(paseo)]);
-    return mergeTags(stored, directory);
+    const [stored, current] = await Promise.all([store.read(), directory(paseo)]);
+    return mergeTags(stored, current);
   }
 
-  server.handle(addTagRpc, async ({ tag, agentId, workspaceId }) => {
-    const result = await store.add(tag, { agentId, workspaceId });
-    snapshots.clear();
-    return result;
+  // Replaces this agent's one confirmation row, so /tag and /untag answer in place without piling up.
+  async function confirm(paseo: PaseoApi, agentId: string, action: Receipt["action"], outcomes: Outcome[]): Promise<void> {
+    const tags = new Map((await listTags(paseo)).map((tag) => [tag.key, tag]));
+    const data: Receipt = {
+      action,
+      entries: outcomes.map((outcome) => {
+        const tag = tags.get(outcome.tag);
+        return { name: tag?.name ?? outcome.name, changed: outcome.changed, agents: tag?.agents.length ?? 0, workspaces: tag?.workspaces.length ?? 0, links: tag?.links.length ?? 0 };
+      }),
+    };
+    try {
+      const timeline = paseo.agents.ref(agentId).timeline;
+      // The daemon appends only to an agent it has loaded; after a restart, an agent nobody has
+      // opened yet is "unknown" until its timeline is read once.
+      await timeline.refetch({ direction: "tail", limit: 1, projection: "projected" });
+      await timeline.append({ type: "plugin", id: RECEIPT_ROW_ID, kind: RECEIPT_KIND, version: 1, data });
+    } catch (error) {
+      throw new Error(`Saved, but the confirmation row could not be added: ${String((error as Error).message ?? error)}`);
+    }
+  }
+
+  server.handle(addTagRpc, async ({ tags, agentId, workspaceId }, { paseo }) => {
+    const results = await store.add(tags, { agentId, workspaceId });
+    await confirm(paseo, agentId, "tag", results);
+    return { results };
   });
 
-  server.handle(removeTagRpc, async ({ tag, agentId }) => {
-    const result = await store.remove(tag, agentId);
-    snapshots.clear();
-    return result;
+  server.handle(removeTagRpc, async ({ tags, agentId }, { paseo }) => {
+    const results = await store.remove(tags, agentId);
+    await confirm(paseo, agentId, "untag", results);
+    return { results };
   });
 
+  server.handle(addLinkRpc, ({ tag, url, title }) => store.addLink(tag, { url, title }));
+  server.handle(removeLinkRpc, ({ tag, url }) => store.removeLink(tag, url));
   server.handle(listTagsRpc, async (_input, { paseo }) => ({ tags: await listTags(paseo) }));
+
+  server.handle(previewTagRpc, async ({ tag }, { paseo }) => {
+    const options = await currentSettings();
+    const found = (await listTags(paseo)).find((summary) => summary.key === tagKey(tag));
+    if (!found) throw new Error(`No tag named "${tag}"`);
+    const item = await tagAttachment(paseo, readings, found, options);
+    return { subtitle: item.subtitle ?? "", text: item.text };
+  });
 
   server.handle(searchTagsRpc, async ({ query }, { paseo }) => {
     const options = await currentSettings();
-    const now = Date.now();
-    for (const [key, entry] of snapshots) if (now - entry.builtAt >= SNAPSHOT_CACHE_MS) snapshots.delete(key);
-    const matches = matchTags(await listTags(paseo), query, TAGS_PER_SEARCH);
-    return { items: await Promise.all(matches.map((tag) => attachmentFor(paseo, tag, options))) };
+    return { items: await searchTags(paseo, readings, await listTags(paseo), query, options) };
+  });
+
+  server.handle(searchAgentsRpc, async ({ query }, { paseo }) => {
+    const options = await currentSettings();
+    serverId ??= paseo.hosts.list().then((hosts) => hosts.self.serverId);
+    return { items: await searchAgents(paseo, readings, await directory(paseo), await serverId, query, options) };
+  });
+
+  server.handle(searchTerminalsRpc, async ({ query }, { paseo }) => {
+    const options = await currentSettings();
+    return { items: await searchTerminals(paseo, readings, await directory(paseo), query, options) };
   });
 
   return () => {
-    snapshots.clear();
+    readings.clear();
+    directories.clear();
   };
 }

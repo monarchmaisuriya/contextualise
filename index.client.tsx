@@ -1,9 +1,22 @@
 import type { PluginClientContext, PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { SidebarRow } from "@getpaseo/plugin/client/ui";
+import { readable } from "./client/errors";
+import { ReceiptRow } from "./client/receipt";
 import { SnapshotSettingsScreen } from "./client/settings-screen";
 import { tagsChanged } from "./client/tag-events";
 import { TagsScreen } from "./client/tags-screen";
-import { addTagRpc, parseTagName, removeTagRpc, tagAttachmentSource } from "./shared/contracts";
+import {
+  addLinkRpc,
+  addTagRpc,
+  agentAttachmentSource,
+  parseLinkCommand,
+  parseTagNames,
+  RECEIPT_KIND,
+  receiptSchema,
+  removeTagRpc,
+  tagAttachmentSource,
+  terminalAttachmentSource,
+} from "./shared/contracts";
 
 // Shown, hidden, and moved under Paseo's Settings > Sidebar.
 function TagsSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
@@ -11,34 +24,56 @@ function TagsSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps) 
 }
 
 export default function contribute(client: PluginClientContext) {
+  const openTagsFor = (agentId: string, workspaceId?: string) => client.openScreen({ screenId: "tags", params: workspaceId ? { agentId, workspaceId } : { agentId } });
   const removers = [
-    client.addScreen({ id: "tags", title: "Tags", Component: TagsScreen }),
+    client.addScreen({ id: "tags", title: (params) => (params.agentId ? "Tags for this agent" : "Tags"), Component: TagsScreen }),
     client.addSidebarFooterItem({ id: "tags", title: "Tags", Component: TagsSidebarItem }),
     client.addSettingsScreen({ id: "snapshot", title: "Contextualise", icon: "Tags", Component: SnapshotSettingsScreen }),
     client.addAttachmentSource(tagAttachmentSource),
-    // Paseo shows a thrown error as a toast and clears the composer either way.
+    client.addAttachmentSource(agentAttachmentSource),
+    client.addAttachmentSource(terminalAttachmentSource),
+    client.addTimelineRenderer({ kind: RECEIPT_KIND, version: 1, schema: receiptSchema, Component: (props) => <ReceiptRow {...props} openTags={openTagsFor} /> }),
+    // Paseo shows a thrown error as a toast and clears the composer either way. Success shows as a
+    // confirmation row in the agent's timeline, added by the server.
     client.addSlashCommand({
       name: "tag",
-      description: "Tag this agent so it shows under the tag and in Attach > Tag",
-      argumentHint: "<tag name>",
+      description: "Tag this agent (several: /tag auth, billing)",
+      argumentHint: "<tag>[, <tag>...]",
       context: "agent",
       async onSubmit({ args, agent, rpc }) {
-        const tag = parseTagName(args);
-        const { added } = await rpc(addTagRpc, { tag, agentId: agent.id, workspaceId: agent.workspaceId });
-        if (!added) throw new Error(`This agent is already tagged "${tag}"`);
+        await readable(() => rpc(addTagRpc, { tags: parseTagNames(args), agentId: agent.id, workspaceId: agent.workspaceId }));
         tagsChanged();
       },
     }),
     client.addSlashCommand({
       name: "untag",
-      description: "Remove this agent from a tag",
-      argumentHint: "<tag name>",
+      description: "Remove this agent from a tag (several: /untag auth, billing)",
+      argumentHint: "<tag>[, <tag>...]",
       context: "agent",
       async onSubmit({ args, agent, rpc }) {
-        const tag = parseTagName(args);
-        const { removed } = await rpc(removeTagRpc, { tag, agentId: agent.id });
-        if (!removed) throw new Error(`This agent is not tagged "${tag}"`);
+        await readable(() => rpc(removeTagRpc, { tags: parseTagNames(args), agentId: agent.id }));
         tagsChanged();
+      },
+    }),
+    client.addSlashCommand({
+      name: "tag-link",
+      description: "Add a web link to a tag; it is listed when the tag is attached",
+      argumentHint: "<https://...> <tag>",
+      context: "agent",
+      async onSubmit({ args, rpc }) {
+        const { url, tag } = parseLinkCommand(args);
+        const outcome = await readable(() => rpc(addLinkRpc, { tag, url }));
+        if (!outcome.changed) throw new Error(`"${outcome.name}" already has this link`);
+        tagsChanged();
+      },
+    }),
+    client.addSlashCommand({
+      name: "tags",
+      description: "Show and edit this agent's tags",
+      argumentHint: "",
+      context: "agent",
+      onSubmit({ agent }) {
+        openTagsFor(agent.id, agent.workspaceId);
       },
     }),
     client.addCommandCenterItem({
@@ -47,8 +82,8 @@ export default function contribute(client: PluginClientContext) {
       icon: "Tags",
       keywords: ["tag", "label", "contextualise"],
       context: "agent",
-      onSelect({ agent, openScreen }) {
-        openScreen({ screenId: "tags", params: { agentId: agent.id, workspaceId: agent.workspaceId, agentTitle: agent.title ?? agent.id } });
+      onSelect({ agent }) {
+        openTagsFor(agent.id, agent.workspaceId);
       },
     }),
     client.addCommandCenterItem({

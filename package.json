@@ -1,10 +1,12 @@
 {
   "name": "contextualise",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "files": [
     "paseo-plugin.json",
     "OVERVIEW.md",
+    "README.md",
+    "CHANGELOG.md",
     "index.client.tsx",
     "index.server.ts",
     "client/",
@@ -27,5 +29,5 @@
     "vitest": "^3.2.7",
     "zod": "^4.4.3"
   },
-  "description": "Tag Paseo agents across workspaces and providers, find them by tag, and attach a whole tag to a prompt as one text snapshot."
+  "description": "Tag Paseo agents across workspaces and providers, then attach a tag, another agent's conversation, or terminal output to a prompt."
 }

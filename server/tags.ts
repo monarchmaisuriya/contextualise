@@ -18,10 +18,18 @@ export interface DirectoryAgent {
   title: string | null;
   provider: string;
   archivedAt?: string | null;
+  workspaceId?: string;
+  cwd?: string;
+  updatedAt?: string;
+}
+
+export interface Directory {
+  workspaces: DirectoryWorkspace[];
+  agents: DirectoryAgent[];
 }
 
 // Every workspace and every agent (archived included) the daemon knows, paged to the end.
-export async function readDirectory(paseo: PaseoApi): Promise<{ workspaces: DirectoryWorkspace[]; agents: DirectoryAgent[] }> {
+export async function readDirectory(paseo: PaseoApi): Promise<Directory> {
   const workspaces: DirectoryWorkspace[] = [];
   for (let cursor: string | undefined; ; ) {
     const page = await paseo.workspaces.list({ page: { limit: PAGE_LIMIT, cursor } });
@@ -39,15 +47,15 @@ export async function readDirectory(paseo: PaseoApi): Promise<{ workspaces: Dire
   return { workspaces, agents };
 }
 
-// One list of tags: every workspace label name joined with the agents tagged under the same name.
-// Most recently tagged first; tags that exist only as workspace labels follow, by name.
-export function mergeTags(stored: StoredTags, directory: { workspaces: DirectoryWorkspace[]; agents: DirectoryAgent[] }): TagSummary[] {
+// One list of tags: every workspace label name joined with the agents and links tagged under the
+// same name. Most recently tagged first; tags that exist only as workspace labels follow, by name.
+export function mergeTags(stored: StoredTags, directory: Directory): TagSummary[] {
   const byKey = new Map<string, TagSummary>();
   const entry = (name: string) => {
     const key = tagKey(name);
     let tag = byKey.get(key);
     if (!tag) {
-      tag = { key, name: normalizeTagName(name), hasWorkspaceLabel: false, workspaces: [], agents: [] };
+      tag = { key, name: normalizeTagName(name), hasWorkspaceLabel: false, workspaces: [], agents: [], links: [] };
       byKey.set(key, tag);
     }
     return tag;
@@ -83,8 +91,9 @@ export function mergeTags(stored: StoredTags, directory: { workspaces: Directory
       };
       tag.agents.push(summary);
     }
+    tag.links.push(...storedTag.links);
   }
 
-  const lastTagged = (tag: TagSummary) => tag.agents.reduce((latest, agent) => (agent.taggedAt > latest ? agent.taggedAt : latest), "");
+  const lastTagged = (tag: TagSummary) => [...tag.agents, ...tag.links].reduce((latest, member) => (member.taggedAt > latest ? member.taggedAt : latest), "");
   return [...byKey.values()].sort((a, b) => lastTagged(b).localeCompare(lastTagged(a)) || a.name.localeCompare(b.name));
 }

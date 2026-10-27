@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import type { AgentMember, TagSummary } from "../shared/contracts";
 import type { AgentTimelineItem } from "./paseo-types";
-import { describeMembers, lastTurns, matchTags, renderSnapshot, SNAPSHOT_HEADER } from "./snapshot";
+import { describeMembers, lastTurns, matchTags, renderConversation, renderSnapshot, renderTerminal, SNAPSHOT_HEADER } from "./snapshot";
 
 const user = (text: string) => ({ type: "user_message", text }) as AgentTimelineItem;
 const reply = (text: string) => ({ type: "assistant_message", text }) as AgentTimelineItem;
@@ -13,7 +13,7 @@ function agent(overrides: Partial<AgentMember>): AgentMember {
 }
 
 function tag(overrides: Partial<TagSummary> = {}): TagSummary {
-  return { key: "auth rewrite", name: "Auth Rewrite", hasWorkspaceLabel: true, workspaces: [], agents: [], ...overrides };
+  return { key: "auth rewrite", name: "Auth Rewrite", hasWorkspaceLabel: true, workspaces: [], agents: [], links: [], ...overrides };
 }
 
 test("lastTurns keeps user and agent text only, newest turns, and counts the dropped ones", () => {
@@ -103,4 +103,54 @@ test("matchTags ranks prefix matches before substring matches and caps the count
   const tags = ["billing auth", "auth rewrite", "auth", "a", "b", "c", "d", "e"].map((name) => tag({ key: name, name }));
   expect(matchTags(tags, "AUTH", 5).map((t) => t.key)).toEqual(["auth rewrite", "auth", "billing auth"]);
   expect(matchTags(tags, "  ", 5)).toHaveLength(5);
+});
+
+test("secrets in conversations are replaced before the budget is applied", () => {
+  const token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789AB";
+  const text = renderSnapshot(tag({ agents: [agent({})] }), [{ agentId: "a1", turns: [{ user: `use ${token}`, replies: ["password = hunter2hunter2"] }], earlier: 0 }], 40_000);
+  expect(text).not.toContain(token);
+  expect(text).not.toContain("hunter2hunter2");
+  expect(text).toContain("[removed: GitHub token]");
+  expect(text).toContain("[removed: password or key assignment]");
+});
+
+test("an unreadable agent is shown with its reason while the others still attach", () => {
+  const text = renderSnapshot(
+    tag({ agents: [agent({}), agent({ agentId: "a2", title: "Broken" })] }),
+    [
+      { agentId: "a1", turns: [{ user: "hello", replies: ["hi"] }], earlier: 0 },
+      { agentId: "a2", error: "session not found" },
+    ],
+    40_000,
+  );
+  expect(text).toContain("**User:** hello");
+  expect(text).toContain("### Broken (claude, agent a2)\n\n(conversation could not be read: session not found)");
+  expect(describeMembers(tag({ agents: [agent({})] }), 1)).toBe("1 agent: claude; 1 unreadable");
+});
+
+test("links are listed and counted", () => {
+  const withLinks = tag({ links: [{ url: "https://example.com/spec", title: "Spec", taggedAt: "t" }] });
+  expect(renderSnapshot(withLinks, [], 40_000)).toContain("## Links\n\n- [Spec](https://example.com/spec)");
+  expect(describeMembers(withLinks)).toBe("1 link");
+});
+
+test("one agent's conversation has its own heading, workspace, and budget", () => {
+  const turns = Array.from({ length: 10 }, (_, i) => ({ user: `q${i}`, replies: ["a".repeat(500)] }));
+  const text = renderConversation(agent({ provider: "codex" }), "payments / api", { agentId: "a1", turns, earlier: 0 }, 2_000);
+  expect(text.startsWith("# Fix login (codex, agent a1)")).toBe(true);
+  expect(text).toContain("Workspace: payments / api");
+  expect(text).toContain("q9");
+  expect(text.length).toBeLessThanOrEqual(2_000);
+});
+
+test("terminal output keeps the newest lines that fit, redacted, and says how many were cut", () => {
+  const lines = [...Array.from({ length: 300 }, (_, i) => `line-${i}`), "AWS=AKIAABCDEFGHIJKLMNOP", ""];
+  const text = renderTerminal({ name: "dev server", cwd: "/src/api" }, "payments / api", lines, 900, 1_500);
+  expect(text.startsWith("# Terminal: dev server in payments / api")).toBe(true);
+  expect(text).toContain("line-299");
+  expect(text).not.toContain("line-0\n");
+  expect(text).toContain("[removed: AWS access key]");
+  expect(text).toMatch(/\(last \d+ of 900 lines\)/);
+  expect(text.length).toBeLessThanOrEqual(1_500);
+  expect(text.trimEnd().endsWith("```")).toBe(true);
 });
