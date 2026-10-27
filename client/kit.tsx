@@ -2,10 +2,10 @@ import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { Icon, useToast } from "@getpaseo/plugin/client/ui";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
-import { Pressable, Text, View } from "react-native";
-import type { NoteMember, TagSummary } from "../shared/contracts";
+import { Pressable, Text } from "react-native";
+import type { TagSummary } from "../shared/contracts";
 import { errorText } from "./errors";
-import { ICONS } from "./icons";
+import { plural } from "./plural";
 import { tagsChanged } from "./tag-events";
 
 export const TAGS_QUERY = ["contextualise", "tags"];
@@ -16,11 +16,13 @@ export function useStyles(theme: Theme, compact: boolean) {
     () => ({
       screen: { flex: 1, backgroundColor: theme.colors.surface0 },
       content: { padding: compact ? 16 : 24, gap: 14, maxWidth: 860, width: "100%" as const, alignSelf: "center" as const },
-      card: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, padding: compact ? 12 : 16, gap: 10, backgroundColor: theme.colors.surface1 },
+      // Quiet surfaces: grouping comes from the background, not borders.
+      card: { borderRadius: 12, padding: compact ? 12 : 16, gap: 8, backgroundColor: theme.colors.surface1 },
       title: { color: theme.colors.foreground, fontSize: 16, fontWeight: "600" as const },
-      section: { color: theme.colors.foregroundMuted, fontSize: 12, fontWeight: "600" as const, textTransform: "uppercase" as const, marginTop: 4 },
+      section: { color: theme.colors.foregroundMuted, fontSize: 13, fontWeight: "500" as const, marginTop: 6 },
       text: { color: theme.colors.foreground },
       muted: { color: theme.colors.foregroundMuted, fontSize: 13 },
+      faint: { color: theme.colors.foregroundMuted, fontSize: 12, opacity: 0.75 },
       danger: { color: theme.colors.statusDanger, fontSize: 13 },
       link: { color: theme.colors.accent, fontSize: 13 },
       row: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },
@@ -29,9 +31,9 @@ export function useStyles(theme: Theme, compact: boolean) {
       input: { flex: 1, minWidth: 120, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, color: theme.colors.foreground, backgroundColor: theme.colors.surface2 },
       button: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: theme.colors.accent },
       buttonText: { color: theme.colors.accentForeground },
-      ghost: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: theme.colors.border },
+      ghost: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 },
       ghostText: { color: theme.colors.foreground, fontSize: 13 },
-      chip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 },
+      chip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: theme.colors.surface2 },
       chipOn: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: theme.colors.accent },
       chipText: { color: theme.colors.foreground, fontSize: 13 },
       chipOnText: { color: theme.colors.accentForeground, fontSize: 13 },
@@ -45,9 +47,7 @@ export function useStyles(theme: Theme, compact: boolean) {
 }
 export type Styles = ReturnType<typeof useStyles>;
 
-export function plural(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? "" : "s"}`;
-}
+export { plural };
 
 export function summary(tag: TagSummary): string {
   const parts = [[tag.agents.length, "agent"], [tag.workspaces.length, "workspace"], [tag.links.length, "link"], [tag.notes.length, "item"]] as const;
@@ -101,20 +101,13 @@ export function Chip({ label, icon, on, onPress, styles, accessibilityLabel }: {
   );
 }
 
-export function SectionTitle({ icon, label, count, styles }: { icon: string; label: string; count?: number; styles: Styles }) {
+// A quiet sentence-case heading; the count reads fainter than the label.
+export function SectionTitle({ label, count, hint, styles }: { label: string; count?: number; hint?: string; styles: Styles }) {
   return (
-    <View style={[styles.inline, { marginTop: 4 }]}>
-      <Icon name={icon} size={13} color={styles.colors.foregroundMuted} />
-      <Text style={[styles.section, { marginTop: 0 }]}>
-        {label}
-        {count !== undefined ? ` · ${count}` : ""}
-      </Text>
-    </View>
+    <Text style={styles.section}>
+      {label}
+      {count !== undefined ? <Text style={styles.faint}> {count}</Text> : null}
+      {hint ? <Text style={styles.faint}> · {hint}</Text> : null}
+    </Text>
   );
-}
-
-export function NoteStatusIcon({ status, styles }: { status: NoteMember["status"]; styles: Styles }) {
-  const [name, color] =
-    status === "ready" ? [ICONS.ready, styles.colors.statusSuccess] : status === "failed" ? [ICONS.failed, styles.colors.statusDanger] : [ICONS.fetching, styles.colors.statusWarning];
-  return <Icon name={name} size={14} color={color} />;
 }

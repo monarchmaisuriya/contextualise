@@ -1,5 +1,6 @@
 import type { PluginAttachmentItem } from "@getpaseo/plugin";
 import { timeAgo } from "../shared/time";
+import { shortenLink } from "../shared/links";
 import { tokenEstimate } from "../shared/tokens";
 import { DOCS_URL, type AgentMember, type SnapshotSettings, type TagSummary } from "../shared/contracts";
 import type { AgentTimelineItem, PaseoApi } from "./paseo-types";
@@ -53,19 +54,6 @@ export async function readAgent(paseo: PaseoApi, agentId: string, turnsPerAgent:
     console.error(`[contextualise] could not read agent ${agentId}: ${String((error as Error).message ?? error)}`);
     return { agentId, error: String((error as Error).message ?? error) };
   }
-}
-
-const LINK_KEEP_CHARS = 40;
-
-// A link as a short, readable piece of a title: no scheme or "www.", and when still long, the
-// host and the last two path parts ("github.com/…/pull/12").
-export function shortenLink(url: string): string {
-  const match = /^https?:\/\/(?:www\.)?([^/?#\s]+)([^?#\s]*)/i.exec(url);
-  if (!match) return url;
-  const [, host, path] = match;
-  const parts = path.split("/").filter(Boolean);
-  const plain = [host, ...parts].join("/");
-  return plain.length <= LINK_KEEP_CHARS || parts.length <= 2 ? plain : `${host}/…/${parts.slice(-2).join("/")}`;
 }
 
 // Agent titles are often the first prompt, with Markdown and links in it; the picker shows one
@@ -189,7 +177,7 @@ export async function searchAgents(paseo: PaseoApi, memo: Memo, directory: Direc
             pinned.has(agent.id) && "pinned",
             options.agentShowWorkspace ? (workspaceName ?? "no workspace") : null,
             options.agentShowStatus || state === "unreadable" ? state : null,
-            options.agentShowActivity && active ? `active ${active}` : null,
+            options.agentShowActivity && active ? active : null,
           ],
           text,
           options,

@@ -4,16 +4,10 @@ import type { Vendor } from "../shared/contracts";
 // nothing for an unknown one, so names live here only, and a test checks each against the names
 // Paseo 0.13's bundled lucide-react-native exports.
 export const ICONS = {
-  tag: "Tag",
-  tags: "Tags",
   agent: "Bot",
   workspace: "FolderGit2",
   link: "Link",
-  item: "FileText",
   fetch: "Download",
-  preview: "Eye",
-  refresh: "RefreshCw",
-  remove: "Trash2",
   close: "X",
   add: "Plus",
   copy: "Copy",
@@ -22,15 +16,13 @@ export const ICONS = {
   collapsed: "ChevronRight",
   expandAll: "ChevronsUpDown",
   collapseAll: "ChevronsDownUp",
-  sort: "ArrowUpDown",
   search: "Search",
-  time: "Clock",
   archived: "Archive",
-  ready: "CircleCheck",
   failed: "CircleAlert",
-  fetching: "LoaderCircle",
-  empty: "Inbox",
   pin: "Pin",
+  more: "EllipsisVertical",
+  info: "Info",
+  sort: "ArrowDownUp",
   unpin: "PinOff",
 } as const;
 

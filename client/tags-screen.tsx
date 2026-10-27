@@ -21,12 +21,15 @@ import {
   type TagSummary,
   VENDOR_LABELS,
 } from "../shared/contracts";
+import { shortenLink } from "../shared/links";
 import { AgentTags } from "./agent-tags";
 import { errorText } from "./errors";
 import { FetchForm } from "./fetch-form";
 import { ICONS, VENDOR_ICONS } from "./icons";
-import { ago, Button, Chip, IconButton, NoteStatusIcon, plural, SectionTitle, type Styles, summary, TAGS_QUERY, useStyles, useTagChange } from "./kit";
+import { ago, Button, Chip, IconButton, plural, SectionTitle, type Styles, summary, TAGS_QUERY, useStyles, useTagChange } from "./kit";
+import { useMoreActions } from "./more-actions";
 import { onTagsChanged } from "./tag-events";
+import { filterPlaceholder, filterTags, nextSort, SORT_LABELS, type Sort, sortTags } from "./tag-list";
 
 type Navigation = PluginScreenProps["navigation"];
 
@@ -53,8 +56,8 @@ function AgentLine({ agent, when, action, styles, navigation }: { agent: AgentMe
 function AgentRow({ agent, tag, styles, navigation }: { agent: AgentMember; tag: TagSummary; styles: Styles; navigation: Navigation }) {
   const remove = useRpc(removeTagRpc);
   const removal = useTagChange(() => remove({ tags: [tag.name], agentId: agent.agentId }));
-  const action = <IconButton icon={ICONS.remove} tone="danger" label={`Remove ${agent.title ?? agent.agentId} from ${tag.name}`} onPress={() => removal.mutate(undefined)} disabled={removal.isPending} styles={styles} />;
-  return <AgentLine agent={agent} when={`tagged ${ago(agent.taggedAt)}`} action={action} styles={styles} navigation={navigation} />;
+  const action = <IconButton icon={ICONS.close} label={`Remove ${agent.title ?? agent.agentId} from ${tag.name}`} onPress={() => removal.mutate(undefined)} disabled={removal.isPending} styles={styles} />;
+  return <AgentLine agent={agent} when={ago(agent.taggedAt)} action={action} styles={styles} navigation={navigation} />;
 }
 
 // Pinned agents come first in Attach > Agent conversation. One Paseo no longer has stays until unpinned.
@@ -63,12 +66,12 @@ function PinnedAgents({ pins, styles, navigation }: { pins: readonly PinnedAgent
   const unpinning = useTagChange((agentId: string) => pin({ agentId, pinned: false }));
   return (
     <View style={styles.card}>
-      <SectionTitle icon={ICONS.pin} label="Pinned agents, first in Attach > Agent conversation" count={pins.length} styles={styles} />
+      <SectionTitle label="Pinned" count={pins.length} hint="first in Attach > Agent conversation" styles={styles} />
       {pins.map((entry) => (
         <AgentLine
           key={entry.agentId}
           agent={entry}
-          when={`pinned ${ago(entry.pinnedAt)}`}
+          when={ago(entry.pinnedAt)}
           action={<IconButton icon={ICONS.unpin} label={`Unpin ${entry.title ?? entry.agentId}`} onPress={() => unpinning.mutate(entry.agentId)} disabled={unpinning.isPending} styles={styles} />}
           styles={styles}
           navigation={navigation}
@@ -89,10 +92,10 @@ function LinkRow({ link, tag, styles }: { link: LinkMember; tag: TagSummary; sty
           {link.title}
         </Text>
         <Text style={styles.muted} numberOfLines={1}>
-          {link.url}
+          {shortenLink(link.url)}
         </Text>
       </Pressable>
-      <IconButton icon={ICONS.remove} tone="danger" label={`Remove link ${link.title} from ${tag.name}`} onPress={() => removal.mutate(undefined)} disabled={removal.isPending} styles={styles} />
+      <IconButton icon={ICONS.close} label={`Remove link ${link.title} from ${tag.name}`} onPress={() => removal.mutate(undefined)} disabled={removal.isPending} styles={styles} />
     </View>
   );
 }
@@ -125,28 +128,29 @@ function NoteRow({ note, tag, styles }: { note: NoteMember; tag: TagSummary; sty
   const [reading, setReading] = useState(false);
   const refreshing = useTagChange(() => refresh({ tag: tag.name, noteId: note.id }));
   const removal = useTagChange(() => remove({ tag: tag.name, noteId: note.id }));
-  const by = note.provider ? ` with ${FETCH_PROVIDER_LABELS[note.provider]}` : "";
-  const state =
-    note.status === "fetching" ? `fetching${by}…` : note.status === "failed" ? `failed: ${note.error ?? "unknown reason"}` : `fetched${by} ${note.fetchedAt ? ago(note.fetchedAt) : ""}`;
+  const by = note.provider ? FETCH_PROVIDER_LABELS[note.provider] : null;
+  const source = `${VENDOR_LABELS[note.vendor]}${note.ref === note.title ? "" : ` ${note.ref}`}`;
+  const state = note.status === "fetching" ? `fetching${by ? ` with ${by}` : ""}…` : note.status === "failed" ? `failed: ${note.error ?? "unknown reason"}` : [by, note.fetchedAt ? ago(note.fetchedAt) : null].filter(Boolean).join(" · ");
+  const more = useMoreActions(note.title, [
+    ...(note.status === "ready" ? [{ label: "Read", onPress: () => setReading(true) }] : []),
+    ...(note.status === "fetching" ? [] : [{ label: note.status === "failed" ? "Retry" : "Refresh", onPress: () => refreshing.mutate(undefined), disabled: refreshing.isPending }]),
+    { label: "Remove", danger: true, onPress: () => removal.mutate(undefined), disabled: removal.isPending },
+  ], styles);
   return (
-    <View style={styles.row}>
-      <Icon name={VENDOR_ICONS[note.vendor]} size={16} color={styles.colors.foregroundMuted} />
-      <Pressable style={styles.grow} disabled={note.status !== "ready"} onPress={() => setReading(true)} accessibilityRole={note.status === "ready" ? "button" : undefined} accessibilityLabel={`Read ${note.title}`}>
-        <Text style={note.status === "ready" ? styles.text : styles.muted} numberOfLines={1}>
-          {note.title}
-        </Text>
-        <View style={styles.inline}>
-          <NoteStatusIcon status={note.status} styles={styles} />
-          <Text style={[note.status === "failed" ? styles.danger : styles.muted, styles.grow]} numberOfLines={2}>
-            {VENDOR_LABELS[note.vendor]} {note.ref === note.title ? "" : `${note.ref} `}· {state}
+    <View>
+      <View style={styles.row}>
+        <Icon name={VENDOR_ICONS[note.vendor]} size={16} color={styles.colors.foregroundMuted} />
+        <Pressable style={styles.grow} disabled={note.status !== "ready"} onPress={() => setReading(true)} accessibilityRole={note.status === "ready" ? "button" : undefined} accessibilityLabel={`Read ${note.title}`}>
+          <Text style={note.status === "ready" ? styles.text : styles.muted} numberOfLines={1}>
+            {note.title}
           </Text>
-        </View>
-      </Pressable>
-      {note.status === "ready" ? <IconButton icon={ICONS.preview} tone="accent" label={`Read ${note.title}`} onPress={() => setReading(true)} styles={styles} /> : null}
-      {note.status === "fetching" ? null : (
-        <IconButton icon={ICONS.refresh} label={note.status === "failed" ? `Retry fetching ${note.title}` : `Fetch ${note.title} again`} onPress={() => refreshing.mutate(undefined)} disabled={refreshing.isPending} styles={styles} />
-      )}
-      <IconButton icon={ICONS.remove} tone="danger" label={`Remove ${note.title} from ${tag.name}`} onPress={() => removal.mutate(undefined)} disabled={removal.isPending} styles={styles} />
+          <Text style={note.status === "failed" ? styles.danger : note.status === "fetching" ? [styles.muted, { color: styles.colors.statusWarning }] : styles.muted} numberOfLines={2}>
+            {source} · {state}
+          </Text>
+        </Pressable>
+        {more.button}
+      </View>
+      {more.panel}
       {reading ? <NoteReader note={note} styles={styles} onClose={() => setReading(false)} /> : null}
     </View>
   );
@@ -217,44 +221,46 @@ function TagCard({ tag, styles, navigation, open, onToggle }: { tag: TagSummary;
   const [fetchingOpen, setFetchingOpen] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const pending = tag.notes.filter((note) => note.status === "fetching").length;
+  const more = useMoreActions(tag.name, [
+    { label: "Fetch item", onPress: () => setFetchingOpen(true) },
+    { label: "Add link", onPress: () => setLinking(true) },
+  ], styles);
   return (
     <View style={styles.card}>
       <View style={styles.row}>
-        <Pressable style={[styles.grow, styles.inline, { gap: 10 }]} onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded: open }} accessibilityLabel={`${open ? "Collapse" : "Expand"} ${tag.name}`}>
+        <Pressable style={[styles.grow, styles.inline]} onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded: open }} accessibilityLabel={`${open ? "Collapse" : "Expand"} ${tag.name}`}>
           <Icon name={open ? ICONS.expanded : ICONS.collapsed} size={16} color={styles.colors.foregroundMuted} />
-          <Icon name={ICONS.tag} size={16} color={styles.colors.accent} />
-          <View style={styles.grow}>
-            <Text style={styles.title} numberOfLines={1}>
-              {tag.name}
-            </Text>
-            <Text style={styles.muted} numberOfLines={1}>
-              {summary(tag) || "empty"}
-              {pending > 0 ? ` · ${pending} fetching` : ""}
-            </Text>
-          </View>
+          <Text style={[styles.title, { flexShrink: 1 }]} numberOfLines={1}>
+            {tag.name}
+          </Text>
+          <Text style={[styles.faint, styles.grow]} numberOfLines={1}>
+            {summary(tag) || "empty"}
+            {pending > 0 ? ` · ${pending} fetching` : ""}
+          </Text>
         </Pressable>
-        <Button label="Preview" icon={ICONS.preview} styles={styles} onPress={() => setPreviewing(true)} />
+        <Button label="Preview" styles={styles} onPress={() => setPreviewing(true)} />
+        {more.button}
       </View>
+      {more.panel}
       {open ? (
         <>
-          <View style={styles.wrap}>
-            <Button label={fetchingOpen ? "Close fetch" : "Fetch item"} icon={fetchingOpen ? ICONS.close : ICONS.fetch} styles={styles} onPress={() => setFetchingOpen((value) => !value)} />
-            <Button label={linking ? "Close link" : "Add link"} icon={linking ? ICONS.close : ICONS.link} styles={styles} onPress={() => setLinking((value) => !value)} />
-          </View>
-          {fetchingOpen ? <FetchForm tagNames={[tag.name]} styles={styles} onDone={() => setFetchingOpen(false)} /> : null}
+          {fetchingOpen ? <FetchForm tagNames={[tag.name]} styles={styles} onDone={() => setFetchingOpen(false)} onCancel={() => setFetchingOpen(false)} /> : null}
           {linking ? <AddLinkForm tagName={tag.name} styles={styles} onClose={() => setLinking(false)} /> : null}
           {!tag.hasWorkspaceLabel && tag.agents.length > 0 ? (
-            <Text style={styles.muted}>No workspace has this label. Add the label "{tag.name}" to a workspace in Paseo to include it; if you renamed a label, tag these again under the new name.</Text>
+            <View style={styles.inline}>
+              <Icon name={ICONS.info} size={13} color={styles.colors.foregroundMuted} />
+              <Text style={[styles.faint, styles.grow]}>Label a workspace "{tag.name}" in Paseo to include it.</Text>
+            </View>
           ) : null}
-          {tag.notes.length > 0 ? <SectionTitle icon={ICONS.item} label="Fetched items" count={tag.notes.length} styles={styles} /> : null}
+          {tag.notes.length > 0 ? <SectionTitle label="Fetched items" count={tag.notes.length} styles={styles} /> : null}
           {tag.notes.map((note) => (
             <NoteRow key={note.id} note={note} tag={tag} styles={styles} />
           ))}
-          {tag.agents.length > 0 ? <SectionTitle icon={ICONS.agent} label="Agents" count={tag.agents.length} styles={styles} /> : null}
+          {tag.agents.length > 0 ? <SectionTitle label="Agents" count={tag.agents.length} styles={styles} /> : null}
           {tag.agents.map((agent) => (
             <AgentRow key={agent.agentId} agent={agent} tag={tag} styles={styles} navigation={navigation} />
           ))}
-          {tag.workspaces.length > 0 ? <SectionTitle icon={ICONS.workspace} label="Workspaces (Paseo label)" count={tag.workspaces.length} styles={styles} /> : null}
+          {tag.workspaces.length > 0 ? <SectionTitle label="Workspaces" count={tag.workspaces.length} hint="by Paseo label" styles={styles} /> : null}
           {tag.workspaces.map((workspace) => (
             <Pressable
               key={workspace.workspaceId}
@@ -267,7 +273,7 @@ function TagCard({ tag, styles, navigation, open, onToggle }: { tag: TagSummary;
               <Icon name={ICONS.workspace} size={16} color={styles.colors.foregroundMuted} />
               <View style={styles.grow}>
                 <Text style={styles.text} numberOfLines={1}>
-                  {workspace.projectName} / {workspace.name}
+                  {workspace.projectName === workspace.name ? workspace.name : `${workspace.projectName} / ${workspace.name}`}
                 </Text>
                 <Text style={styles.muted} numberOfLines={1}>
                   {workspace.directory}
@@ -275,7 +281,7 @@ function TagCard({ tag, styles, navigation, open, onToggle }: { tag: TagSummary;
               </View>
             </Pressable>
           ))}
-          {tag.links.length > 0 ? <SectionTitle icon={ICONS.link} label="Links" count={tag.links.length} styles={styles} /> : null}
+          {tag.links.length > 0 ? <SectionTitle label="Links" count={tag.links.length} styles={styles} /> : null}
           {tag.links.map((link) => (
             <LinkRow key={link.url} link={link} tag={tag} styles={styles} />
           ))}
@@ -285,14 +291,6 @@ function TagCard({ tag, styles, navigation, open, onToggle }: { tag: TagSummary;
     </View>
   );
 }
-
-type Sort = "recent" | "name" | "size";
-const SORTS: ReadonlyArray<{ value: Sort; label: string }> = [
-  { value: "recent", label: "Recent" },
-  { value: "name", label: "Name" },
-  { value: "size", label: "Size" },
-];
-const size = (tag: TagSummary) => tag.agents.length + tag.workspaces.length + tag.links.length + tag.notes.length;
 
 export function TagsScreen({ theme, layout, params, navigation }: PluginScreenProps) {
   const styles = useStyles(theme, layout.compact);
@@ -315,68 +313,44 @@ export function TagsScreen({ theme, layout, params, navigation }: PluginScreenPr
   const focusKey = params.tag ? tagKey(params.tag) : null;
   useEffect(() => onTagsChanged(() => void queryClient.invalidateQueries({ queryKey: TAGS_QUERY })), [queryClient]);
   const all = tags.data?.tags ?? [];
-  const wanted = filter.trim().toLowerCase();
-  const matching = all.filter(
-    (tag) =>
-      wanted === "" ||
-      [tag.name, ...tag.agents.map((agent) => agent.title ?? ""), ...tag.links.map((link) => link.title), ...tag.notes.map((note) => `${note.title} ${note.ref}`)].some((text) => text.toLowerCase().includes(wanted)),
-  );
-  const shown = sort === "recent" ? matching : [...matching].sort((a, b) => (sort === "name" ? a.name.localeCompare(b.name) : size(b) - size(a) || a.name.localeCompare(b.name)));
-  const openByDefault = shown.length <= 3 || wanted !== "";
+  const shown = sortTags(filterTags(all, filter), sort);
+  const openByDefault = shown.length <= 3 || filter.trim() !== "";
   const isOpen = (key: string) => toggled[key] ?? (openByDefault || key === focusKey);
+  const allOpen = shown.length > 0 && shown.every((tag) => isOpen(tag.key));
   const reading = readingId ? all.flatMap((tag) => tag.notes).find((note) => note.id === readingId) : undefined;
-  const totals = {
-    agents: new Set(all.flatMap((tag) => tag.agents.map((agent) => agent.agentId))).size,
-    items: all.reduce((sum, tag) => sum + tag.notes.length, 0),
-    fetching: all.reduce((sum, tag) => sum + tag.notes.filter((note) => note.status === "fetching").length, 0),
-  };
+  const fetching = all.reduce((sum, tag) => sum + tag.notes.filter((note) => note.status === "fetching").length, 0);
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       {params.agentId ? <AgentTags agentId={params.agentId} fallbackWorkspaceId={params.workspaceId} styles={styles} /> : null}
       {tags.data && tags.data.pinnedAgents.length > 0 ? <PinnedAgents pins={tags.data.pinnedAgents} styles={styles} navigation={navigation} /> : null}
       {all.length > 0 ? (
-        <View style={styles.wrap}>
-          {[
-            [ICONS.tags, plural(all.length, "tag")],
-            [ICONS.agent, `${plural(totals.agents, "agent")} tagged`],
-            [ICONS.item, plural(totals.items, "fetched item")],
-            ...(totals.fetching > 0 ? [[ICONS.fetching, `${totals.fetching} fetching`]] : []),
-          ].map(([icon, text]) => (
-            <View key={text} style={[styles.inline, { marginRight: 10 }]}>
-              <Icon name={icon} size={14} color={styles.colors.foregroundMuted} />
-              <Text style={styles.muted}>{text}</Text>
-            </View>
-          ))}
+        <View style={styles.row}>
+          <View style={[styles.inline, styles.input, { borderWidth: 0 }]}>
+            <Icon name={ICONS.search} size={15} color={styles.colors.foregroundMuted} />
+            <TextInput style={[styles.grow, { color: styles.colors.foreground }]} value={filter} onChangeText={setFilter} placeholder={filterPlaceholder(all)} accessibilityLabel="Filter tags" />
+            {filter !== "" ? <IconButton icon={ICONS.close} label="Clear filter" onPress={() => setFilter("")} styles={styles} /> : null}
+          </View>
+          {all.length > 1 ? (
+            <>
+              <Chip label={SORT_LABELS[sort]} icon={ICONS.sort} onPress={() => setSort(nextSort(sort))} accessibilityLabel={`Sorted by ${SORT_LABELS[sort]}; sort by ${SORT_LABELS[nextSort(sort)]}`} styles={styles} />
+              <IconButton
+                icon={allOpen ? ICONS.collapseAll : ICONS.expandAll}
+                label={allOpen ? "Collapse all tags" : "Expand all tags"}
+                onPress={() => setToggled(Object.fromEntries(shown.map((tag) => [tag.key, !allOpen])))}
+                styles={styles}
+              />
+            </>
+          ) : null}
         </View>
       ) : null}
-      <View style={[styles.inline, styles.input, { flex: 0 }]}>
-        <Icon name={ICONS.search} size={16} color={styles.colors.foregroundMuted} />
-        <TextInput style={[styles.grow, { color: styles.colors.foreground }]} value={filter} onChangeText={setFilter} placeholder="Filter tags, agents, links, and items" accessibilityLabel="Filter tags" />
-        {filter !== "" ? <IconButton icon={ICONS.close} label="Clear filter" onPress={() => setFilter("")} styles={styles} /> : null}
-      </View>
-      {all.length > 1 ? (
-        <View style={styles.wrap}>
-          <Icon name={ICONS.sort} size={14} color={styles.colors.foregroundMuted} />
-          {SORTS.map((option) => (
-            <Chip key={option.value} label={option.label} on={option.value === sort} onPress={() => setSort(option.value)} accessibilityLabel={`Sort by ${option.label}`} styles={styles} />
-          ))}
-          <Chip label="Expand all" icon={ICONS.expandAll} onPress={() => setToggled(Object.fromEntries(shown.map((tag) => [tag.key, true])))} styles={styles} />
-          <Chip label="Collapse all" icon={ICONS.collapseAll} onPress={() => setToggled(Object.fromEntries(shown.map((tag) => [tag.key, false])))} styles={styles} />
-        </View>
-      ) : null}
+      {fetching > 0 ? <Text style={styles.faint}>{plural(fetching, "item")} fetching…</Text> : null}
       {tags.isPending ? <Text style={styles.muted}>Loading tags</Text> : null}
       {tags.error ? <Text style={styles.danger}>Could not load tags: {errorText(tags.error)}</Text> : null}
       {tags.data && tags.data.tags.length === 0 ? (
         <View style={styles.card}>
-          <View style={styles.inline}>
-            <Icon name={ICONS.empty} size={20} color={styles.colors.foregroundMuted} />
-            <Text style={styles.title}>No tags yet</Text>
-          </View>
-          <Text style={styles.text}>In any agent, press the Tags pill next to the message box, or type /tag auth-rewrite (and /untag to remove it).</Text>
-          <Text style={styles.text}>Workspaces you label in Paseo join the tag with the same name.</Text>
-          <Text style={styles.text}>Add a web link with /tag-link https://example.com/spec auth-rewrite.</Text>
-          <Text style={styles.text}>Pull in a Jira, Sentry, Slack, or Notion item with /tag-fetch PROJ-123 auth-rewrite.</Text>
-          <Text style={styles.text}>Then, in any prompt, Attach &gt; Tag sends everything under it.</Text>
+          <Text style={styles.title}>No tags yet</Text>
+          <Text style={styles.muted}>Tag an agent with its Tags pill or /tag auth-rewrite. Labeled workspaces, links (/tag-link), and Jira, Sentry, Slack, or Notion items (/tag-fetch) join tags too.</Text>
+          <Text style={styles.muted}>Attach &gt; Tag then sends everything under a tag.</Text>
           <View style={styles.wrap}>
             <Button label={firstFetch ? "Close fetch" : "Fetch an item"} icon={firstFetch ? ICONS.close : ICONS.fetch} kind={firstFetch ? "ghost" : "primary"} styles={styles} onPress={() => setFirstFetch((value) => !value)} />
           </View>

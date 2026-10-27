@@ -38,7 +38,7 @@ const PICKER_SWITCHES: ReadonlyArray<{ key: SwitchKey; label: string; hint: stri
   { key: "shortenLinks", label: "Shorten links in agent titles", hint: "github.com/…/pull/12 instead of the whole address, so more of the title fits." },
   { key: "agentShowWorkspace", label: "Show the workspace", hint: "In each agent row's subtitle." },
   { key: "agentShowStatus", label: "Show running or archived", hint: "In each agent row's subtitle. An agent that cannot be read always says so." },
-  { key: "agentShowActivity", label: "Show when it was last active", hint: "In each agent row's subtitle, for example: active 5 min ago." },
+  { key: "agentShowActivity", label: "Show when it was last active", hint: "In each agent row's subtitle, for example: 5 min ago." },
   { key: "includeArchivedAgents", label: "Include archived agents", hint: "Archived agents are listed after the others. Pinned agents are always listed." },
   { key: "showTokenEstimates", label: "Show token estimates", hint: "At the end of every agent, tag, and terminal row, for example: ~1.2k tokens. An estimate (characters divided by 4); code and non-English text can differ." },
 ];

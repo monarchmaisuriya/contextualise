@@ -3,7 +3,8 @@ import { DOCS_URL, snapshotSettingsSchema, type TagSummary } from "../shared/con
 import type { PaseoApi } from "./paseo-types";
 import { timeAgo } from "../shared/time";
 import { tokenEstimate } from "../shared/tokens";
-import { agentLink, cleanTitle, includedParts, Memo, readAgent, rowPrefix, searchAgents, searchTags, searchTerminals, shortenLink } from "./sources";
+import { agentLink, cleanTitle, includedParts, Memo, readAgent, rowPrefix, searchAgents, searchTags, searchTerminals } from "./sources";
+import { shortenLink } from "../shared/links";
 import type { Directory } from "./tags";
 
 const options = snapshotSettingsSchema.parse({ snapshotMaxChars: 40_000, turnsPerAgent: 2, terminalLines: 50, showTokenEstimates: false });
@@ -99,8 +100,8 @@ test("agent search matches every word, puts archived agents last, and links to t
   const items = await searchAgents(paseo, new Memo(30_000), directory, NO_PINS, "srv_1", "fix log", options);
   expect(items.map((item) => item.id)).toEqual(["new", "old"]);
   expect(items[0]).toMatchObject({ identifier: "", title: "Fix logout", url: agentLink("srv_1", "new"), resourceType: "agent" });
-  expect(items[0].subtitle).toMatch(/^payments \/ api · active \d+ d ago$/);
-  expect(items[1].subtitle).toMatch(/^payments \/ api · archived · active \d+ d ago$/);
+  expect(items[0].subtitle).toMatch(/^payments \/ api · \d+ d ago$/);
+  expect(items[1].subtitle).toMatch(/^payments \/ api · archived · \d+ d ago$/);
   expect(items[0].text).toContain("**User:** hi");
   expect((await searchAgents(paseo, new Memo(30_000), directory, NO_PINS, "srv_1", "payments", options)).map((item) => item.id)).toEqual(["other", "new", "old"]);
 });
@@ -182,7 +183,7 @@ test("a running agent says so in its picker row", async () => {
   const running = { workspaces: directory.workspaces, agents: [{ id: "r", title: "**Live** task", provider: "claude", workspaceId: "w1", status: "running", updatedAt: new Date().toISOString() }] };
   const [item] = await searchAgents(paseo, new Memo(30_000), running, NO_PINS, "srv", "", options);
   expect(item.title).toBe("Live task");
-  expect(item.subtitle).toBe("payments / api · running · active just now");
+  expect(item.subtitle).toBe("payments / api · running · just now");
 });
 
 test("long links shrink to host and the last two path parts; short ones only lose the scheme", () => {

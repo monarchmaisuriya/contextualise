@@ -26,7 +26,7 @@ function validRef(text: string): boolean {
 // Fetch a Jira, Sentry, Slack, or Notion item into one of `tagNames` (or a typed tag when there are
 // none). Before anything starts it shows which agent and connector will read the item, or why none can.
 // With `notifyAgentId`, the result is also shown in that agent's conversation.
-export function FetchForm({ tagNames, styles, notifyAgentId, onDone }: { tagNames: readonly string[]; styles: Styles; notifyAgentId?: string; onDone?(): void }) {
+export function FetchForm({ tagNames, styles, notifyAgentId, onDone, onCancel }: { tagNames: readonly string[]; styles: Styles; notifyAgentId?: string; onDone?(): void; onCancel?(): void }) {
   const fetchItem = useRpc(fetchItemRpc);
   const describeRoute = useRpc(fetchRouteRpc);
   const toast = useToast();
@@ -48,32 +48,33 @@ export function FetchForm({ tagNames, styles, notifyAgentId, onDone }: { tagName
       onDone?.();
     },
   );
-  const hint = trimmed === "" ? "A Jira key (PROJ-123), a Jira, Sentry, Slack, or Notion link, or text like  jira: the issue assigned to me updated last" : !validRef(trimmed) ? errorText(new Error("Not a reference this can fetch; try PROJ-123 or a link")) : route.isPending ? "Checking which agent can read it…" : route.error ? errorText(route.error) : route.data ? `${VENDOR_LABELS[route.data.vendor]} item, read by ${FETCH_PROVIDER_LABELS[route.data.provider]} through "${route.data.server}"` : "";
+  const hint = trimmed === "" ? "A Jira key, a Jira, Sentry, Slack, or Notion link, or jira: <what to find>" : !validRef(trimmed) ? errorText(new Error("Not a reference this can fetch; try PROJ-123 or a link")) : route.isPending ? "Checking which agent can read it…" : route.error ? errorText(route.error) : route.data ? `${VENDOR_LABELS[route.data.vendor]} item, read by ${FETCH_PROVIDER_LABELS[route.data.provider]} through "${route.data.server}"` : "";
   const blocked = fetching.isPending || !validRef(trimmed) || Boolean(route.error) || tag.trim() === "";
   return (
     <View style={{ gap: 8 }}>
       <View style={styles.wrap}>
         <TextInput style={styles.input} value={ref} onChangeText={setRef} placeholder="PROJ-123 or a link" autoCapitalize="none" autoCorrect={false} accessibilityLabel="Item to fetch" onSubmitEditing={() => !blocked && fetching.mutate(undefined)} />
-        <Button label={fetching.isPending ? "Starting" : "Fetch"} icon={ICONS.fetch} kind="primary" styles={styles} onPress={() => fetching.mutate(undefined)} disabled={blocked} />
+        <Button label={fetching.isPending ? "Starting" : "Fetch"} kind="primary" styles={styles} onPress={() => fetching.mutate(undefined)} disabled={blocked} />
+        {onCancel ? <Button label="Cancel" styles={styles} onPress={onCancel} /> : null}
       </View>
       <View style={styles.inline}>
-        <Icon name={route.error ? ICONS.failed : route.data ? VENDOR_ICONS[route.data.vendor] : ICONS.search} size={14} color={route.error ? styles.colors.statusDanger : styles.colors.foregroundMuted} />
-        <Text style={[route.error ? styles.danger : styles.muted, styles.grow]}>{hint}</Text>
+        <Icon name={route.error ? ICONS.failed : route.data ? VENDOR_ICONS[route.data.vendor] : ICONS.info} size={13} color={route.error ? styles.colors.statusDanger : styles.colors.foregroundMuted} />
+        <Text style={[route.error ? styles.danger : styles.faint, styles.grow]}>{hint}</Text>
       </View>
       {tagNames.length > 1 ? (
         <View style={styles.wrap}>
-          <Text style={styles.muted}>Into:</Text>
+          <Text style={styles.faint}>Into</Text>
           {tagNames.map((name) => (
-            <Chip key={name} label={name} icon={ICONS.tag} on={name === tag} onPress={() => setTag(name)} accessibilityLabel={`Fetch into ${name}`} styles={styles} />
+            <Chip key={name} label={name} on={name === tag} onPress={() => setTag(name)} accessibilityLabel={`Fetch into ${name}`} styles={styles} />
           ))}
         </View>
       ) : tagNames.length === 0 ? (
         <TextInput style={styles.input} value={tag} onChangeText={setTag} placeholder="Into tag, for example auth-rewrite" accessibilityLabel="Tag to fetch into" />
       ) : null}
       <View style={styles.wrap}>
-        <Text style={styles.muted}>Agent:</Text>
+        <Text style={styles.faint}>With</Text>
         {AGENT_CHOICES.map((choice) => (
-          <Chip key={choice.label} label={choice.label} icon={ICONS.agent} on={choice.value === provider} onPress={() => setProvider(choice.value)} accessibilityLabel={`Fetch with ${choice.label}`} styles={styles} />
+          <Chip key={choice.label} label={choice.label} on={choice.value === provider} onPress={() => setProvider(choice.value)} accessibilityLabel={`Fetch with ${choice.label}`} styles={styles} />
         ))}
       </View>
     </View>

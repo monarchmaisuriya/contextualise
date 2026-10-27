@@ -1,5 +1,4 @@
 import type { PluginButtonContentProps, PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
-import { View } from "react-native";
 import { settingsRpc } from "@getpaseo/plugin";
 import { listTagsRpc, snapshotSettings, snapshotSettingsSchema } from "../shared/contracts";
 import { AgentTags } from "./agent-tags";
@@ -22,16 +21,14 @@ export function followAgentPills(client: PluginClientContext, openTagsFor: (agen
   function Popover({ theme, layout, agentId, workspaceId, close }: PluginButtonContentProps & { agentId: string }) {
     const styles = useStyles(theme, layout.compact);
     const footer = (
-      <View style={styles.row}>
-        <Button
-          label="Open tags"
-          styles={styles}
-          onPress={() => {
-            close();
-            openTagsFor(agentId, workspaceId);
-          }}
-        />
-      </View>
+      <Button
+        label="Open tags"
+        styles={styles}
+        onPress={() => {
+          close();
+          openTagsFor(agentId, workspaceId);
+        }}
+      />
     );
     return <AgentTags agentId={agentId} fallbackWorkspaceId={workspaceId} styles={styles} footer={footer} />;
   }

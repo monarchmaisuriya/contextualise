@@ -16,17 +16,18 @@ paseo plugin install git:monarchmaisuriya/contextualise --ref v0.10.0
 
 Every agent's composer has a **Tags** pill next to Tasks and Subagents. Its label shows the agent's tags ("Tag" when it has none, "auth rewrite +2" when it has three). Press it to:
 
-- remove a tag (tap its chip),
+- remove a tag (tap a filled chip),
+- add an existing tag (tap a plain chip, marked +),
 - add new tags (type names, separated by commas),
-- add an existing tag (tap its chip),
-- pin or unpin the agent (pinned agents come first in Attach > Agent conversation),
+- pin or unpin the agent with the pin icon (pinned agents come first in Attach > Agent conversation),
+- fetch an item into one of its tags (**Fetch an item**),
 - open the Tags screen.
 
 `/tag auth-rewrite` tags the current agent from the message box and `/untag auth-rewrite` removes it (both take several: `/tag auth, billing`). `/tag-link https://example.com/spec auth-rewrite` adds a web link to a tag.
 
 Tags share names with Paseo's workspace labels. A workspace labeled "Auth Rewrite" belongs to the tag `auth rewrite` automatically; case and spacing do not matter. Contextualise reads workspace labels and never changes them.
 
-The **Tags** screen (sidebar footer, or "Open tags" in the Command Center) lists every tag with its labeled workspaces, tagged agents, and links. Each tag has **Preview**, which shows exactly what Attach > Tag sends (with a Copy button), and **Add link**. "Tag this agent..." in the Command Center opens it for one agent, with the same chips as the pill. "Pin this agent" and "Unpin this agent" in the Command Center do the same as the pill's Pin button; pinned agents are listed at the top of the Tags screen, where a pinned agent Paseo no longer has shows as missing until you unpin it.
+The **Tags** screen (sidebar footer, or "Open tags" in the Command Center) lists every tag with its labeled workspaces, tagged agents, links, and fetched items. One row at the top filters (the box says how many tags, agents, and items there are), cycles the sort (recent, name, size), and expands or collapses every tag. Each tag has **Preview**, which shows exactly what Attach > Tag sends (with a Copy button), and a ⋮ button for **Fetch item** and **Add link**. Tap an agent, link, or workspace to open it; × removes an agent or link from the tag. "Tag this agent..." in the Command Center opens it for one agent, with the same chips as the pill. "Pin this agent" and "Unpin this agent" in the Command Center do the same as the pill's Pin button; pinned agents are listed at the top of the Tags screen, where a pinned agent Paseo no longer has shows as missing until you unpin it.
 
 ## Fetching Jira, Sentry, Slack, and Notion items
 
@@ -42,7 +43,7 @@ Contextualise has no vendor accounts of its own. A hidden background agent reads
 
 "Fetch with" in Settings chooses the agent (automatic tries Claude, then Codex); the form can override it per item. Custom routes in Advanced settings add other agent and server pairs, for example Codex reading Jira through a Jira MCP server you configured for it. Every allow or deny decision is written to the plugin log. One fetch is one agent run.
 
-The item shows under **Fetched items** on the tag ("fetching", then "ready" or "failed" with the reason) with the agent that fetched it, **Refresh** (or **Retry**), and **Remove**; tap a ready item to read it, copy it, or open its link. Attach > Tag includes ready items.
+The item shows under **Fetched items** on the tag ("fetching", then "ready" or "failed" with the reason) with the agent that fetched it; tap a ready item to read it, copy it, or open its link, and use its ⋮ button for **Read**, **Refresh** (or **Retry**), and **Remove**. Attach > Tag includes ready items.
 
 A fetch started from an agent (`/tag-fetch`, or the Fetch box in its Tags pill) also adds one row to that agent's conversation when it ends: the item's title and size, or why it failed, with **Read** and **Open tags**. A later fetch or refresh of the same item replaces that row. Turn this off with "Show fetch results in the agent" (Fetching).
 

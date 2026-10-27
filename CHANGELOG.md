@@ -2,6 +2,20 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.12.0 - 2026-10-28
+
+### Changed
+
+- A quieter, more minimal interface with every feature kept:
+  - Tags screen: filter, sort, and expand or collapse share one row; the totals moved into the filter box.
+  - Sort is one control that cycles recent, name, and size; one button expands or collapses every tag.
+  - Each fetched item has one ⋮ button for Read, Refresh or Retry, and Remove (tap the item still reads it); each tag's ⋮ holds Fetch item and Add link.
+  - Agents and links show one quiet × instead of a red trash can; links show a short address.
+  - Headings are sentence case; cards and chips have no borders; hints are one line.
+  - Tags pill: the agent's tags and the other tags form one cloud (filled to remove, + to add); pinning is an icon; the fetch form opens from "Fetch an item".
+  - Agent picker rows say "8 min ago" instead of "active 8 min ago".
+- Listing screenshots retaken with the new interface.
+
 ## 0.11.3 - 2026-10-28
 
 ### Added

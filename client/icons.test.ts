@@ -10,6 +10,8 @@ const VERIFIED_LUCIDE = new Set([
   "ArrowUpDown", "Clock", "Archive", "Inbox", "ChevronsUpDown", "ChevronsDownUp", "ListFilter", "MessagesSquare", "Layers", "Search",
   // Added 2026-10-28 from the same bundle export table as LoaderCircle and CircleAlert.
   "Pin", "PinOff",
+  // Added 2026-10-28, same export table.
+  "EllipsisVertical", "Info", "ArrowDownUp",
 ]);
 
 test("every icon the plugin draws is a Lucide name Paseo can draw", () => {

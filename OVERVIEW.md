@@ -6,7 +6,7 @@ Every agent's composer gets a Tags pill beside Tasks and Subagents. Its label sh
 
 Tags share names with Paseo's own workspace labels. A workspace labeled "Auth Rewrite" belongs to the tag `auth rewrite` with no extra step; names match regardless of case and spacing. Contextualise reads workspace labels but never changes them: manage those with Paseo's "Manage labels".
 
-The Tags screen, in the sidebar footer, lists every tag with its labeled workspaces, tagged agents, and links, with a filter box. Preview on a tag shows exactly what attaching it sends, with Copy. Archived agents stay in their tags; agents Paseo no longer has are shown as missing until you remove them.
+The Tags screen, in the sidebar footer, lists every tag with its labeled workspaces, tagged agents, links, and fetched items, with a filter, sort, and expand control in one row. Preview on a tag shows exactly what attaching it sends, with Copy; less frequent actions (fetch an item, add a link, refresh or remove an item) sit behind each row's ⋮ button. Archived agents stay in their tags; agents Paseo no longer has are shown as missing until you remove them.
 
 Pin the agents you attach often, from the Tags pill or the Command Center. Pinned agents come first in Attach > Agent conversation and are listed at the top of the Tags screen.
 
