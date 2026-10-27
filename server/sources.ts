@@ -4,7 +4,6 @@ import type { AgentTimelineItem, PaseoApi } from "./paseo-types";
 import { describeMembers, isUnreadable, lastTurns, matchTags, renderConversation, renderSnapshot, renderTerminal, type AgentReading } from "./snapshot";
 import type { Directory, DirectoryAgent } from "./tags";
 
-export const ITEMS_PER_SEARCH = 6;
 const TIMELINE_PAGE = 200;
 const MAX_TIMELINE_PAGES = 5;
 
@@ -54,6 +53,12 @@ export async function readAgent(paseo: PaseoApi, agentId: string, turnsPerAgent:
   }
 }
 
+// "claude" -> "Claude", "codex" -> "Codex"; a provider id with a model ("claude/opus") keeps only the provider.
+function providerLabel(provider: string): string {
+  const name = provider.split("/")[0] || "agent";
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
 // Paseo's own agent link: clicking the attachment opens that agent.
 export function agentLink(serverId: string, agentId: string): string {
   return `paseo://h/${encodeURIComponent(serverId)}/agent/${encodeURIComponent(agentId)}`;
@@ -87,7 +92,7 @@ export async function tagAttachment(paseo: PaseoApi, memo: Memo, fullTag: TagSum
 }
 
 export async function searchTags(paseo: PaseoApi, memo: Memo, tags: readonly TagSummary[], query: string, options: SnapshotSettings): Promise<PluginAttachmentItem[]> {
-  return Promise.all(matchTags(tags, query, ITEMS_PER_SEARCH).map((tag) => tagAttachment(paseo, memo, tag, options)));
+  return Promise.all(matchTags(tags, query, options.resultsPerSearch).map((tag) => tagAttachment(paseo, memo, tag, options)));
 }
 
 function words(query: string): string[] {
@@ -122,7 +127,7 @@ export async function searchAgents(paseo: PaseoApi, memo: Memo, directory: Direc
   const found = directory.agents
     .filter((agent) => matches([agent.title, agent.provider, names.get(agent.workspaceId ?? ""), agent.cwd, agent.id].join(" "), query))
     .sort((a, b) => Number(Boolean(a.archivedAt)) - Number(Boolean(b.archivedAt)) || (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""))
-    .slice(0, ITEMS_PER_SEARCH);
+    .slice(0, options.resultsPerSearch);
   return Promise.all(
     found.map(async (agent) => {
       const member = asMember(agent);
@@ -131,9 +136,11 @@ export async function searchAgents(paseo: PaseoApi, memo: Memo, directory: Direc
       const state = isUnreadable(reading) ? "unreadable" : agent.archivedAt ? "archived" : null;
       return {
         id: agent.id,
-        identifier: "Agent",
+        // Paseo labels a row "<identifier> <title>" and the attached pill "<source> <identifier>";
+        // the provider makes both informative instead of repeating "Agent".
+        identifier: providerLabel(agent.provider),
         title: agent.title ?? agent.id,
-        subtitle: [agent.provider, workspaceName, state].filter(Boolean).join(" · "),
+        subtitle: [workspaceName, state].filter(Boolean).join(" · ") || "no workspace",
         url: serverId ? agentLink(serverId, agent.id) : DOCS_URL,
         text: renderConversation(member, workspaceName, reading, options.snapshotMaxChars),
         resourceType: "agent",
@@ -146,7 +153,7 @@ export async function searchAgents(paseo: PaseoApi, memo: Memo, directory: Direc
 export async function searchTerminals(paseo: PaseoApi, memo: Memo, directory: Directory, query: string, options: SnapshotSettings): Promise<PluginAttachmentItem[]> {
   const names = workspaceNames(directory);
   const { entries } = await paseo.terminals.list();
-  const found = entries.filter((terminal) => matches([terminal.name, names.get(terminal.workspaceId), terminal.cwd].join(" "), query)).slice(0, ITEMS_PER_SEARCH);
+  const found = entries.filter((terminal) => matches([terminal.name, names.get(terminal.workspaceId), terminal.cwd].join(" "), query)).slice(0, options.resultsPerSearch);
   return Promise.all(
     found.map(async (terminal) => {
       const workspaceName = names.get(terminal.workspaceId) ?? null;

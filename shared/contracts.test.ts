@@ -24,6 +24,8 @@ test("/tag-link takes the URL first and the rest as the tag", () => {
 test("settings: 0 means the default, out-of-range values are invalid", () => {
   expect(snapshotSettingsSchema.parse({ terminalLines: 0 })).toMatchObject({ snapshotMaxChars: 40_000, turnsPerAgent: 6, terminalLines: 200, fetchProvider: "auto", maxConcurrentFetches: 2, commentsPerItem: 10, customRoutes: [] });
   expect(snapshotSettingsSchema.parse({ commentsPerItem: 0 }).commentsPerItem).toBe(0);
+  expect(snapshotSettingsSchema.parse({}).resultsPerSearch).toBe(20);
+  expect(snapshotSettingsSchema.safeParse({ resultsPerSearch: 51 }).success).toBe(false);
   expect(snapshotSettingsSchema.safeParse({ fetchTimeoutSeconds: 5 }).success).toBe(false);
   expect(snapshotSettingsSchema.safeParse({ fetchProvider: "opencode" }).success).toBe(false);
   expect(snapshotSettingsSchema.safeParse({ customRoutes: [{ vendor: "jira", provider: "codex", server: "my-jira", tools: ["get_issue"] }] }).success).toBe(true);

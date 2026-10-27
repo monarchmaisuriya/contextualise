@@ -2,6 +2,17 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.8.0 - 2026-10-27
+
+### Fixed
+
+- The Attach pickers could not scroll: each search returned at most 6 results, so there was nothing below the visible rows. Searches now return 20 by default, and the pickers scroll through them.
+- Agent rows in the picker started with the word "Agent", which crowded out titles, and the attached pill read "Agent conversation Agent". Rows and pills now show the agent's provider (Claude, Codex), and the subtitle shows the workspace.
+
+### Added
+
+- Setting: results in the Attach pickers (Attachments; default 20, from 5 to 50).
+
 ## 0.7.0 - 2026-10-27
 
 ### Added

@@ -7,7 +7,7 @@ Requires Paseo 0.13.
 ## Install
 
 ```bash
-paseo plugin install git:monarchmaisuriya/contextualise --ref v0.7.0
+paseo plugin install git:monarchmaisuriya/contextualise --ref v0.8.0
 ```
 
 ## Tags
@@ -72,6 +72,7 @@ Settings > Contextualise:
 | Attachments | Longest attachment (characters) | 40,000 (1,000 to 200,000) |
 | | Recent turns per agent | 6 (1 to 50) |
 | | Terminal lines to attach | 200 (10 to 5,000) |
+| | Results in the Attach pickers | 20 (5 to 50) |
 | | Include labeled workspaces, links, fetched items, agent conversations | all on |
 | Tags pill | Show the pill; label as tag names or a count | on; names |
 | Fetching | Fetch with: automatic, Claude only, Codex only | automatic |

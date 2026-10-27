@@ -95,8 +95,8 @@ test("agent search matches every word, puts archived agents last, and links to t
   const { paseo } = fakePaseo({ old: page(), new: page(), other: page() });
   const items = await searchAgents(paseo, new Memo(30_000), directory, "srv_1", "fix log", options);
   expect(items.map((item) => item.id)).toEqual(["new", "old"]);
-  expect(items[0]).toMatchObject({ identifier: "Agent", title: "Fix logout", subtitle: "codex · payments / api", url: agentLink("srv_1", "new"), resourceType: "agent" });
-  expect(items[1].subtitle).toBe("claude · payments / api · archived");
+  expect(items[0]).toMatchObject({ identifier: "Codex", title: "Fix logout", subtitle: "payments / api", url: agentLink("srv_1", "new"), resourceType: "agent" });
+  expect(items[1]).toMatchObject({ identifier: "Claude", subtitle: "payments / api · archived" });
   expect(items[0].text).toContain("**User:** hi");
   expect((await searchAgents(paseo, new Memo(30_000), directory, "srv_1", "payments", options)).map((item) => item.id)).toEqual(["other", "new", "old"]);
 });
@@ -142,4 +142,15 @@ test("switched-off parts of a tag are left out of both the subtitle and the text
   expect(refetch).not.toHaveBeenCalled();
   const [noLinks] = await searchTags(paseo, new Memo(30_000), [full], "", snapshotSettingsSchema.parse({ includeLinks: false }));
   expect(noLinks.text).not.toContain("## Links");
+});
+
+test("each source returns as many results as the setting allows, so the picker can scroll", async () => {
+  const many = { workspaces: directory.workspaces, agents: Array.from({ length: 30 }, (_, i) => ({ id: `a${i}`, title: `Agent ${i}`, provider: "claude", workspaceId: "w1", updatedAt: `2026-10-${String(i + 1).padStart(2, "0")}` })) };
+  const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
+  const { paseo } = fakePaseo(Object.fromEntries(many.agents.map((agent) => [agent.id, page()])));
+  expect(await searchAgents(paseo, new Memo(30_000), many, "srv", "", options)).toHaveLength(20);
+  expect(await searchAgents(paseo, new Memo(30_000), many, "srv", "", snapshotSettingsSchema.parse({ resultsPerSearch: 25 }))).toHaveLength(25);
+  const tags = Array.from({ length: 12 }, (_, i) => tag(`t${i}`, []));
+  expect(await searchTags(paseo, new Memo(30_000), tags, "", options)).toHaveLength(12);
+  expect(await searchTags(paseo, new Memo(30_000), tags, "", snapshotSettingsSchema.parse({ resultsPerSearch: 5 }))).toHaveLength(5);
 });

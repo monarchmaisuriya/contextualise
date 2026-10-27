@@ -5,7 +5,7 @@ import { Text } from "react-native";
 import { type FetchPreference, MAX_CUSTOM_ROUTES, type SnapshotSettings, snapshotSettings } from "../shared/contracts";
 import { tagsChanged } from "./tag-events";
 
-type NumberKey = "snapshotMaxChars" | "turnsPerAgent" | "terminalLines" | "fetchTimeoutSeconds" | "maxConcurrentFetches" | "noteMaxChars" | "commentsPerItem";
+type NumberKey = "snapshotMaxChars" | "turnsPerAgent" | "terminalLines" | "resultsPerSearch" | "fetchTimeoutSeconds" | "maxConcurrentFetches" | "noteMaxChars" | "commentsPerItem";
 type TextKey = "claudeFetchModel" | "codexFetchModel" | "extraInstructions" | "customRoutes";
 type DraftKey = NumberKey | TextKey;
 type SwitchKey = "includeWorkspaces" | "includeLinks" | "includeItems" | "includeAgents" | "showPill";
@@ -14,6 +14,7 @@ const ATTACHMENT_NUMBERS: ReadonlyArray<{ key: NumberKey; label: string; hint: s
   { key: "snapshotMaxChars", label: "Longest attachment (characters)", hint: "Default 40,000 (about 10,000 tokens), from 1,000 to 200,000. 0 means the default." },
   { key: "turnsPerAgent", label: "Recent turns per agent", hint: "Default 6, from 1 to 50. 0 means the default." },
   { key: "terminalLines", label: "Terminal lines to attach", hint: "Default 200, from 10 to 5,000. The newest lines are kept. 0 means the default." },
+  { key: "resultsPerSearch", label: "Results in the Attach pickers", hint: "Default 20, from 5 to 50. More results scroll; each agent result reads that agent's recent turns. 0 means the default." },
 ];
 const SECTION_SWITCHES: ReadonlyArray<{ key: SwitchKey; label: string; hint: string }> = [
   { key: "includeWorkspaces", label: "Include labeled workspaces", hint: "Project, name, and folder of each workspace with the tag's label." },

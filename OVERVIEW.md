@@ -32,7 +32,7 @@ Tags and links are stored on the daemon host in `plugin-data/contextualise/tags.
 
 Settings > Contextualise has four sections:
 
-- **Attachments**: longest attachment (default 40,000 characters), turns per agent (6), terminal lines (200), and which parts a tag attachment includes (labeled workspaces, links, fetched items, agent conversations).
+- **Attachments**: longest attachment (default 40,000 characters), turns per agent (6), terminal lines (200), results per Attach picker (20), and which parts a tag attachment includes (labeled workspaces, links, fetched items, agent conversations).
 - **Tags pill**: show or hide it; label it with tag names or a count.
 - **Fetching**: which agent fetches (automatic, Claude only, Codex only) and the model for each.
 - **Advanced**: fetch time limit, fetches at once, stored item size, comments per item, extra instructions for workers, and custom routes (another agent and MCP server for a vendor, with the read tools it may use).

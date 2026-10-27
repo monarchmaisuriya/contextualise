@@ -308,6 +308,9 @@ export const snapshotSettingsSchema = z.object({
   snapshotMaxChars: boundedCount(1_000, 200_000, SNAPSHOT_MAX_CHARS_DEFAULT),
   turnsPerAgent: boundedCount(1, 50, TURNS_PER_AGENT_DEFAULT),
   terminalLines: boundedCount(10, 5_000, TERMINAL_LINES_DEFAULT),
+  // How many tags, agents, or terminals one search returns; the picker scrolls through them, and
+  // each agent result reads that agent's recent turns.
+  resultsPerSearch: boundedCount(5, 50, 20),
   includeWorkspaces: z.boolean().default(true),
   includeLinks: z.boolean().default(true),
   includeItems: z.boolean().default(true),
