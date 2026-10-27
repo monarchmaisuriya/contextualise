@@ -7,6 +7,9 @@ test("the pill says Tag, the tag, or the first tag and how many more", () => {
   expect(pillLabel(["auth rewrite"])).toBe("auth rewrite");
   expect(pillLabel(["auth rewrite", "billing", "infra"])).toBe("auth rewrite +2");
   expect(pillLabel(["a very long tag name that keeps going"])).toBe("a very long tag name th…");
+  expect(pillLabel(["a", "b", "c"], "count")).toBe("3 tags");
+  expect(pillLabel(["a"], "count")).toBe("1 tag");
+  expect(pillLabel([], "count")).toBe("Tag");
 });
 
 test("tag names are grouped by agent in list order", () => {

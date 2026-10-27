@@ -1,33 +1,67 @@
 import { expect, test } from "vitest";
-import { buildFetchPrompt, isAllowedWorkerTool, parseFetchReply, VENDOR_TOOLS } from "./vendor-fetch";
+import type { FetchProvider, Route } from "../shared/contracts";
+import { BUILT_IN_ROUTES, buildFetchPrompt, chooseRoute, isAllowedWorkerTool, parseFetchReply } from "./vendor-fetch";
 
-test("a fetch worker may use only its own vendor's named read tools", () => {
-  expect(isAllowedWorkerTool("jira", "mcp__claude_ai_Atlassian_Rovo__getJiraIssue")).toBe(true);
-  expect(isAllowedWorkerTool("jira", "ToolSearch")).toBe(true);
-  for (const write of ["mcp__claude_ai_Atlassian_Rovo__createJiraIssue", "mcp__claude_ai_Atlassian_Rovo__editJiraIssue", "mcp__claude_ai_Atlassian_Rovo__addCommentToJiraIssue", "mcp__claude_ai_Atlassian_Rovo__transitionJiraIssue"]) {
-    expect(isAllowedWorkerTool("jira", write), write).toBe(false);
-  }
-  expect(isAllowedWorkerTool("slack", "mcp__claude_ai_Slack__slack_send_message")).toBe(false);
-  expect(isAllowedWorkerTool("slack", "mcp__claude_ai_Slack__slack_read_thread")).toBe(true);
-  expect(isAllowedWorkerTool("notion", "mcp__notion__notion-update-page")).toBe(false);
-  expect(isAllowedWorkerTool("notion", "mcp__notion__notion-fetch")).toBe(true);
-  // Another vendor's read tool, a look-alike server, and built-in tools are all refused.
-  expect(isAllowedWorkerTool("jira", "mcp__claude_ai_Slack__slack_read_thread")).toBe(false);
-  expect(isAllowedWorkerTool("jira", "mcp__evil__getJiraIssue")).toBe(false);
-  expect(isAllowedWorkerTool("sentry", "Bash")).toBe(false);
-  expect(isAllowedWorkerTool("sentry", "mcp__paseo__create_agent")).toBe(false);
+const route = (vendor: Route["vendor"], provider: FetchProvider): Route => {
+  const found = BUILT_IN_ROUTES.find((candidate) => candidate.vendor === vendor && candidate.provider === provider);
+  if (!found) throw new Error(`no built-in route ${vendor}/${provider}`);
+  return found;
+};
+const servers = (claude: string[], codex: string[]) =>
+  new Map<FetchProvider, Set<string>>([
+    ["claude", new Set(claude)],
+    ["codex", new Set(codex)],
+  ]);
+const claude = (name: string) => ({ name });
+// The request Codex raised in the live probe, with the server and tool swapped in.
+const codex = (server: string, tool: string) => ({ name: "CodexMcpElicitation", description: `Allow the ${server} MCP server to run tool "${tool}"?`, metadata: { serverName: server, threadId: "t" } });
+
+test("a Claude worker may use only its route's exact read tools", () => {
+  const jira = route("jira", "claude");
+  expect(isAllowedWorkerTool(jira, claude("mcp__claude_ai_Atlassian_Rovo__getJiraIssue"))).toBe(true);
+  expect(isAllowedWorkerTool(jira, claude("ToolSearch"))).toBe(true);
+  for (const write of ["createJiraIssue", "editJiraIssue", "addCommentToJiraIssue", "transitionJiraIssue"]) expect(isAllowedWorkerTool(jira, claude(`mcp__claude_ai_Atlassian_Rovo__${write}`)), write).toBe(false);
+  expect(isAllowedWorkerTool(jira, claude("mcp__claude_ai_Slack__slack_read_thread"))).toBe(false);
+  expect(isAllowedWorkerTool(jira, claude("mcp__evil__getJiraIssue"))).toBe(false);
+  expect(isAllowedWorkerTool(jira, claude("Bash"))).toBe(false);
+  expect(isAllowedWorkerTool(jira, claude("mcp__paseo__create_agent"))).toBe(false);
 });
 
-test("no allowed tool name looks like a write", () => {
-  for (const { tools } of Object.values(VENDOR_TOOLS)) for (const tool of tools) expect(tool, tool).not.toMatch(/create|update|edit|delete|add|send|post|transition|move|upload|schedule|set_|archive|duplicate|reaction/i);
+test("a Codex worker is allowed only a matching server and tool from its approval request", () => {
+  const notion = route("notion", "codex");
+  expect(isAllowedWorkerTool(notion, codex("notion", "notion-fetch"))).toBe(true);
+  expect(isAllowedWorkerTool(notion, codex("notion", "notion-update-page"))).toBe(false);
+  expect(isAllowedWorkerTool(notion, codex("my-jira", "notion-fetch"))).toBe(false);
+  // A request that does not name a tool, a shell approval, and Claude-style names are all refused.
+  expect(isAllowedWorkerTool(notion, { name: "CodexMcpElicitation", description: "Allow?", metadata: { serverName: "notion" } })).toBe(false);
+  expect(isAllowedWorkerTool(notion, { name: "exec", description: "run ls" })).toBe(false);
+  expect(isAllowedWorkerTool(notion, claude("mcp__notion__notion-fetch"))).toBe(false);
+  expect(isAllowedWorkerTool(notion, claude("ToolSearch"))).toBe(false);
 });
 
-test("the prompt names the reference, the connector, and its tools, and asks for JSON only", () => {
-  const prompt = buildFetchPrompt({ vendor: "sentry", ref: "https://acme.sentry.io/issues/42/" });
+test("no built-in allowed tool name looks like a write", () => {
+  for (const { tools } of BUILT_IN_ROUTES) for (const tool of tools) expect(tool, tool).not.toMatch(/create|update|edit|delete|add|send|post|transition|move|upload|schedule|set_|archive|duplicate|reaction/i);
+});
+
+test("routes: preference first, custom before built-in, and only servers the agent has", () => {
+  const custom: Route = { vendor: "jira", provider: "codex", server: "my-jira", tools: ["get_issue", "search_issues"] };
+  expect(chooseRoute("jira", "auto", [], servers([], []))).toMatchObject({ provider: "claude", server: "claude_ai_Atlassian_Rovo" });
+  expect(chooseRoute("jira", "codex", [custom], servers([], ["my-jira"]))).toEqual(custom);
+  expect(() => chooseRoute("jira", "codex", [custom], servers([], []))).toThrow('No Codex agent has a Jira connector (looked for Codex "my-jira")');
+  expect(() => chooseRoute("sentry", "codex", [], servers([], ["notion"]))).toThrow("custom route");
+  // Notion needs the server configured; with auto, Codex is used when only Codex has it.
+  expect(chooseRoute("notion", "auto", [], servers([], ["notion"]))).toMatchObject({ provider: "codex" });
+  expect(chooseRoute("notion", "auto", [], servers(["notion"], ["notion"]))).toMatchObject({ provider: "claude" });
+});
+
+test("the prompt names the reference, server, tools, and the settings' limits", () => {
+  const prompt = buildFetchPrompt({ vendor: "sentry", ref: "https://acme.sentry.io/issues/42/" }, route("sentry", "claude"), { maxChars: 3_000, commentsPerItem: 0, extraInstructions: "Include the stack trace's top frame." });
   expect(prompt).toContain("https://acme.sentry.io/issues/42/");
-  expect(prompt).toContain("claude_ai_Sentry");
-  expect(prompt).toContain("get_sentry_resource");
-  expect(prompt).toContain("Reply with only the JSON object.");
+  expect(prompt).toContain("claude_ai_Sentry MCP server: find_organizations, find_projects, get_sentry_resource, search_issues");
+  expect(prompt).toContain("at most 2500 characters");
+  expect(prompt).toContain("leave out comments and replies");
+  expect(prompt).toContain("Also: Include the stack trace's top frame.");
+  expect(prompt.endsWith("Reply with only the JSON object.")).toBe(true);
 });
 
 test("worker replies are read from plain or fenced JSON and checked", () => {

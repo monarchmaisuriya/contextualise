@@ -7,7 +7,7 @@ Requires Paseo 0.13.
 ## Install
 
 ```bash
-paseo plugin install git:monarchmaisuriya/contextualise --ref v0.6.0
+paseo plugin install git:monarchmaisuriya/contextualise --ref v0.7.0
 ```
 
 ## Tags
@@ -27,11 +27,19 @@ The **Tags** screen (sidebar footer, or "Open tags" in the Command Center) lists
 
 ## Fetching Jira, Sentry, Slack, and Notion items
 
-`/tag-fetch PROJ-123 auth-rewrite`, or **Fetch item** on a tag in the Tags screen, saves an item's content under a tag. A reference is a Jira key (`PROJ-123`), a Jira (`*.atlassian.net`), Sentry (`*.sentry.io`), Slack (`*.slack.com/archives/...`), or Notion link, or free text with a prefix: `jira: the issue assigned to me updated most recently`.
+`/tag-fetch PROJ-123 auth-rewrite`, **Fetch item** on a tag in the Tags screen, or the Fetch box in the Tags pill saves an item's content under a tag. A reference is a Jira key (`PROJ-123`), a Jira (`*.atlassian.net`), Sentry (`*.sentry.io`), Slack (`*.slack.com/archives/...`), or Notion link, or free text with a prefix: `jira: the issue assigned to me updated most recently`. Before you press Fetch, the form says which agent and connector will read it, or why none can.
 
-Contextualise has no vendor accounts of its own. It starts a hidden background Claude agent, which reads the item through the connectors your Claude agents already have (claude.ai's Atlassian, Sentry, and Slack connectors, and a Notion MCP server). The worker may use only that vendor's read tools: every tool it asks for is checked against a fixed list and anything else is denied, and every decision is written to the plugin log. The worker is archived when it finishes; one fetch is one Sonnet run.
+Contextualise has no vendor accounts of its own. A hidden background agent reads the item through the MCP connectors that agent already has:
 
-The item shows under **Fetched items** on the tag ("fetching", then "ready" or "failed" with the reason), with **Refresh** and **Remove**. Attach > Tag includes ready items. Each stored item is capped at 8,000 characters; at most two fetches run at once, each for up to 3 minutes.
+| Agent | Vendors (built in) | How it is kept read-only |
+| --- | --- | --- |
+| Claude | Jira, Sentry, Slack (claude.ai connectors), Notion | Every MCP tool call asks first; the plugin allows only the route's named read tools |
+| Codex | Notion | Read-only sandbox, no web search; every tool its server does not mark read-only asks first, and only the route's named tools are allowed |
+| OpenCode | not used | It ran shell commands without asking in testing, so it cannot be kept read-only |
+
+"Fetch with" in Settings chooses the agent (automatic tries Claude, then Codex); the form can override it per item. Custom routes in Advanced settings add other agent and server pairs, for example Codex reading Jira through a Jira MCP server you configured for it. Every allow or deny decision is written to the plugin log. One fetch is one agent run.
+
+The item shows under **Fetched items** on the tag ("fetching", then "ready" or "failed" with the reason) with the agent that fetched it, **Refresh** (or **Retry**), and **Remove**; tap a ready item to read it, copy it, or open its link. Attach > Tag includes ready items.
 
 ## Attaching context
 
@@ -59,13 +67,25 @@ Tags are stored on the daemon host in `<PASEO_HOME>/plugin-data/contextualise/ta
 
 Settings > Contextualise:
 
-| Setting | Default | Range |
+| Section | Setting | Default |
 | --- | --- | --- |
-| Longest attachment (characters) | 40,000 | 1,000 to 200,000 |
-| Recent turns per agent | 6 | 1 to 50 |
-| Terminal lines to attach | 200 | 10 to 5,000 |
+| Attachments | Longest attachment (characters) | 40,000 (1,000 to 200,000) |
+| | Recent turns per agent | 6 (1 to 50) |
+| | Terminal lines to attach | 200 (10 to 5,000) |
+| | Include labeled workspaces, links, fetched items, agent conversations | all on |
+| Tags pill | Show the pill; label as tag names or a count | on; names |
+| Fetching | Fetch with: automatic, Claude only, Codex only | automatic |
+| | Claude model; Codex model (empty means the agent's default) | claude-sonnet-5-5; default |
+| Advanced | Fetch time limit (seconds) | 180 (30 to 900) |
+| | Fetches at once | 2 (1 to 5) |
+| | Stored item size (characters) | 8,000 (1,000 to 20,000) |
+| | Comments or replies per item | 10 (0 to 50) |
+| | Extra instructions for workers | empty (up to 1,000 characters) |
+| | Custom routes (JSON) | none (up to 20) |
 
-`0` means the default. Out-of-range values are refused; invalid stored settings stop attachments with an error until they are fixed or reset. In a tag, each agent gets an equal share of the character budget and older turns are dropped first; the attachment says how many.
+`0` means the default for the counts that allow it. Out-of-range values are refused; invalid stored settings stop attachments and fetches with an error until they are fixed or reset. Secret redaction cannot be switched off.
+
+A custom route: `{"vendor":"jira","provider":"codex","server":"my-jira","tools":["get_issue","search_issues"]}`. List only tools that read.
 
 ## Development
 

@@ -22,7 +22,14 @@ test("/tag-link takes the URL first and the rest as the tag", () => {
 });
 
 test("settings: 0 means the default, out-of-range values are invalid", () => {
-  expect(snapshotSettingsSchema.parse({ terminalLines: 0 })).toEqual({ snapshotMaxChars: 40_000, turnsPerAgent: 6, terminalLines: 200 });
+  expect(snapshotSettingsSchema.parse({ terminalLines: 0 })).toMatchObject({ snapshotMaxChars: 40_000, turnsPerAgent: 6, terminalLines: 200, fetchProvider: "auto", maxConcurrentFetches: 2, commentsPerItem: 10, customRoutes: [] });
+  expect(snapshotSettingsSchema.parse({ commentsPerItem: 0 }).commentsPerItem).toBe(0);
+  expect(snapshotSettingsSchema.safeParse({ fetchTimeoutSeconds: 5 }).success).toBe(false);
+  expect(snapshotSettingsSchema.safeParse({ fetchProvider: "opencode" }).success).toBe(false);
+  expect(snapshotSettingsSchema.safeParse({ customRoutes: [{ vendor: "jira", provider: "codex", server: "my-jira", tools: ["get_issue"] }] }).success).toBe(true);
+  expect(snapshotSettingsSchema.safeParse({ customRoutes: [{ vendor: "jira", provider: "opencode", server: "x", tools: ["y"] }] }).success).toBe(false);
+  expect(snapshotSettingsSchema.safeParse({ customRoutes: [{ vendor: "jira", provider: "codex", server: "x y", tools: ["y"] }] }).success).toBe(false);
+  expect(snapshotSettingsSchema.safeParse({ customRoutes: [{ vendor: "jira", provider: "codex", server: "x", tools: [] }] }).success).toBe(false);
   expect(snapshotSettingsSchema.safeParse({ terminalLines: 9 }).success).toBe(false);
   expect(snapshotSettingsSchema.safeParse({ snapshotMaxChars: -1 }).success).toBe(false);
 });
@@ -59,7 +66,8 @@ test("every RPC input schema accepts its own parsed output", () => {
     [contracts.addLinkRpc, { tag: "auth", url: "https://e.com/x", title: "x" }],
     [contracts.removeLinkRpc, { tag: "auth", url: "https://e.com/x" }],
     [contracts.previewTagRpc, { tag: "auth" }],
-    [contracts.fetchItemRpc, { tag: "auth", ref: "PROJ-1" }],
+    [contracts.fetchItemRpc, { tag: "auth", ref: "PROJ-1", provider: "codex" }],
+    [contracts.fetchRouteRpc, { ref: "PROJ-1" }],
     [contracts.refreshNoteRpc, { tag: "auth", noteId: "n" }],
     [contracts.removeNoteRpc, { tag: "auth", noteId: "n" }],
     [contracts.searchTagsRpc, { query: "a" }],

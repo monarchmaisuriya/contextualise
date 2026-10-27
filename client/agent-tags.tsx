@@ -5,6 +5,7 @@ import { type ReactNode, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { addTagRpc, listTagsRpc, parseTagNames, removeTagRpc } from "../shared/contracts";
 import { errorText } from "./errors";
+import { FetchForm } from "./fetch-form";
 import { Button, type Styles, TAGS_QUERY, useTagChange } from "./kit";
 
 // One agent's tags, used by the composer pill's popover and the Tags screen opened for an agent:
@@ -64,6 +65,12 @@ export function AgentTags({ agentId, fallbackWorkspaceId, styles, footer }: { ag
               </Pressable>
             ))}
           </View>
+        </>
+      ) : null}
+      {mine.length > 0 ? (
+        <>
+          <Text style={styles.section}>Fetch an item into a tag</Text>
+          <FetchForm tagNames={mine.map((tag) => tag.name)} styles={styles} />
         </>
       ) : null}
       {footer}

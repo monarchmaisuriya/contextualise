@@ -1,10 +1,10 @@
 import { expect, test, vi } from "vitest";
-import { DOCS_URL, type SnapshotSettings, type TagSummary } from "../shared/contracts";
+import { DOCS_URL, snapshotSettingsSchema, type TagSummary } from "../shared/contracts";
 import type { PaseoApi } from "./paseo-types";
-import { agentLink, Memo, readAgent, searchAgents, searchTags, searchTerminals } from "./sources";
+import { agentLink, includedParts, Memo, readAgent, searchAgents, searchTags, searchTerminals } from "./sources";
 import type { Directory } from "./tags";
 
-const options: SnapshotSettings = { snapshotMaxChars: 40_000, turnsPerAgent: 2, terminalLines: 50 };
+const options = snapshotSettingsSchema.parse({ snapshotMaxChars: 40_000, turnsPerAgent: 2, terminalLines: 50 });
 const entry = (type: string, text: string) => ({ item: { type, text } });
 
 interface FakePage {
@@ -129,4 +129,17 @@ test("Memo reuses a result within its window and forgets failures", async () => 
   await expect(memo.get("f", failing)).rejects.toThrow("nope");
   await expect(memo.get("f", failing)).rejects.toThrow("nope");
   expect(failing).toHaveBeenCalledTimes(2);
+});
+
+test("switched-off parts of a tag are left out of both the subtitle and the text", async () => {
+  const full = { ...tag("auth", ["good"]), links: [{ url: "https://e.com/", title: "Spec", taggedAt: "t" }] };
+  const { paseo, refetch } = fakePaseo({ good: [{ entries: [entry("user_message", "hello")], hasOlder: false, startCursor: null, error: null }] });
+  const noAgents = snapshotSettingsSchema.parse({ includeAgents: false });
+  expect(includedParts(full, noAgents).agents).toEqual([]);
+  const [item] = await searchTags(paseo, new Memo(30_000), [full], "", noAgents);
+  expect(item.subtitle).toBe("1 link");
+  expect(item.text).not.toContain("hello");
+  expect(refetch).not.toHaveBeenCalled();
+  const [noLinks] = await searchTags(paseo, new Memo(30_000), [full], "", snapshotSettingsSchema.parse({ includeLinks: false }));
+  expect(noLinks.text).not.toContain("## Links");
 });

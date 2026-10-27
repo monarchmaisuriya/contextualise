@@ -10,7 +10,7 @@ The Tags screen, in the sidebar footer, lists every tag with its labeled workspa
 
 ## Fetching vendor items
 
-`/tag-fetch PROJ-123 auth-rewrite` (or Fetch item on a tag) saves a Jira, Sentry, Slack, or Notion item's content under a tag. Contextualise has no vendor accounts: a hidden background Claude agent reads the item through the connectors your Claude agents already have, and may use only that vendor's read tools; anything else it asks for is denied and every decision is logged. Each fetch is one model run. Results show under Fetched items with Refresh and Remove, and are included when the tag is attached.
+`/tag-fetch PROJ-123 auth-rewrite`, Fetch item on a tag, or the Fetch box in the Tags pill saves a Jira, Sentry, Slack, or Notion item's content under a tag. The form shows which agent and connector will read it before you start. Contextualise has no vendor accounts: a hidden background agent reads the item through the MCP connectors it already has. Claude covers all four vendors through claude.ai's connectors and Notion; Codex covers Notion; custom routes in Advanced settings add more. OpenCode is not used because it cannot be kept read-only. Workers may use only the named read tools of the item's connector; anything else they ask for is denied, and every decision is logged. Each fetch is one agent run. Results show under Fetched items (tap to read, copy, or open) with Refresh and Remove, and are included when the tag is attached.
 
 ## Attaching context
 
@@ -30,12 +30,13 @@ Tags and links are stored on the daemon host in `plugin-data/contextualise/tags.
 
 ## Settings
 
-Settings > Contextualise:
+Settings > Contextualise has four sections:
 
-- **Longest attachment**: default 40,000 characters (about 10,000 tokens), from 1,000 to 200,000. In a tag, each agent gets an equal share; older turns are dropped first and the attachment says how many.
-- **Recent turns per agent**: default 6, from 1 to 50.
-- **Terminal lines to attach**: default 200, from 10 to 5,000.
+- **Attachments**: longest attachment (default 40,000 characters), turns per agent (6), terminal lines (200), and which parts a tag attachment includes (labeled workspaces, links, fetched items, agent conversations).
+- **Tags pill**: show or hide it; label it with tag names or a count.
+- **Fetching**: which agent fetches (automatic, Claude only, Codex only) and the model for each.
+- **Advanced**: fetch time limit, fetches at once, stored item size, comments per item, extra instructions for workers, and custom routes (another agent and MCP server for a vendor, with the read tools it may use).
 
-Invalid settings stop attachments with an error until they are fixed or reset.
+Invalid settings stop attachments and fetches with an error until they are fixed or reset. Secret redaction cannot be switched off.
 
 Tags are per host. Requires Paseo 0.13.

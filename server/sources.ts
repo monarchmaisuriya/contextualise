@@ -59,7 +59,20 @@ export function agentLink(serverId: string, agentId: string): string {
   return `paseo://h/${encodeURIComponent(serverId)}/agent/${encodeURIComponent(agentId)}`;
 }
 
-export async function tagAttachment(paseo: PaseoApi, memo: Memo, tag: TagSummary, options: SnapshotSettings): Promise<PluginAttachmentItem> {
+// The parts of a tag the settings include. Applied before anything is read or rendered, so the
+// subtitle and the text describe exactly what is sent, and excluded agents are not read at all.
+export function includedParts(tag: TagSummary, options: SnapshotSettings): TagSummary {
+  return {
+    ...tag,
+    workspaces: options.includeWorkspaces ? tag.workspaces : [],
+    links: options.includeLinks ? tag.links : [],
+    notes: options.includeItems ? tag.notes : [],
+    agents: options.includeAgents ? tag.agents : [],
+  };
+}
+
+export async function tagAttachment(paseo: PaseoApi, memo: Memo, fullTag: TagSummary, options: SnapshotSettings): Promise<PluginAttachmentItem> {
+  const tag = includedParts(fullTag, options);
   const readable = tag.agents.filter((agent) => agent.state !== "missing");
   const readings = await Promise.all(readable.map((agent) => memo.get(`agent:${agent.agentId}:${options.turnsPerAgent}`, () => readAgent(paseo, agent.agentId, options.turnsPerAgent))));
   return {

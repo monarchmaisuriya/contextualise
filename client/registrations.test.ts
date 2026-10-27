@@ -30,7 +30,7 @@ test("every name the plugin registers in the app is one Paseo accepts", async ()
   const client = new Proxy(
     {
       paseo: { agents: { list: async () => ({ subscription }) } },
-      rpc: async () => ({ tags }),
+      rpc: async (contract: { name: string }) => (contract.name.startsWith("settings.") ? { status: "ready", revision: "r", values: { showPill: true, pillLabel: "count" } } : { tags }),
       addTimelineRenderer: (r: { kind: string; version: number }) => {
         expect(Number.isInteger(r.version) && r.version >= 1).toBe(true);
         return accept("timeline renderer kind", r.kind);
@@ -51,6 +51,6 @@ test("every name the plugin registers in the app is one Paseo accepts", async ()
   expect(seen.get("timeline renderer kind")?.size).toBe(1);
   expect(seen.get("addAttachmentSource")?.size).toBe(3);
   expect([...(seen.get("slash command name") ?? [])]).toEqual(["tag", "untag", "tag-link", "tag-fetch"]);
-  expect(pills).toEqual([{ agentId: "a1", id: "tags", label: "auth" }]);
+  expect(pills).toEqual([{ agentId: "a1", id: "tags", label: "1 tag", visible: true }]);
   cleanup();
 });

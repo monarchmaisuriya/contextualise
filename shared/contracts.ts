@@ -6,6 +6,7 @@ export const TAGS_PER_COMMAND = 10;
 export const LINK_URL_MAX_CHARS = 2_000;
 export const LINK_TITLE_MAX_CHARS = 200;
 export const NOTE_MAX_CHARS = 8_000;
+export const MAX_CUSTOM_ROUTES = 20;
 // Where a tag or terminal attachment's pill leads when clicked: the section that explains it.
 export const DOCS_URL = "https://github.com/monarchmaisuriya/contextualise#readme";
 
@@ -66,6 +67,25 @@ export interface ItemRef {
   vendor: Vendor;
   ref: string;
 }
+
+// Agents that can fetch. OpenCode is not one: in its default mode it ran shell commands without
+// asking (checked live), so it cannot be kept read-only.
+export const FETCH_PROVIDERS = ["claude", "codex"] as const;
+export type FetchProvider = (typeof FETCH_PROVIDERS)[number];
+export const FETCH_PROVIDER_LABELS: Record<FetchProvider, string> = { claude: "Claude", codex: "Codex" };
+export const FETCH_PREFERENCES = ["auto", "claude", "codex"] as const;
+export type FetchPreference = (typeof FETCH_PREFERENCES)[number];
+
+// Where a worker reads a vendor from: which agent, which of its MCP servers, and the only tools it
+// may use there. Tool and server names are plain identifiers; anything else is refused.
+const mcpName = z.string().regex(/^[A-Za-z0-9_.-]{1,80}$/, "Expected a server or tool name made of letters, digits, _, ., or -");
+export const routeSchema = z.object({
+  vendor: z.enum(VENDORS),
+  provider: z.enum(FETCH_PROVIDERS),
+  server: mcpName,
+  tools: z.array(mcpName).min(1).max(30),
+});
+export type Route = z.infer<typeof routeSchema>;
 
 const ITEM_REF_FORMS = "a Jira key like PROJ-123, or a Jira, Sentry, Slack, or Notion link (or prefix it: jira:, sentry:, slack:, notion:)";
 
@@ -143,8 +163,15 @@ export const fetchItemRpc = defineRpc({
   name: "tags.fetch",
   // Checked here but kept as text: Paseo validates inputs on both sides, so an input schema must
   // accept its own output. The handler reads the vendor from it with parseItemRef.
-  input: z.object({ tag: tagNameInput, ref: parsed((value) => (parseItemRef(value), value.trim())) }),
-  output: z.object({ tag: z.string(), name: z.string(), noteId: z.string(), changed: z.boolean() }),
+  input: z.object({ tag: tagNameInput, ref: parsed((value) => (parseItemRef(value), value.trim())), provider: z.enum(FETCH_PREFERENCES).optional() }),
+  output: z.object({ tag: z.string(), name: z.string(), noteId: z.string(), changed: z.boolean(), provider: z.enum(FETCH_PROVIDERS), server: z.string() }),
+});
+
+// Which agent and connector a fetch would use, before starting it.
+export const fetchRouteRpc = defineRpc({
+  name: "tags.fetch.route",
+  input: z.object({ ref: parsed((value) => (parseItemRef(value), value.trim())), provider: z.enum(FETCH_PREFERENCES).optional() }),
+  output: z.object({ vendor: z.enum(VENDORS), provider: z.enum(FETCH_PROVIDERS), server: z.string() }),
 });
 
 export const refreshNoteRpc = defineRpc({
@@ -194,6 +221,8 @@ export const noteMemberSchema = z.object({
   error: z.string().nullable(),
   addedAt: z.string(),
   fetchedAt: z.string().nullable(),
+  // The agent that fetched it; null for items fetched before 0.7.0 (always Claude then).
+  provider: z.enum(FETCH_PROVIDERS).nullable().default(null),
 });
 export type NoteMember = z.infer<typeof noteMemberSchema>;
 
@@ -275,9 +304,30 @@ function boundedCount(min: number, max: number, fallback: number) {
 }
 
 export const snapshotSettingsSchema = z.object({
+  // Attachments
   snapshotMaxChars: boundedCount(1_000, 200_000, SNAPSHOT_MAX_CHARS_DEFAULT),
   turnsPerAgent: boundedCount(1, 50, TURNS_PER_AGENT_DEFAULT),
   terminalLines: boundedCount(10, 5_000, TERMINAL_LINES_DEFAULT),
+  includeWorkspaces: z.boolean().default(true),
+  includeLinks: z.boolean().default(true),
+  includeItems: z.boolean().default(true),
+  includeAgents: z.boolean().default(true),
+  // Tags pill
+  showPill: z.boolean().default(true),
+  pillLabel: z.enum(["names", "count"]).default("names"),
+  // Fetching
+  fetchProvider: z.enum(FETCH_PREFERENCES).default("auto"),
+  // Empty means the provider's own default model.
+  claudeFetchModel: z.string().trim().max(100).default("claude-sonnet-5-5"),
+  codexFetchModel: z.string().trim().max(100).default(""),
+  // Advanced
+  fetchTimeoutSeconds: boundedCount(30, 900, 180),
+  maxConcurrentFetches: boundedCount(1, 5, 2),
+  noteMaxChars: boundedCount(1_000, 20_000, NOTE_MAX_CHARS),
+  // 0 is meaningful here (no comments), so it is not a "0 means default" count.
+  commentsPerItem: z.number().int().min(0).max(50).default(10),
+  extraInstructions: z.string().max(1_000).default(""),
+  customRoutes: z.array(routeSchema).max(MAX_CUSTOM_ROUTES).default([]),
 });
 export type SnapshotSettings = z.infer<typeof snapshotSettingsSchema>;
 

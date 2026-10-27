@@ -1,21 +1,24 @@
 import { mkdir, realpath } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
-import type { ItemRef } from "../shared/contracts";
+import type { FetchProvider, Route } from "../shared/contracts";
 import type { PaseoApi } from "./paseo-types";
-import { buildFetchPrompt, FETCH_OUTPUT_SCHEMA } from "./vendor-fetch";
+import { FETCH_OUTPUT_SCHEMA } from "./vendor-fetch";
 
-// Fetch workers are Claude agents because Claude agents carry the user's claude.ai connectors
-// (Jira, Sentry, Slack) and their local Notion server (checked live). Built-in tools and Paseo's own
-// tool server are disallowed outright; the mode makes every remaining tool call ask, and the
-// plugin's permission hook allows only the named read tools of the vendor being fetched.
-const FETCH_MODEL = "claude-sonnet-5-5";
-const FETCH_MODE = "default";
+// How each provider's worker is locked down (checked live). Claude: built-in tools and Paseo's own
+// tool server are disallowed outright, and in mode "default" every MCP tool call asks. Codex: mode
+// "auto" with a read-only sandbox and web search off; every MCP tool its server does not mark
+// read-only asks. Either way the plugin's permission hook allows only the
+// route's named read tools and denies the rest.
 const BLOCKED_TOOLS = [
   "Bash", "BashOutput", "KillShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "LS",
   "WebFetch", "WebSearch", "Task", "Agent", "TodoWrite", "Skill", "SlashCommand", "mcp__paseo",
 ];
-const LOCKDOWN_OPTIONS = { disallowedTools: BLOCKED_TOOLS, settings: { permissions: { deny: BLOCKED_TOOLS } } };
-export const FETCH_TIMEOUT_MS = 3 * 60_000;
+export const LOCKDOWN: Record<FetchProvider, { modeId: string; options: Record<string, unknown> }> = {
+  claude: { modeId: "default", options: { disallowedTools: BLOCKED_TOOLS, settings: { permissions: { deny: BLOCKED_TOOLS } } } },
+  // Paseo accepts only auto, auto-review, and full-access for Codex; "auto" with a read-only sandbox
+  // still asks before every MCP tool not marked read-only (checked live).
+  codex: { modeId: "auto", options: { sandbox_mode: "read-only", web_search: "disabled" } },
+};
 const POLL_MS = 15_000;
 const PERMISSION_BACKOFF_MS = 2_000;
 const MAX_PERMISSION_WAITS = 30;
@@ -31,13 +34,25 @@ export function isWorkerCwd(root: string, cwd: string): boolean {
   return target === dir || target.startsWith(`${dir}${sep}`);
 }
 
-// Sonnet when Paseo lists it, since fetching needs no larger model; otherwise Claude's default.
-async function fetchModel(paseo: PaseoApi): Promise<string> {
-  const { models } = await paseo.providers.listModels("claude");
-  if (models?.some((model) => model.id === FETCH_MODEL)) return `claude/${FETCH_MODEL}`;
+// The configured model when Paseo lists it for the provider; empty means the provider's default.
+// A configured model that Paseo does not list is an error, not a silent switch to another model.
+async function fetchModel(paseo: PaseoApi, provider: FetchProvider, configured: string): Promise<string> {
+  const { models } = await paseo.providers.listModels(provider);
+  if (configured) {
+    if (models?.some((model) => model.id === configured)) return `${provider}/${configured}`;
+    throw new Error(`Paseo lists no ${provider} model "${configured}"; change it in Settings > Contextualise > Fetching`);
+  }
   const chosen = models?.find((model) => model.isDefault) ?? models?.[0];
-  if (!chosen) throw new Error("Paseo lists no Claude models; fetching needs a Claude agent");
-  return `claude/${chosen.id}`;
+  if (!chosen) throw new Error(`Paseo lists no ${provider} models`);
+  return `${provider}/${chosen.id}`;
+}
+
+export interface FetchJob {
+  route: Route;
+  title: string;
+  prompt: string;
+  model: string;
+  timeoutMs: number;
 }
 
 const workspaceLookups = new Map<string, Promise<string>>();
@@ -64,22 +79,23 @@ export function workerWorkspace(paseo: PaseoApi, root: string): Promise<string> 
 }
 
 // Runs one fetch worker to its final message. The worker is archived afterwards whatever happens.
-export async function runFetchWorker(paseo: PaseoApi, root: string, item: ItemRef, onCreated: (agentId: string) => void): Promise<string> {
+export async function runFetchWorker(paseo: PaseoApi, root: string, job: FetchJob, onCreated: (agentId: string) => void): Promise<string> {
   const workspaceId = await workerWorkspace(paseo, root);
   let handle: Awaited<ReturnType<PaseoApi["agents"]["create"]>> | null = null;
   try {
+    const { modeId, options } = LOCKDOWN[job.route.provider];
     handle = await paseo.workspaces.ref(workspaceId).agents.create({
-      title: `contextualise: fetch ${item.vendor} ${item.ref}`.slice(0, 120),
-      config: { provider: await fetchModel(paseo), modeId: FETCH_MODE, options: LOCKDOWN_OPTIONS },
-      prompt: buildFetchPrompt(item),
+      title: job.title.slice(0, 120),
+      config: { provider: await fetchModel(paseo, job.route.provider, job.model), modeId, options },
+      prompt: job.prompt,
       outputSchema: FETCH_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     });
     onCreated(handle.id);
-    const deadline = Date.now() + FETCH_TIMEOUT_MS;
+    const deadline = Date.now() + job.timeoutMs;
     let permissionWaits = 0;
     for (;;) {
       const left = deadline - Date.now();
-      if (left <= 0) throw new Error(`did not finish in ${Math.round(FETCH_TIMEOUT_MS / 1000)} s`);
+      if (left <= 0) throw new Error(`did not finish in ${Math.round(job.timeoutMs / 1000)} s`);
       const result = await handle.waitForFinish(Math.min(left, POLL_MS));
       if (result.status === "timeout") continue;
       // A tool request is pending; the permission hook answers it. Wait before asking again.

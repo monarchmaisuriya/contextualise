@@ -2,6 +2,22 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.7.0 - 2026-10-27
+
+### Added
+
+- Codex can fetch too. Built-in routes: Claude for Jira, Sentry, Slack, and Notion; Codex for Notion. "Fetch with" chooses automatic (Claude, then Codex), Claude only, or Codex only; each fetch can override it.
+- Custom routes (Settings, Advanced): another agent and MCP server for a vendor, with the exact read tools it may use. Routes are used only when that agent has the server configured.
+- Codex workers run in Codex's "auto" mode with a read-only sandbox and no web search; the plugin allows only the route's tools when Codex asks, and every decision is logged.
+- Settings, grouped into Attachments, Tags pill, Fetching, and Advanced: which parts a tag attachment includes, pill on or off and its label style, models per agent, fetch time limit, fetches at once, stored item size, comments per item, extra instructions for workers, custom routes. Each field shows its own error.
+- Fetch form shows which agent and connector will read an item, or why none can, before it starts; the pill's popover has a Fetch box for the agent's tags.
+- Tags screen: summary line, sort by recent, name, or size, collapsible tags with Expand all and Collapse all, filter that also matches fetched items, and a reader for fetched items with Copy and Open.
+
+### Changed
+
+- Fetched items record the agent that fetched them. Items from 0.6.0 show none.
+- OpenCode is never used for fetching: in testing it ran shell commands without asking.
+
 ## 0.6.0 - 2026-10-27
 
 ### Added

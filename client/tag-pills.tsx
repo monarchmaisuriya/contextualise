@@ -1,6 +1,7 @@
 import type { PluginButtonContentProps, PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
 import { View } from "react-native";
-import { listTagsRpc } from "../shared/contracts";
+import { settingsRpc } from "@getpaseo/plugin";
+import { listTagsRpc, snapshotSettings, snapshotSettingsSchema } from "../shared/contracts";
 import { AgentTags } from "./agent-tags";
 import { Button, useStyles } from "./kit";
 import { pillLabel, tagNamesByAgent } from "./pill-label";
@@ -14,6 +15,7 @@ const PILL_ID = "tags";
 export function followAgentPills(client: PluginClientContext, openTagsFor: (agentId: string, workspaceId: string) => void): () => void {
   const pills = new Map<string, { registration: PluginButtonRegistration; workspaceId: string }>();
   let names = new Map<string, string[]>();
+  let display = { visible: true, style: "names" as "names" | "count" };
   let stopped = false;
   const lifetime = new AbortController();
 
@@ -34,7 +36,7 @@ export function followAgentPills(client: PluginClientContext, openTagsFor: (agen
     return <AgentTags agentId={agentId} fallbackWorkspaceId={workspaceId} styles={styles} footer={footer} />;
   }
 
-  const label = (agentId: string) => pillLabel(names.get(agentId) ?? []);
+  const label = (agentId: string) => pillLabel(names.get(agentId) ?? [], display.style);
 
   function drop(agentId: string) {
     pills.get(agentId)?.registration.remove();
@@ -58,17 +60,27 @@ export function followAgentPills(client: PluginClientContext, openTagsFor: (agen
           title: "Tags for this agent",
           icon: "Tags",
           label: label(agent.id),
+          visible: display.visible,
           behavior: { kind: "popover", Content: (props) => (props.context === "agent" ? <Popover {...props} agentId={props.agentId} /> : null) },
         },
       }),
     });
   }
 
+  // Settings decide whether pills show and how they are labeled. Invalid settings keep the last
+  // choice; the settings screen shows the problem.
+  async function refreshDisplay() {
+    const state = await client.rpc(settingsRpc(snapshotSettings.id).read, {});
+    const parsed = state.status === "ready" ? snapshotSettingsSchema.safeParse(state.values) : null;
+    if (parsed?.success) display = { visible: parsed.data.showPill, style: parsed.data.pillLabel };
+  }
+
   // One tags.list call per change, shared by every pill. A failed refresh keeps the last labels.
   async function refreshLabels() {
     try {
-      names = tagNamesByAgent((await client.rpc(listTagsRpc, {})).tags);
-      for (const [agentId, pill] of pills) pill.registration.update({ label: label(agentId) });
+      const [{ tags }] = await Promise.all([client.rpc(listTagsRpc, {}), refreshDisplay()]);
+      names = tagNamesByAgent(tags);
+      for (const [agentId, pill] of pills) pill.registration.update({ label: label(agentId), visible: display.visible });
     } catch (error) {
       if (!stopped) console.error("[contextualise] could not refresh tag pills", error);
     }

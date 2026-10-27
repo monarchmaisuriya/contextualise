@@ -27,7 +27,7 @@ export interface Outcome {
   changed: boolean;
 }
 
-export type NotePatch = Partial<Pick<StoredNote, "title" | "url" | "status" | "text" | "error" | "fetchedAt">>;
+export type NotePatch = Partial<Pick<StoredNote, "title" | "url" | "status" | "text" | "error" | "fetchedAt" | "provider">>;
 
 // Membership Paseo cannot hold for us: agents and links under a tag name. Workspace membership is
 // never stored here: it is read live from Paseo's workspace labels. Writes go through one queue and
@@ -89,18 +89,18 @@ export class TagStore {
         return false;
       }
       noteId = randomUUID();
-      tag.notes.push({ id: noteId, vendor: item.vendor, ref: item.ref, title: item.ref, url: null, status: "fetching", text: "", error: null, addedAt: new Date().toISOString(), fetchedAt: null });
+      tag.notes.push({ id: noteId, vendor: item.vendor, ref: item.ref, title: item.ref, url: null, status: "fetching", text: "", error: null, addedAt: new Date().toISOString(), fetchedAt: null, provider: null });
       return true;
     });
     return { ...outcome, noteId };
   }
 
   // Changes one note in place. The text is capped here, the one place notes are written.
-  async updateNote(rawName: string, noteId: string, patch: NotePatch): Promise<Outcome> {
+  async updateNote(rawName: string, noteId: string, patch: NotePatch, maxChars = NOTE_MAX_CHARS): Promise<Outcome> {
     const [outcome] = await this.change([parseTagName(rawName)], (tag) => {
       const note = tag.notes.find((candidate) => candidate.id === noteId);
       if (!note) return false;
-      Object.assign(note, patch, patch.text === undefined ? {} : { text: patch.text.length > NOTE_MAX_CHARS ? `${patch.text.slice(0, NOTE_MAX_CHARS - 4)} […]` : patch.text });
+      Object.assign(note, patch, patch.text === undefined ? {} : { text: patch.text.length > maxChars ? `${patch.text.slice(0, maxChars - 4)} […]` : patch.text });
       return true;
     });
     return outcome;
