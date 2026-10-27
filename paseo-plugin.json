@@ -2,6 +2,11 @@
   "id": "contextualise",
   "name": "Contextualise",
   "icon": "contextualise.png",
+  "media": [
+    "assets/tags-screen.png",
+    "assets/tags-pill.png",
+    "assets/attach-agent.png"
+  ],
   "description": "Tag agents across workspaces and providers, fetch Jira, Sentry, Slack, and Notion items into tags, and attach any of it to a prompt.",
   "requirements": {
     "paseo": ">=0.13.0 <0.14.0"

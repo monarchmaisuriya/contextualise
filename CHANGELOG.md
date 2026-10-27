@@ -2,6 +2,12 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.11.3 - 2026-10-28
+
+### Added
+
+- Interface images for the plugin listing (`paseo-plugin.json` `media`): the Tags screen, the Tags pill, and Attach > Agent conversation, taken with made-up sample data.
+
 ## 0.11.2 - 2026-10-28
 
 ### Fixed
