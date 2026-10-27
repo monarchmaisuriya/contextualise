@@ -2,6 +2,16 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## Unreleased
+
+### Added
+
+- The Contextualise logo: the plugin's icon in Paseo's plugin list (`paseo-plugin.json` `icon`), and the mark on the Tags sidebar row and the Settings > Contextualise entry, drawn in the theme's color.
+
+### Changed
+
+- Test fixtures use made-up names and links only; history was rewritten to remove real ones.
+
 ## 0.11.0 - 2026-10-28
 
 ### Added

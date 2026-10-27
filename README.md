@@ -1,3 +1,5 @@
+<img src="contextualise.png" width="96" alt="Contextualise logo">
+
 # contextualise
 
 A [Paseo](https://paseo.sh) plugin that tags agents across workspaces and providers, fetches Jira, Sentry, Slack, and Notion items into tags, and attaches context to a prompt: a whole tag, another agent's conversation, or terminal output.

@@ -2,6 +2,7 @@ import type { PluginClientContext, PluginSidebarItemProps } from "@getpaseo/plug
 import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { readable } from "./client/errors";
 import { FetchResultRow } from "./client/fetch-result";
+import { LOGO } from "./client/icons";
 import { ReceiptRow } from "./client/receipt";
 import { SnapshotSettingsScreen } from "./client/settings-screen";
 import { tagsChanged } from "./client/tag-events";
@@ -27,7 +28,7 @@ import {
 
 // Shown, hidden, and moved under Paseo's Settings > Sidebar.
 function TagsSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
-  return <SidebarRow icon="Tags" active={currentScreen?.screenId === "tags"} onPress={() => openScreen({ screenId: "tags" })} />;
+  return <SidebarRow icon={LOGO} active={currentScreen?.screenId === "tags"} onPress={() => openScreen({ screenId: "tags" })} />;
 }
 
 export default function contribute(client: PluginClientContext) {
@@ -36,7 +37,7 @@ export default function contribute(client: PluginClientContext) {
   const removers = [
     client.addScreen({ id: "tags", title: (params) => (params.agentId ? "Tags for this agent" : "Tags"), Component: TagsScreen }),
     client.addSidebarFooterItem({ id: "tags", title: "Tags", Component: TagsSidebarItem }),
-    client.addSettingsScreen({ id: "snapshot", title: "Contextualise", icon: "Tags", Component: SnapshotSettingsScreen }),
+    client.addSettingsScreen({ id: "snapshot", title: "Contextualise", icon: LOGO, Component: SnapshotSettingsScreen }),
     client.addAttachmentSource(tagAttachmentSource),
     client.addAttachmentSource(agentAttachmentSource),
     client.addAttachmentSource(terminalAttachmentSource),
