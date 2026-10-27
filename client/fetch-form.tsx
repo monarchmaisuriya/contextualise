@@ -25,7 +25,8 @@ function validRef(text: string): boolean {
 
 // Fetch a Jira, Sentry, Slack, or Notion item into one of `tagNames` (or a typed tag when there are
 // none). Before anything starts it shows which agent and connector will read the item, or why none can.
-export function FetchForm({ tagNames, styles, onDone }: { tagNames: readonly string[]; styles: Styles; onDone?(): void }) {
+// With `notifyAgentId`, the result is also shown in that agent's conversation.
+export function FetchForm({ tagNames, styles, notifyAgentId, onDone }: { tagNames: readonly string[]; styles: Styles; notifyAgentId?: string; onDone?(): void }) {
   const fetchItem = useRpc(fetchItemRpc);
   const describeRoute = useRpc(fetchRouteRpc);
   const toast = useToast();
@@ -40,7 +41,7 @@ export function FetchForm({ tagNames, styles, onDone }: { tagNames: readonly str
     retry: false,
   });
   const fetching = useTagChange(
-    () => fetchItem({ tag: parseTagName(tag), ref: trimmed, provider }),
+    () => fetchItem({ tag: parseTagName(tag), ref: trimmed, provider, notifyAgentId }),
     (started) => {
       toast.show(`Fetching ${trimmed} into "${started.name}" with ${FETCH_PROVIDER_LABELS[started.provider]}; it appears under Fetched items when ready`, { variant: "info" });
       setRef("");

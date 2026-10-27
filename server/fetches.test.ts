@@ -2,8 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { type FetchProvider, snapshotSettingsSchema } from "../shared/contracts";
-import { Fetcher, type RunWorker } from "./fetches";
+import { FETCH_RESULT_KIND, type FetchProvider, type FetchResult, snapshotSettingsSchema } from "../shared/contracts";
+import { Fetcher, postFetchResult, type ReportResult, type RunWorker } from "./fetches";
 import type { PaseoApi } from "./paseo-types";
 import { TagStore } from "./tag-store";
 
@@ -25,8 +25,17 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-function fetcher(runWorker: RunWorker, settings: Record<string, unknown> = {}) {
-  return new Fetcher({ store, resolveRoot: async () => dir, settings: async () => snapshotSettingsSchema.parse(settings), configuredServers: async () => servers, runWorker });
+function fetcher(runWorker: RunWorker, settings: Record<string, unknown> = {}, report: ReportResult = async () => {}) {
+  return new Fetcher({ store, resolveRoot: async () => dir, settings: async () => snapshotSettingsSchema.parse(settings), configuredServers: async () => servers, runWorker, report });
+}
+
+// Collects the results a fetcher reports, as [agent, result] pairs.
+function reports() {
+  const sent: Array<[string, FetchResult]> = [];
+  const report: ReportResult = async (_paseo, agentId, result) => {
+    sent.push([agentId, result]);
+  };
+  return { sent, report };
 }
 
 // A worker that registers its id, then answers with `reply` (or throws it when it is an Error).
@@ -117,4 +126,90 @@ test("no more workers run at once than the setting allows", async () => {
   await new Promise((done) => setTimeout(done, 200));
   expect(peak).toBe(3);
   expect((await store.read()).bulk.notes.every((note) => note.status === "ready")).toBe(true);
+});
+
+test("a fetch started from an agent is reported to it when it ends, and its refresh reports to it again", async () => {
+  const { sent, report } = reports();
+  const instance = fetcher(worker('{"found":true,"title":"Login fails","url":null,"text":"Status: open"}'), {}, report);
+  const { noteId } = await instance.start(paseo, "auth", { vendor: "jira", ref: "PROJ-1" }, undefined, "a1");
+  await settle();
+  expect(sent).toEqual([["a1", { tag: "auth", noteId, vendor: "jira", ref: "PROJ-1", title: "Login fails", status: "ready", error: null, chars: 12 }]]);
+  expect((await store.read()).auth.notes[0].notifyAgentId).toBe("a1");
+  // A refresh from anywhere (the Tags screen has no agent) reports to the agent stored on the note.
+  await instance.refresh(paseo, "auth", noteId);
+  await settle();
+  expect(sent.map(([agentId, result]) => [agentId, result.noteId])).toEqual([
+    ["a1", noteId],
+    ["a1", noteId],
+  ]);
+});
+
+test("no report without an asking agent, for automatic refreshes, or with the setting off", async () => {
+  const { sent, report } = reports();
+  const reply = '{"found":true,"title":"t","url":null,"text":"x"}';
+  const quiet = fetcher(worker(reply), {}, report);
+  await quiet.start(paseo, "auth", { vendor: "jira", ref: "PROJ-1" });
+  const { noteId } = await quiet.start(paseo, "auth", { vendor: "jira", ref: "PROJ-2" }, undefined, "a1");
+  await settle();
+  sent.length = 0;
+  await quiet.refresh(paseo, "auth", noteId, { auto: true });
+  await fetcher(worker(reply), { notifyFetchResults: false }, report).start(paseo, "auth", { vendor: "jira", ref: "PROJ-3" }, undefined, "a1");
+  await settle();
+  expect(sent).toEqual([]);
+});
+
+test("a failed fetch is reported with its reason, and a report that cannot be posted is only logged", async () => {
+  const { sent, report } = reports();
+  await fetcher(worker(new Error("did not finish in 180 s")), {}, report).start(paseo, "auth", { vendor: "jira", ref: "PROJ-1" }, undefined, "a1");
+  await settle();
+  expect(sent[0][1]).toMatchObject({ status: "failed", error: "did not finish in 180 s", chars: 0 });
+  const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  const broken: ReportResult = async () => {
+    throw new Error("Unknown agent a2");
+  };
+  await fetcher(worker('{"found":true,"title":"t","url":null,"text":"x"}'), {}, broken).start(paseo, "auth", { vendor: "jira", ref: "PROJ-2" }, undefined, "a2");
+  await settle();
+  expect((await store.read()).auth.notes.find((note) => note.ref === "PROJ-2")?.status).toBe("ready");
+  expect(logged.mock.calls.some(([line]) => String(line).includes("Unknown agent a2"))).toBe(true);
+  logged.mockRestore();
+});
+
+test("a result row loads the agent first and has one id per item, so a later result replaces it", async () => {
+  const calls: unknown[] = [];
+  const fake = {
+    agents: {
+      ref: (agentId: string) => ({
+        timeline: {
+          refetch: async (request: unknown) => (calls.push(["read", agentId, request]), { entries: [], hasOlder: false, startCursor: null, error: null }),
+          append: async (item: unknown) => (calls.push(["append", agentId, item]), { seq: 1, epoch: "e" }),
+        },
+      }),
+    },
+  } as unknown as PaseoApi;
+  const result: FetchResult = { tag: "auth", noteId: "n1", vendor: "jira", ref: "PROJ-1", title: "t", status: "ready", error: null, chars: 1 };
+  await postFetchResult(fake, "a1", result);
+  expect(calls).toEqual([
+    ["read", "a1", { direction: "tail", limit: 1, projection: "projected" }],
+    ["append", "a1", { type: "plugin", id: "fetch-n1", kind: FETCH_RESULT_KIND, version: 1, data: result }],
+  ]);
+});
+
+test("only ready items older than the setting's hours are refreshed automatically, and nothing while it is off", async () => {
+  const { sent, report } = reports();
+  const refetched: string[] = [];
+  const run: RunWorker = async (_p, _r, job, onCreated) => {
+    refetched.push(job.title);
+    onCreated(job.title);
+    return '{"found":true,"title":"t","url":null,"text":"x"}';
+  };
+  const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
+  for (const [ref, status, fetchedAt] of [["OLD-1", "ready", hoursAgo(25)], ["NEW-1", "ready", hoursAgo(1)], ["BAD-1", "failed", hoursAgo(48)]] as const) {
+    const { noteId } = await store.addNote("auth", { vendor: "jira", ref });
+    await store.updateNote("auth", noteId, { status, fetchedAt, notifyAgentId: "a1" });
+  }
+  expect(await fetcher(run, {}, report).refreshStale(paseo)).toBe(0);
+  expect(await fetcher(run, { autoRefreshItems: true, autoRefreshHours: 24 }, report).refreshStale(paseo)).toBe(1);
+  await settle();
+  expect(refetched).toEqual(["contextualise: fetch jira OLD-1"]);
+  expect(sent).toEqual([]);
 });

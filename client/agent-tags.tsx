@@ -3,7 +3,7 @@ import { Icon, TextInput, useToast } from "@getpaseo/plugin/client/ui";
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { Text, View } from "react-native";
-import { addTagRpc, listTagsRpc, parseTagNames, removeTagRpc } from "../shared/contracts";
+import { addTagRpc, listTagsRpc, parseTagNames, pinAgentRpc, removeTagRpc } from "../shared/contracts";
 import { errorText } from "./errors";
 import { FetchForm } from "./fetch-form";
 import { ICONS } from "./icons";
@@ -29,6 +29,11 @@ export function AgentTags({ agentId, fallbackWorkspaceId, styles, footer }: { ag
     () => setNames(""),
   );
   const removing = useTagChange((name: string) => remove({ tags: [name], agentId }));
+  const pin = useRpc(pinAgentRpc);
+  const pinned = query.data?.pinnedAgents.some((entry) => entry.agentId === agentId) ?? false;
+  const pinning = useTagChange(() => pin({ agentId, pinned: !pinned }), (result) =>
+    toast.show(result.pinned ? "Pinned: this agent comes first in Attach > Agent conversation" : "Unpinned", { variant: "success" }),
+  );
   const mine = tags.filter((tag) => tag.agents.some((member) => member.agentId === agentId));
   const others = tags.filter((tag) => !mine.includes(tag)).slice(0, 24);
   const submit = () => {
@@ -45,6 +50,7 @@ export function AgentTags({ agentId, fallbackWorkspaceId, styles, footer }: { ag
         <Text style={[styles.title, styles.grow]} numberOfLines={1}>
           {agent?.title ?? "This agent"}
         </Text>
+        <Button label={pinned ? "Unpin" : "Pin"} icon={pinned ? ICONS.unpin : ICONS.pin} styles={styles} onPress={() => pinning.mutate(undefined)} disabled={pinning.isPending || !query.data} />
       </View>
       <SectionTitle icon={ICONS.tags} label={mine.length === 0 ? "No tags yet" : "Tagged with (tap to remove)"} count={mine.length || undefined} styles={styles} />
       {mine.length > 0 ? (
@@ -54,6 +60,7 @@ export function AgentTags({ agentId, fallbackWorkspaceId, styles, footer }: { ag
           ))}
         </View>
       ) : null}
+      {mine.length === 0 ? <Text style={styles.muted}>Type tag names below and press Add, or type /tag auth-rewrite in the message box.</Text> : null}
       <View style={styles.row}>
         <TextInput style={styles.input} value={names} onChangeText={setNames} placeholder="New tags, separated by commas" onSubmitEditing={submit} accessibilityLabel="Tag names" />
         <Button label="Add" icon={ICONS.add} kind="primary" styles={styles} onPress={submit} disabled={adding.isPending} />
@@ -72,7 +79,7 @@ export function AgentTags({ agentId, fallbackWorkspaceId, styles, footer }: { ag
       {mine.length > 0 ? (
         <>
           <SectionTitle icon={ICONS.fetch} label="Fetch an item into a tag" styles={styles} />
-          <FetchForm tagNames={mine.map((tag) => tag.name)} styles={styles} />
+          <FetchForm tagNames={mine.map((tag) => tag.name)} styles={styles} notifyAgentId={agentId} />
         </>
       ) : null}
       {footer}

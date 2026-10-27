@@ -25,6 +25,9 @@ test("settings: 0 means the default, out-of-range values are invalid", () => {
   expect(snapshotSettingsSchema.parse({ terminalLines: 0 })).toMatchObject({ snapshotMaxChars: 40_000, turnsPerAgent: 6, terminalLines: 200, fetchProvider: "auto", maxConcurrentFetches: 2, commentsPerItem: 10, customRoutes: [] });
   expect(snapshotSettingsSchema.parse({ commentsPerItem: 0 }).commentsPerItem).toBe(0);
   expect(snapshotSettingsSchema.parse({}).resultsPerSearch).toBe(20);
+  expect(snapshotSettingsSchema.parse({})).toMatchObject({ pickerPrefix: "none", shortenLinks: true, agentShowWorkspace: true, agentShowStatus: true, agentShowActivity: true, includeArchivedAgents: true, agentSort: "recent", pillNameMaxChars: 24 });
+  expect(snapshotSettingsSchema.safeParse({ pillNameMaxChars: 9 }).success).toBe(false);
+  expect(snapshotSettingsSchema.safeParse({ pickerPrefix: "icon" }).success).toBe(false);
   expect(snapshotSettingsSchema.safeParse({ resultsPerSearch: 51 }).success).toBe(false);
   expect(snapshotSettingsSchema.safeParse({ fetchTimeoutSeconds: 5 }).success).toBe(false);
   expect(snapshotSettingsSchema.safeParse({ fetchProvider: "opencode" }).success).toBe(false);
@@ -68,7 +71,8 @@ test("every RPC input schema accepts its own parsed output", () => {
     [contracts.addLinkRpc, { tag: "auth", url: "https://e.com/x", title: "x" }],
     [contracts.removeLinkRpc, { tag: "auth", url: "https://e.com/x" }],
     [contracts.previewTagRpc, { tag: "auth" }],
-    [contracts.fetchItemRpc, { tag: "auth", ref: "PROJ-1", provider: "codex" }],
+    [contracts.fetchItemRpc, { tag: "auth", ref: "PROJ-1", provider: "codex", notifyAgentId: "a" }],
+    [contracts.pinAgentRpc, { agentId: "a", pinned: true }],
     [contracts.fetchRouteRpc, { ref: "PROJ-1" }],
     [contracts.refreshNoteRpc, { tag: "auth", noteId: "n" }],
     [contracts.removeNoteRpc, { tag: "auth", noteId: "n" }],

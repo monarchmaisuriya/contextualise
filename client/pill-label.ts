@@ -1,13 +1,11 @@
 import type { TagSummary } from "../shared/contracts";
 
-const NAME_MAX_CHARS = 24;
-
 // The pill's text: "Tag" when the agent has none; else its most recent tag and how many more, or
 // just the count, as the settings choose.
-export function pillLabel(names: readonly string[], style: "names" | "count" = "names"): string {
+export function pillLabel(names: readonly string[], style: "names" | "count" = "names", maxChars = 24): string {
   if (names.length === 0) return "Tag";
   if (style === "count") return `${names.length} tag${names.length === 1 ? "" : "s"}`;
-  const first = names[0].length > NAME_MAX_CHARS ? `${names[0].slice(0, NAME_MAX_CHARS - 1)}…` : names[0];
+  const first = names[0].length > maxChars ? `${names[0].slice(0, maxChars - 1)}…` : names[0];
   return names.length === 1 ? first : `${first} +${names.length - 1}`;
 }
 

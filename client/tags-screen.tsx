@@ -1,7 +1,7 @@
 import { openExternalUrl, type PluginScreenProps, useRpc, useWorkspace } from "@getpaseo/plugin/client";
 import { copyText, Icon, Markdown, Modal, ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import {
   addLinkRpc,
@@ -10,11 +10,14 @@ import {
   type LinkMember,
   listTagsRpc,
   type NoteMember,
+  type PinnedAgent,
+  pinAgentRpc,
   previewTagRpc,
   refreshNoteRpc,
   removeLinkRpc,
   removeNoteRpc,
   removeTagRpc,
+  tagKey,
   type TagSummary,
   VENDOR_LABELS,
 } from "../shared/contracts";
@@ -27,10 +30,9 @@ import { onTagsChanged } from "./tag-events";
 
 type Navigation = PluginScreenProps["navigation"];
 
-function AgentRow({ agent, tag, styles, navigation }: { agent: AgentMember; tag: TagSummary; styles: Styles; navigation: Navigation }) {
-  const workspaceName = useWorkspace(agent.workspaceId, (workspace) => workspace.name);
-  const remove = useRpc(removeTagRpc);
-  const removal = useTagChange(() => remove({ tags: [tag.name], agentId: agent.agentId }));
+// One agent: opens it when tapped (unless Paseo no longer has it), with `action` at the end.
+function AgentLine({ agent, when, action, styles, navigation }: { agent: AgentMember | PinnedAgent; when: string; action: ReactNode; styles: Styles; navigation: Navigation }) {
+  const workspaceName = useWorkspace(agent.workspaceId ?? "", (workspace) => workspace.name);
   const open = navigation && agent.state !== "missing" ? () => navigation.openAgent({ agentId: agent.agentId }) : undefined;
   const state = agent.state === "missing" ? "missing: Paseo no longer has this agent" : agent.state === "archived" ? "archived" : null;
   return (
@@ -41,10 +43,38 @@ function AgentRow({ agent, tag, styles, navigation }: { agent: AgentMember; tag:
           {agent.title ?? agent.agentId}
         </Text>
         <Text style={agent.state === "missing" ? styles.danger : styles.muted} numberOfLines={1}>
-          {[agent.provider ?? "unknown provider", workspaceName, state, `tagged ${ago(agent.taggedAt)}`].filter(Boolean).join(" · ")}
+          {[agent.provider ?? "unknown provider", workspaceName, state, when].filter(Boolean).join(" · ")}
         </Text>
       </Pressable>
-      <IconButton icon={ICONS.remove} tone="danger" label={`Remove ${agent.title ?? agent.agentId} from ${tag.name}`} onPress={() => removal.mutate(undefined)} disabled={removal.isPending} styles={styles} />
+      {action}
+    </View>
+  );
+}
+
+function AgentRow({ agent, tag, styles, navigation }: { agent: AgentMember; tag: TagSummary; styles: Styles; navigation: Navigation }) {
+  const remove = useRpc(removeTagRpc);
+  const removal = useTagChange(() => remove({ tags: [tag.name], agentId: agent.agentId }));
+  const action = <IconButton icon={ICONS.remove} tone="danger" label={`Remove ${agent.title ?? agent.agentId} from ${tag.name}`} onPress={() => removal.mutate(undefined)} disabled={removal.isPending} styles={styles} />;
+  return <AgentLine agent={agent} when={`tagged ${ago(agent.taggedAt)}`} action={action} styles={styles} navigation={navigation} />;
+}
+
+// Pinned agents come first in Attach > Agent conversation. One Paseo no longer has stays until unpinned.
+function PinnedAgents({ pins, styles, navigation }: { pins: readonly PinnedAgent[]; styles: Styles; navigation: Navigation }) {
+  const pin = useRpc(pinAgentRpc);
+  const unpinning = useTagChange((agentId: string) => pin({ agentId, pinned: false }));
+  return (
+    <View style={styles.card}>
+      <SectionTitle icon={ICONS.pin} label="Pinned agents, first in Attach > Agent conversation" count={pins.length} styles={styles} />
+      {pins.map((entry) => (
+        <AgentLine
+          key={entry.agentId}
+          agent={entry}
+          when={`pinned ${ago(entry.pinnedAt)}`}
+          action={<IconButton icon={ICONS.unpin} label={`Unpin ${entry.title ?? entry.agentId}`} onPress={() => unpinning.mutate(entry.agentId)} disabled={unpinning.isPending} styles={styles} />}
+          styles={styles}
+          navigation={navigation}
+        />
+      ))}
     </View>
   );
 }
@@ -279,6 +309,11 @@ export function TagsScreen({ theme, layout, params, navigation }: PluginScreenPr
   const [sort, setSort] = useState<Sort>("recent");
   // Cards the user opened or closed; the rest follow the default (open when few tags are shown).
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
+  const [firstFetch, setFirstFetch] = useState(false);
+  // Opened from a fetch result's Read: that tag's card is open and the item's reader is shown.
+  const [readingId, setReadingId] = useState<string | null>(params.note ?? null);
+  useEffect(() => setReadingId(params.note ?? null), [params.note]);
+  const focusKey = params.tag ? tagKey(params.tag) : null;
   useEffect(() => onTagsChanged(() => void queryClient.invalidateQueries({ queryKey: TAGS_QUERY })), [queryClient]);
   const all = tags.data?.tags ?? [];
   const wanted = filter.trim().toLowerCase();
@@ -289,7 +324,8 @@ export function TagsScreen({ theme, layout, params, navigation }: PluginScreenPr
   );
   const shown = sort === "recent" ? matching : [...matching].sort((a, b) => (sort === "name" ? a.name.localeCompare(b.name) : size(b) - size(a) || a.name.localeCompare(b.name)));
   const openByDefault = shown.length <= 3 || wanted !== "";
-  const isOpen = (key: string) => toggled[key] ?? openByDefault;
+  const isOpen = (key: string) => toggled[key] ?? (openByDefault || key === focusKey);
+  const reading = readingId ? all.flatMap((tag) => tag.notes).find((note) => note.id === readingId) : undefined;
   const totals = {
     agents: new Set(all.flatMap((tag) => tag.agents.map((agent) => agent.agentId))).size,
     items: all.reduce((sum, tag) => sum + tag.notes.length, 0),
@@ -298,6 +334,7 @@ export function TagsScreen({ theme, layout, params, navigation }: PluginScreenPr
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       {params.agentId ? <AgentTags agentId={params.agentId} fallbackWorkspaceId={params.workspaceId} styles={styles} /> : null}
+      {tags.data && tags.data.pinnedAgents.length > 0 ? <PinnedAgents pins={tags.data.pinnedAgents} styles={styles} navigation={navigation} /> : null}
       {all.length > 0 ? (
         <View style={styles.wrap}>
           {[
@@ -341,9 +378,15 @@ export function TagsScreen({ theme, layout, params, navigation }: PluginScreenPr
           <Text style={styles.text}>Add a web link with /tag-link https://example.com/spec auth-rewrite.</Text>
           <Text style={styles.text}>Pull in a Jira, Sentry, Slack, or Notion item with /tag-fetch PROJ-123 auth-rewrite.</Text>
           <Text style={styles.text}>Then, in any prompt, Attach &gt; Tag sends everything under it.</Text>
+          <View style={styles.wrap}>
+            <Button label={firstFetch ? "Close fetch" : "Fetch an item"} icon={firstFetch ? ICONS.close : ICONS.fetch} kind={firstFetch ? "ghost" : "primary"} styles={styles} onPress={() => setFirstFetch((value) => !value)} />
+          </View>
+          {firstFetch ? <FetchForm tagNames={[]} styles={styles} onDone={() => setFirstFetch(false)} /> : null}
         </View>
       ) : null}
       {all.length > 0 && shown.length === 0 ? <Text style={styles.muted}>No tag matches "{filter}".</Text> : null}
+      {readingId && tags.data && !reading ? <Text style={styles.muted}>That fetched item is no longer in any tag.</Text> : null}
+      {reading?.status === "ready" ? <NoteReader note={reading} styles={styles} onClose={() => setReadingId(null)} /> : null}
       {shown.map((tag) => (
         <TagCard key={tag.key} tag={tag} styles={styles} navigation={navigation} open={isOpen(tag.key)} onToggle={() => setToggled((current) => ({ ...current, [tag.key]: !isOpen(tag.key) }))} />
       ))}

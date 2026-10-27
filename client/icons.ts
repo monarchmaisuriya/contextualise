@@ -30,6 +30,8 @@ export const ICONS = {
   failed: "CircleAlert",
   fetching: "LoaderCircle",
   empty: "Inbox",
+  pin: "Pin",
+  unpin: "PinOff",
 } as const;
 
 export const VENDOR_ICONS: Record<Vendor, string> = { jira: "Ticket", sentry: "Bug", slack: "MessageSquare", notion: "FileText" };

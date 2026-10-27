@@ -7,7 +7,7 @@ Requires Paseo 0.13.
 ## Install
 
 ```bash
-paseo plugin install git:monarchmaisuriya/contextualise --ref v0.9.0
+paseo plugin install git:monarchmaisuriya/contextualise --ref v0.10.0
 ```
 
 ## Tags
@@ -17,13 +17,14 @@ Every agent's composer has a **Tags** pill next to Tasks and Subagents. Its labe
 - remove a tag (tap its chip),
 - add new tags (type names, separated by commas),
 - add an existing tag (tap its chip),
+- pin or unpin the agent (pinned agents come first in Attach > Agent conversation),
 - open the Tags screen.
 
 `/tag auth-rewrite` tags the current agent from the message box and `/untag auth-rewrite` removes it (both take several: `/tag auth, billing`). `/tag-link https://example.com/spec auth-rewrite` adds a web link to a tag.
 
 Tags share names with Paseo's workspace labels. A workspace labeled "Auth Rewrite" belongs to the tag `auth rewrite` automatically; case and spacing do not matter. Contextualise reads workspace labels and never changes them.
 
-The **Tags** screen (sidebar footer, or "Open tags" in the Command Center) lists every tag with its labeled workspaces, tagged agents, and links. Each tag has **Preview**, which shows exactly what Attach > Tag sends (with a Copy button), and **Add link**. "Tag this agent..." in the Command Center opens it for one agent, with the same chips as the pill.
+The **Tags** screen (sidebar footer, or "Open tags" in the Command Center) lists every tag with its labeled workspaces, tagged agents, and links. Each tag has **Preview**, which shows exactly what Attach > Tag sends (with a Copy button), and **Add link**. "Tag this agent..." in the Command Center opens it for one agent, with the same chips as the pill. "Pin this agent" and "Unpin this agent" in the Command Center do the same as the pill's Pin button; pinned agents are listed at the top of the Tags screen, where a pinned agent Paseo no longer has shows as missing until you unpin it.
 
 ## Fetching Jira, Sentry, Slack, and Notion items
 
@@ -41,6 +42,10 @@ Contextualise has no vendor accounts of its own. A hidden background agent reads
 
 The item shows under **Fetched items** on the tag ("fetching", then "ready" or "failed" with the reason) with the agent that fetched it, **Refresh** (or **Retry**), and **Remove**; tap a ready item to read it, copy it, or open its link. Attach > Tag includes ready items.
 
+A fetch started from an agent (`/tag-fetch`, or the Fetch box in its Tags pill) also adds one row to that agent's conversation when it ends: the item's title and size, or why it failed, with **Read** and **Open tags**. A later fetch or refresh of the same item replaces that row. Turn this off with "Show fetch results in the agent" (Fetching).
+
+Fetched items can be refreshed automatically (Advanced, off by default): every 15 minutes, ready items older than the set number of hours (default 24) are fetched again, through the same queue and limit. Automatic refreshes never add rows to agents. The timer starts after the app first talks to the plugin.
+
 ## Attaching context
 
 In the composer, Attach offers three sources:
@@ -51,7 +56,7 @@ In the composer, Attach offers three sources:
 | **Agent conversation** | One agent's most recent turns, from any workspace or provider on this host |
 | **Terminal output** | The newest lines of any terminal on this host |
 
-Each picker row says what is inside before you send it: providers and member counts for a tag, provider and workspace for an agent, workspace and length for a terminal. Clicking an attached agent opens that agent; clicking a tag or terminal opens this page.
+Each picker row says what is inside before you send it: providers and member counts for a tag, provider and workspace for an agent, workspace and length for a terminal, and for all three an estimated size (`~1.2k tokens`: characters divided by 4, so code and non-English text can differ). Pinned agents come first and say "pinned". Clicking an attached agent opens that agent; clicking a tag or terminal opens this page.
 
 Conversations contain your messages and the agents' replies; tool calls and reasoning are left out. Secret-shaped text (private keys, AWS, GitHub, Slack and Google keys, `sk-` API keys, JSON web tokens, `password=`-style assignments) is replaced with `[removed: <kind>]` in conversations and terminal output. Every attachment starts with a note that it is reference material, not instructions.
 
@@ -61,7 +66,7 @@ If an agent's history cannot be read, the attachment says so for that agent and 
 
 Attaching copies other agents' conversations and terminal output into the prompt you are writing, including conversations held by a different provider. Nothing is sent until you send the prompt.
 
-Tags are stored on the daemon host in `<PASEO_HOME>/plugin-data/contextualise/tags.json` (version 2; a version 1 file from 0.1.0 is upgraded on the first change). Nothing else is written.
+Tags and pinned agents are stored on the daemon host in `<PASEO_HOME>/plugin-data/contextualise/tags.json` (version 4; older files are read and written back as version 4 on the next change, after which plugin versions before 0.11.0 refuse the file). Nothing else is written.
 
 ## Settings
 
@@ -72,17 +77,25 @@ Settings > Contextualise:
 | Attachments | Longest attachment (characters) | 40,000 (1,000 to 200,000) |
 | | Recent turns per agent | 6 (1 to 50) |
 | | Terminal lines to attach | 200 (10 to 5,000) |
-| | Results in the Attach pickers | 20 (5 to 50) |
 | | Include labeled workspaces, links, fetched items, agent conversations | all on |
 | Tags pill | Show the pill; label as tag names or a count | on; names |
+| | Longest tag name on the pill | 24 (10 to 60) |
+| Pickers | Row prefix: none (rows start with the title) or words (Claude, Tag, Terminal) | none |
+| | Results per picker | 20 (5 to 50) |
+| | Shorten links in agent titles | on |
+| | Agent subtitles: workspace, running or archived, last active | all on |
+| | Include archived agents (pinned ones always show); sort agents by recent activity or title | on; recent |
+| | Show token estimates | on |
 | Fetching | Fetch with: automatic, Claude only, Codex only | automatic |
 | | Claude model; Codex model (empty means the agent's default) | claude-sonnet-5-5; default |
+| | Show fetch results in the agent | on |
 | Advanced | Fetch time limit (seconds) | 180 (30 to 900) |
 | | Fetches at once | 2 (1 to 5) |
 | | Stored item size (characters) | 8,000 (1,000 to 20,000) |
 | | Comments or replies per item | 10 (0 to 50) |
 | | Extra instructions for workers | empty (up to 1,000 characters) |
 | | Custom routes (JSON) | none (up to 20) |
+| | Refresh fetched items automatically; refresh items older than (hours) | off; 24 (1 to 168) |
 
 `0` means the default for the counts that allow it. Out-of-range values are refused; invalid stored settings stop attachments and fetches with an error until they are fixed or reset. Secret redaction cannot be switched off.
 

@@ -7,16 +7,19 @@ import { type ItemRef, NOTE_MAX_CHARS, noteMemberSchema, parseLinkUrl, parseTagN
 const storedAgentSchema = z.object({ agentId: z.string(), workspaceId: z.string(), taggedAt: z.string() });
 const storedLinkSchema = z.object({ url: z.string(), title: z.string(), taggedAt: z.string() });
 const storedTagSchema = z.object({ name: z.string(), agents: z.array(storedAgentSchema), links: z.array(storedLinkSchema), notes: z.array(noteMemberSchema) });
-const storeFileSchema = z.object({ version: z.literal(3), tags: z.record(z.string(), storedTagSchema) });
-// Older files are read and written back as version 3: version 1 (0.1.0) had no links, version 2
-// (0.2.0 to 0.5.0) had no notes. An older plugin then refuses the file loudly instead of silently
-// dropping members it does not know.
+const storedPinSchema = z.object({ agentId: z.string(), pinnedAt: z.string() });
+const storeFileSchema = z.object({ version: z.literal(4), tags: z.record(z.string(), storedTagSchema), pinnedAgents: z.array(storedPinSchema) });
+// Older files are read and written back as version 4: version 1 (0.1.0) had no links, version 2
+// (0.2.0 to 0.5.0) had no notes, version 3 (0.6.0 to 0.10.0) had no pinned agents. An older plugin
+// then refuses the file loudly instead of silently dropping what it does not know.
+const storeFileV3Schema = z.object({ version: z.literal(3), tags: z.record(z.string(), storedTagSchema) });
 const storeFileV1Schema = z.object({ version: z.literal(1), tags: z.record(z.string(), storedTagSchema.omit({ links: true, notes: true })) });
 const storeFileV2Schema = z.object({ version: z.literal(2), tags: z.record(z.string(), storedTagSchema.omit({ notes: true })) });
 
 export type StoredAgent = z.infer<typeof storedAgentSchema>;
 export type StoredLink = z.infer<typeof storedLinkSchema>;
 export type StoredNote = z.infer<typeof noteMemberSchema>;
+export type StoredPin = z.infer<typeof storedPinSchema>;
 export type StoredTag = z.infer<typeof storedTagSchema>;
 export type StoredTags = Record<string, StoredTag>;
 type StoreFile = z.infer<typeof storeFileSchema>;
@@ -27,7 +30,7 @@ export interface Outcome {
   changed: boolean;
 }
 
-export type NotePatch = Partial<Pick<StoredNote, "title" | "url" | "status" | "text" | "error" | "fetchedAt" | "provider">>;
+export type NotePatch = Partial<Pick<StoredNote, "title" | "url" | "status" | "text" | "error" | "fetchedAt" | "provider" | "notifyAgentId">>;
 
 // Membership Paseo cannot hold for us: agents and links under a tag name. Workspace membership is
 // never stored here: it is read live from Paseo's workspace labels. Writes go through one queue and
@@ -39,6 +42,22 @@ export class TagStore {
 
   read(): Promise<StoredTags> {
     return this.enqueue(async () => (await this.load()).tags);
+  }
+
+  pinnedAgents(): Promise<StoredPin[]> {
+    return this.enqueue(async () => (await this.load()).pinnedAgents);
+  }
+
+  // Pinned agents come first in Attach > Agent conversation; the order is the order they were pinned.
+  pinAgent(agentId: string, pinned: boolean): Promise<{ pinned: boolean; changed: boolean }> {
+    return this.enqueue(async () => {
+      const file = await this.load();
+      const has = file.pinnedAgents.some((pin) => pin.agentId === agentId);
+      if (has === pinned) return { pinned, changed: false };
+      file.pinnedAgents = pinned ? [...file.pinnedAgents, { agentId, pinnedAt: new Date().toISOString() }] : file.pinnedAgents.filter((pin) => pin.agentId !== agentId);
+      await this.save(file);
+      return { pinned, changed: true };
+    });
   }
 
   async add(rawNames: readonly string[], agent: { agentId: string; workspaceId: string }): Promise<Outcome[]> {
@@ -89,7 +108,7 @@ export class TagStore {
         return false;
       }
       noteId = randomUUID();
-      tag.notes.push({ id: noteId, vendor: item.vendor, ref: item.ref, title: item.ref, url: null, status: "fetching", text: "", error: null, addedAt: new Date().toISOString(), fetchedAt: null, provider: null });
+      tag.notes.push({ id: noteId, vendor: item.vendor, ref: item.ref, title: item.ref, url: null, status: "fetching", text: "", error: null, addedAt: new Date().toISOString(), fetchedAt: null, provider: null, notifyAgentId: null });
       return true;
     });
     return { ...outcome, noteId };
@@ -165,15 +184,17 @@ export class TagStore {
     try {
       text = await readFile(path, "utf8");
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 3, tags: {} };
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 4, tags: {}, pinnedAgents: [] };
       throw error;
     }
     try {
       const data: unknown = JSON.parse(text);
       const v1 = storeFileV1Schema.safeParse(data);
-      if (v1.success) return { version: 3, tags: Object.fromEntries(Object.entries(v1.data.tags).map(([key, tag]) => [key, { ...tag, links: [], notes: [] }])) };
+      if (v1.success) return { version: 4, tags: Object.fromEntries(Object.entries(v1.data.tags).map(([key, tag]) => [key, { ...tag, links: [], notes: [] }])), pinnedAgents: [] };
       const v2 = storeFileV2Schema.safeParse(data);
-      if (v2.success) return { version: 3, tags: Object.fromEntries(Object.entries(v2.data.tags).map(([key, tag]) => [key, { ...tag, notes: [] }])) };
+      if (v2.success) return { version: 4, tags: Object.fromEntries(Object.entries(v2.data.tags).map(([key, tag]) => [key, { ...tag, notes: [] }])), pinnedAgents: [] };
+      const v3 = storeFileV3Schema.safeParse(data);
+      if (v3.success) return { version: 4, tags: v3.data.tags, pinnedAgents: [] };
       return storeFileSchema.parse(data);
     } catch (error) {
       throw new Error(`Contextualise cannot read ${path}: ${(error as Error).message}. Fix or move the file; it was not changed.`);

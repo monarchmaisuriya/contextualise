@@ -85,7 +85,7 @@ test("a version 1 file is read and rewritten as version 2 on the next change", a
   expect(await store.read()).toEqual({ x: { name: "X", agents: v1.tags.x.agents, links: [], notes: [] } });
   await store.addLink("x", { url: "https://example.com" });
   const saved = JSON.parse(await readFile(join(dir, "tags.json"), "utf8"));
-  expect(saved.version).toBe(3);
+  expect(saved.version).toBe(4);
   expect(saved.tags.x.agents).toEqual(v1.tags.x.agents);
 });
 
@@ -97,7 +97,7 @@ test("a corrupt file fails loudly and is not overwritten", async () => {
 });
 
 test("a file from a newer plugin version fails loudly", async () => {
-  await writeFile(join(dir, "tags.json"), JSON.stringify({ version: 4, tags: {} }));
+  await writeFile(join(dir, "tags.json"), JSON.stringify({ version: 5, tags: {} }));
   await expect(store.read()).rejects.toThrow("tags.json");
 });
 
@@ -127,6 +127,31 @@ test("a version 2 file is read with no notes and written back as version 3", asy
   expect((await store.read()).x.notes).toEqual([]);
   await store.addNote("x", { vendor: "notion", ref: "https://www.notion.so/a" });
   const saved = JSON.parse(await readFile(join(dir, "tags.json"), "utf8"));
-  expect(saved.version).toBe(3);
+  expect(saved.version).toBe(4);
   expect(saved.tags.x.links).toEqual(v2.tags.x.links);
+});
+
+test("pins: added once, removed, kept apart from tags, and upgraded from version 3", async () => {
+  expect(await store.pinnedAgents()).toEqual([]);
+  expect(await store.pinAgent("a1", true)).toEqual({ pinned: true, changed: true });
+  expect(await store.pinAgent("a1", true)).toEqual({ pinned: true, changed: false });
+  await store.pinAgent("a2", true);
+  expect((await store.pinnedAgents()).map((pin) => pin.agentId)).toEqual(["a1", "a2"]);
+  expect(await store.read()).toEqual({});
+  expect(await store.pinAgent("a1", false)).toEqual({ pinned: false, changed: true });
+  expect(await store.pinAgent("nobody", false)).toEqual({ pinned: false, changed: false });
+  expect((await store.pinnedAgents()).map((pin) => pin.agentId)).toEqual(["a2"]);
+  const saved = JSON.parse(await readFile(join(dir, "tags.json"), "utf8"));
+  expect(saved.version).toBe(4);
+});
+
+test("a version 3 file is read with no pins and its notes gain the asking-agent field", async () => {
+  const note = { id: "n1", vendor: "jira", ref: "P-1", title: "T", url: null, status: "ready", text: "x", error: null, addedAt: "t", fetchedAt: "t", provider: "claude" };
+  await writeFile(join(dir, "tags.json"), JSON.stringify({ version: 3, tags: { x: { name: "x", agents: [], links: [], notes: [note] } } }));
+  expect(await store.pinnedAgents()).toEqual([]);
+  expect((await store.read()).x.notes[0]).toMatchObject({ id: "n1", notifyAgentId: null });
+  await store.pinAgent("a1", true);
+  const saved = JSON.parse(await readFile(join(dir, "tags.json"), "utf8"));
+  expect(saved.version).toBe(4);
+  expect(saved.tags.x.notes[0].id).toBe("n1");
 });

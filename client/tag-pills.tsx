@@ -15,7 +15,7 @@ const PILL_ID = "tags";
 export function followAgentPills(client: PluginClientContext, openTagsFor: (agentId: string, workspaceId: string) => void): () => void {
   const pills = new Map<string, { registration: PluginButtonRegistration; workspaceId: string }>();
   let names = new Map<string, string[]>();
-  let display = { visible: true, style: "names" as "names" | "count" };
+  let display = { visible: true, style: "names" as "names" | "count", maxChars: 24 };
   let stopped = false;
   const lifetime = new AbortController();
 
@@ -36,7 +36,7 @@ export function followAgentPills(client: PluginClientContext, openTagsFor: (agen
     return <AgentTags agentId={agentId} fallbackWorkspaceId={workspaceId} styles={styles} footer={footer} />;
   }
 
-  const label = (agentId: string) => pillLabel(names.get(agentId) ?? [], display.style);
+  const label = (agentId: string) => pillLabel(names.get(agentId) ?? [], display.style, display.maxChars);
 
   function drop(agentId: string) {
     pills.get(agentId)?.registration.remove();
@@ -72,7 +72,7 @@ export function followAgentPills(client: PluginClientContext, openTagsFor: (agen
   async function refreshDisplay() {
     const state = await client.rpc(settingsRpc(snapshotSettings.id).read, {});
     const parsed = state.status === "ready" ? snapshotSettingsSchema.safeParse(state.values) : null;
-    if (parsed?.success) display = { visible: parsed.data.showPill, style: parsed.data.pillLabel };
+    if (parsed?.success) display = { visible: parsed.data.showPill, style: parsed.data.pillLabel, maxChars: parsed.data.pillNameMaxChars };
   }
 
   // One tags.list call per change, shared by every pill. A failed refresh keeps the last labels.

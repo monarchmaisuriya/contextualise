@@ -5,16 +5,28 @@ import { Text } from "react-native";
 import { type FetchPreference, MAX_CUSTOM_ROUTES, type SnapshotSettings, snapshotSettings } from "../shared/contracts";
 import { tagsChanged } from "./tag-events";
 
-type NumberKey = "snapshotMaxChars" | "turnsPerAgent" | "terminalLines" | "resultsPerSearch" | "fetchTimeoutSeconds" | "maxConcurrentFetches" | "noteMaxChars" | "commentsPerItem";
+type NumberKey = "snapshotMaxChars" | "turnsPerAgent" | "terminalLines" | "resultsPerSearch" | "pillNameMaxChars" | "fetchTimeoutSeconds" | "maxConcurrentFetches" | "noteMaxChars" | "commentsPerItem" | "autoRefreshHours";
 type TextKey = "claudeFetchModel" | "codexFetchModel" | "extraInstructions" | "customRoutes";
 type DraftKey = NumberKey | TextKey;
-type SwitchKey = "includeWorkspaces" | "includeLinks" | "includeItems" | "includeAgents" | "showPill";
+type SwitchKey =
+  | "includeWorkspaces"
+  | "includeLinks"
+  | "includeItems"
+  | "includeAgents"
+  | "showPill"
+  | "shortenLinks"
+  | "agentShowWorkspace"
+  | "agentShowStatus"
+  | "agentShowActivity"
+  | "includeArchivedAgents"
+  | "showTokenEstimates"
+  | "notifyFetchResults"
+  | "autoRefreshItems";
 
 const ATTACHMENT_NUMBERS: ReadonlyArray<{ key: NumberKey; label: string; hint: string }> = [
   { key: "snapshotMaxChars", label: "Longest attachment (characters)", hint: "Default 40,000 (about 10,000 tokens), from 1,000 to 200,000. 0 means the default." },
   { key: "turnsPerAgent", label: "Recent turns per agent", hint: "Default 6, from 1 to 50. 0 means the default." },
   { key: "terminalLines", label: "Terminal lines to attach", hint: "Default 200, from 10 to 5,000. The newest lines are kept. 0 means the default." },
-  { key: "resultsPerSearch", label: "Results in the Attach pickers", hint: "Default 20, from 5 to 50. More results scroll; each agent result reads that agent's recent turns. 0 means the default." },
 ];
 const SECTION_SWITCHES: ReadonlyArray<{ key: SwitchKey; label: string; hint: string }> = [
   { key: "includeWorkspaces", label: "Include labeled workspaces", hint: "Project, name, and folder of each workspace with the tag's label." },
@@ -22,12 +34,30 @@ const SECTION_SWITCHES: ReadonlyArray<{ key: SwitchKey; label: string; hint: str
   { key: "includeItems", label: "Include fetched items", hint: "Jira, Sentry, Slack, and Notion items fetched into the tag." },
   { key: "includeAgents", label: "Include agent conversations", hint: "Each tagged agent's recent turns. Off: agents are not read at all." },
 ];
+const PICKER_SWITCHES: ReadonlyArray<{ key: SwitchKey; label: string; hint: string }> = [
+  { key: "shortenLinks", label: "Shorten links in agent titles", hint: "github.com/…/pull/12 instead of the whole address, so more of the title fits." },
+  { key: "agentShowWorkspace", label: "Show the workspace", hint: "In each agent row's subtitle." },
+  { key: "agentShowStatus", label: "Show running or archived", hint: "In each agent row's subtitle. An agent that cannot be read always says so." },
+  { key: "agentShowActivity", label: "Show when it was last active", hint: "In each agent row's subtitle, for example: active 5 min ago." },
+  { key: "includeArchivedAgents", label: "Include archived agents", hint: "Archived agents are listed after the others. Pinned agents are always listed." },
+  { key: "showTokenEstimates", label: "Show token estimates", hint: "At the end of every agent, tag, and terminal row, for example: ~1.2k tokens. An estimate (characters divided by 4); code and non-English text can differ." },
+];
+const PREFIX_OPTIONS = [
+  { label: "None (rows start with the title)", value: "none" as const },
+  { label: "Words (Claude, Codex, Tag, Terminal)", value: "word" as const },
+];
+const AGENT_SORT_OPTIONS = [
+  { label: "Most recently active", value: "recent" as const },
+  { label: "Title", value: "title" as const },
+];
+
 const ADVANCED_NUMBERS: ReadonlyArray<{ key: NumberKey; label: string; hint: string }> = [
   { key: "fetchTimeoutSeconds", label: "Fetch time limit (seconds)", hint: "Default 180, from 30 to 900. A worker still running then is stopped and the item marked failed." },
   { key: "maxConcurrentFetches", label: "Fetches at once", hint: "Default 2, from 1 to 5. Each running fetch is one agent run." },
   { key: "noteMaxChars", label: "Stored item size (characters)", hint: "Default 8,000, from 1,000 to 20,000. Longer items are cut." },
   { key: "commentsPerItem", label: "Comments or replies per item", hint: "Default 10, from 0 to 50. 0 leaves them out." },
 ];
+const REFRESH_HOURS_FIELD = { key: "autoRefreshHours" as const, label: "Refresh items older than (hours)", hint: "Default 24, from 1 to 168. Checked every 15 minutes while automatic refresh is on. 0 means the default." };
 const PROVIDER_OPTIONS: ReadonlyArray<{ label: string; value: FetchPreference }> = [
   { label: "Automatic (Claude, then Codex)", value: "auto" },
   { label: "Claude only", value: "claude" },
@@ -39,7 +69,9 @@ const PILL_LABEL_OPTIONS = [
 ];
 const ROUTES_EXAMPLE = '[{"vendor":"jira","provider":"codex","server":"my-jira","tools":["get_issue","search_issues"]}]';
 
-const NUMBER_LABELS = new Map([...ATTACHMENT_NUMBERS, ...ADVANCED_NUMBERS].map(({ key, label }) => [key, label]));
+const RESULTS_FIELD = { key: "resultsPerSearch" as const, label: "Results per picker", hint: "Default 20, from 5 to 50. More results scroll; each agent result reads that agent's recent turns. 0 means the default." };
+const PILL_LENGTH_FIELD = { key: "pillNameMaxChars" as const, label: "Longest tag name on the pill", hint: "Default 24, from 10 to 60 characters; longer names end in …. 0 means the default." };
+const NUMBER_LABELS = new Map([...ATTACHMENT_NUMBERS, ...ADVANCED_NUMBERS, RESULTS_FIELD, PILL_LENGTH_FIELD, REFRESH_HOURS_FIELD].map(({ key, label }) => [key, label]));
 
 function draftValue(values: SnapshotSettings, key: DraftKey): string {
   if (key === "customRoutes") return values.customRoutes.length === 0 ? "" : JSON.stringify(values.customRoutes);
@@ -132,6 +164,28 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
         <SettingsCard>
           <SettingsSwitch label="Show the Tags pill" hint="The pill next to Tasks and Subagents in every agent's message box." value={values.showPill} disabled={settings.saving} onValueChange={(value) => persist({ ...values, showPill: value })} />
           <SettingsSelect label="Pill label" value={values.pillLabel} options={PILL_LABEL_OPTIONS} disabled={settings.saving || !values.showPill} onValueChange={(value) => persist({ ...values, pillLabel: value })} />
+          {draftInput(PILL_LENGTH_FIELD.key, PILL_LENGTH_FIELD.label, PILL_LENGTH_FIELD.hint)}
+          {saveRow}
+        </SettingsCard>
+      </SettingsSection>
+      <SettingsSection title="Pickers">
+        <SettingsCard>
+          <SettingsSelect
+            label="Row prefix"
+            hint="What comes before each title in Attach > Tag, Agent conversation, and Terminal output. Paseo draws plugin picker rows as text only, so there is no icon option."
+            value={values.pickerPrefix}
+            options={PREFIX_OPTIONS}
+            disabled={settings.saving}
+            onValueChange={(value) => persist({ ...values, pickerPrefix: value })}
+          />
+          {draftInput(RESULTS_FIELD.key, RESULTS_FIELD.label, RESULTS_FIELD.hint)}
+          {saveRow}
+        </SettingsCard>
+        <SettingsCard>
+          <SettingsSelect label="Sort agents by" value={values.agentSort} options={AGENT_SORT_OPTIONS} disabled={settings.saving} onValueChange={(value) => persist({ ...values, agentSort: value })} />
+          {PICKER_SWITCHES.map(({ key, label, hint }) => (
+            <SettingsSwitch key={key} label={label} hint={hint} value={values[key]} disabled={settings.saving} onValueChange={(value) => persist({ ...values, [key]: value })} />
+          ))}
         </SettingsCard>
       </SettingsSection>
       <SettingsSection title="Fetching">
@@ -148,10 +202,27 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
           {draftInput("codexFetchModel", "Codex model", "Model id as Paseo lists it. Empty uses Codex's default.")}
           {saveRow}
         </SettingsCard>
+        <SettingsCard>
+          <SettingsSwitch
+            label="Show fetch results in the agent"
+            hint="A fetch started from an agent (/tag-fetch or the Tags pill) adds one row to that agent's conversation when it ends, with Read and Open tags. A refresh replaces the row."
+            value={values.notifyFetchResults}
+            disabled={settings.saving}
+            onValueChange={(value) => persist({ ...values, notifyFetchResults: value })}
+          />
+        </SettingsCard>
       </SettingsSection>
       <SettingsSection title="Advanced">
         <SettingsCard>
           {ADVANCED_NUMBERS.map(({ key, label, hint }) => draftInput(key, label, hint))}
+          <SettingsSwitch
+            label="Refresh fetched items automatically"
+            hint="Off by default. On: items older than the hours below are fetched again in the background. Each refresh is one agent run and uses tokens. Automatic refreshes never add rows to agents."
+            value={values.autoRefreshItems}
+            disabled={settings.saving}
+            onValueChange={(value) => persist({ ...values, autoRefreshItems: value })}
+          />
+          {draftInput(REFRESH_HOURS_FIELD.key, REFRESH_HOURS_FIELD.label, REFRESH_HOURS_FIELD.hint)}
           {draftInput("extraInstructions", "Extra instructions for workers", "Up to 1,000 characters, added to every fetch, for example: include acceptance criteria.")}
           <SettingsRow
             label="Custom routes"

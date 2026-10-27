@@ -2,6 +2,32 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.11.0 - 2026-10-28
+
+### Added
+
+- Pinned agents: pin from the Tags pill or the Command Center ("Pin this agent", "Unpin this agent"). Pinned agents come first in Attach > Agent conversation with "pinned" in the subtitle (even when archived agents are hidden) and are listed at the top of the Tags screen.
+- Token estimates (`~1.2k tokens`) at the end of every agent, tag, and terminal picker row and in the tag Preview header. Settings > Pickers > Show token estimates.
+- Fetch results in the asking agent: a fetch started with `/tag-fetch` or the Tags pill's Fetch box adds one row to that agent's conversation when it ends (title and size, or the reason it failed), with Read (opens the item on the Tags screen) and Open tags. A refresh of the item replaces the row. Settings > Fetching > Show fetch results in the agent.
+- Automatic refresh of fetched items (Settings > Advanced, off by default): ready items older than 1 to 168 hours (default 24) are fetched again, checked every 15 minutes. Automatic refreshes never add rows to agents.
+- Empty states: Fetch an item on the empty Tags screen; a hint in the Tags pill when the agent has no tags.
+
+### Changed
+
+- `tags.json` is now version 4 (adds pinned agents). Older files are upgraded on the next change; plugin versions before 0.11.0 then refuse the file.
+
+## 0.10.0 - 2026-10-28
+
+### Changed
+
+- Attach picker rows start with the title: no "Claude", "Tag", or "Terminal" word before it (Settings > Pickers can bring the words back). Paseo draws plugin picker rows from text only, so they cannot carry icons; the source's icon still shows in the Attach menu and on the attached pill.
+- Long links in agent titles are shortened to the host and the last two path parts (github.com/…/1234/files).
+
+### Added
+
+- Settings > Pickers: row prefix (none or words), results per picker (moved from Attachments), shorten links in agent titles, which parts agent subtitles show (workspace, running or archived, last active), whether archived agents appear, and sort agents by most recent activity or title.
+- Settings > Tags pill: longest tag name shown on the pill (10 to 60, default 24).
+
 ## 0.9.0 - 2026-10-28
 
 ### Changed

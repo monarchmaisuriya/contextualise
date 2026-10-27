@@ -163,7 +163,7 @@ export const fetchItemRpc = defineRpc({
   name: "tags.fetch",
   // Checked here but kept as text: Paseo validates inputs on both sides, so an input schema must
   // accept its own output. The handler reads the vendor from it with parseItemRef.
-  input: z.object({ tag: tagNameInput, ref: parsed((value) => (parseItemRef(value), value.trim())), provider: z.enum(FETCH_PREFERENCES).optional() }),
+  input: z.object({ tag: tagNameInput, ref: parsed((value) => (parseItemRef(value), value.trim())), provider: z.enum(FETCH_PREFERENCES).optional(), notifyAgentId: z.string().min(1).optional() }),
   output: z.object({ tag: z.string(), name: z.string(), noteId: z.string(), changed: z.boolean(), provider: z.enum(FETCH_PROVIDERS), server: z.string() }),
 });
 
@@ -223,6 +223,8 @@ export const noteMemberSchema = z.object({
   fetchedAt: z.string().nullable(),
   // The agent that fetched it; null for items fetched before 0.7.0 (always Claude then).
   provider: z.enum(FETCH_PROVIDERS).nullable().default(null),
+  // The agent whose /tag-fetch or pill popover started it; its timeline gets the result row.
+  notifyAgentId: z.string().nullable().default(null),
 });
 export type NoteMember = z.infer<typeof noteMemberSchema>;
 
@@ -238,10 +240,27 @@ export const tagSummarySchema = z.object({
 });
 export type TagSummary = z.infer<typeof tagSummarySchema>;
 
+// An agent M pinned so it comes first in Attach > Agent conversation.
+export const pinnedAgentSchema = z.object({
+  agentId: z.string(),
+  pinnedAt: z.string(),
+  title: z.string().nullable(),
+  provider: z.string().nullable(),
+  workspaceId: z.string().nullable(),
+  state: z.enum(["active", "archived", "missing"]),
+});
+export type PinnedAgent = z.infer<typeof pinnedAgentSchema>;
+
 export const listTagsRpc = defineRpc({
   name: "tags.list",
   input: z.object({}),
-  output: z.object({ tags: z.array(tagSummarySchema) }),
+  output: z.object({ tags: z.array(tagSummarySchema), pinnedAgents: z.array(pinnedAgentSchema) }),
+});
+
+export const pinAgentRpc = defineRpc({
+  name: "agents.pin",
+  input: z.object({ agentId: z.string().min(1), pinned: z.boolean() }),
+  output: z.object({ pinned: z.boolean(), changed: z.boolean() }),
 });
 
 // Exactly what Attach > Tag would send for this tag, so it can be read before sending.
@@ -287,6 +306,21 @@ export const terminalAttachmentSource = defineAttachmentSource({
 // Confirmation rows that v0.2.1 added to agent timelines after /tag and /untag. Nothing adds them
 // any more; the renderer stays so rows already in timelines still display.
 export const RECEIPT_KIND = "receipt";
+
+// The row a finished fetch adds to the agent that asked for it; one per fetched item (row id
+// "fetch-<noteId>"), replaced when the item is fetched again.
+export const FETCH_RESULT_KIND = "fetch-result";
+export const fetchResultSchema = z.object({
+  tag: z.string(),
+  noteId: z.string(),
+  vendor: z.enum(VENDORS),
+  ref: z.string(),
+  title: z.string(),
+  status: z.enum(["ready", "failed"]),
+  error: z.string().nullable(),
+  chars: z.number().int().min(0),
+});
+export type FetchResult = z.infer<typeof fetchResultSchema>;
 export const receiptSchema = z.object({
   action: z.enum(["tag", "untag"]),
   entries: z.array(z.object({ name: z.string(), changed: z.boolean(), agents: z.number(), workspaces: z.number(), links: z.number() })),
@@ -311,6 +345,16 @@ export const snapshotSettingsSchema = z.object({
   // How many tags, agents, or terminals one search returns; the picker scrolls through them, and
   // each agent result reads that agent's recent turns.
   resultsPerSearch: boundedCount(5, 50, 20),
+  // Pickers. A row reads "<prefix> <title>": nothing (rows start with the title) or the provider or
+  // source word. Paseo draws plugin picker rows as text only, so there is no icon option.
+  pickerPrefix: z.enum(["none", "word"]).default("none"),
+  shortenLinks: z.boolean().default(true),
+  agentShowWorkspace: z.boolean().default(true),
+  agentShowStatus: z.boolean().default(true),
+  agentShowActivity: z.boolean().default(true),
+  includeArchivedAgents: z.boolean().default(true),
+  agentSort: z.enum(["recent", "title"]).default("recent"),
+  showTokenEstimates: z.boolean().default(true),
   includeWorkspaces: z.boolean().default(true),
   includeLinks: z.boolean().default(true),
   includeItems: z.boolean().default(true),
@@ -318,6 +362,7 @@ export const snapshotSettingsSchema = z.object({
   // Tags pill
   showPill: z.boolean().default(true),
   pillLabel: z.enum(["names", "count"]).default("names"),
+  pillNameMaxChars: boundedCount(10, 60, 24),
   // Fetching
   fetchProvider: z.enum(FETCH_PREFERENCES).default("auto"),
   // Empty means the provider's own default model.
@@ -325,6 +370,10 @@ export const snapshotSettingsSchema = z.object({
   codexFetchModel: z.string().trim().max(100).default(""),
   // Advanced
   fetchTimeoutSeconds: boundedCount(30, 900, 180),
+  notifyFetchResults: z.boolean().default(true),
+  // Off means no refresh timer runs. On: ready items older than the hours are fetched again.
+  autoRefreshItems: z.boolean().default(false),
+  autoRefreshHours: boundedCount(1, 168, 24),
   maxConcurrentFetches: boundedCount(1, 5, 2),
   noteMaxChars: boundedCount(1_000, 20_000, NOTE_MAX_CHARS),
   // 0 is meaningful here (no comments), so it is not a "0 means default" count.

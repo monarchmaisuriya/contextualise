@@ -8,6 +8,7 @@ import {
   removeNoteRpc,
   listTagsRpc,
   parseItemRef,
+  pinAgentRpc,
   previewTagRpc,
   removeLinkRpc,
   removeTagRpc,
@@ -19,12 +20,13 @@ import {
   type SnapshotSettings,
   type TagSummary,
 } from "../shared/contracts";
+import { AutoRefresh } from "./auto-refresh";
 import { Fetcher } from "./fetches";
 import { configuredServers } from "./provider-config";
 import type { PaseoApi } from "./paseo-types";
 import { Memo, searchAgents, searchTags, searchTerminals, tagAttachment } from "./sources";
 import { TagStore } from "./tag-store";
-import { type Directory, mergeTags, readDirectory } from "./tags";
+import { type Directory, mergePins, mergeTags, readDirectory } from "./tags";
 
 const READINGS_CACHE_MS = 30_000;
 // Long enough to cover one burst of keystrokes in the picker, short enough that a new agent or
@@ -38,6 +40,13 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
   const directories = new Memo(DIRECTORY_CACHE_MS);
   let serverId: Promise<string> | null = null;
   const fetcher = new Fetcher({ store, resolveRoot, settings: () => currentSettings(), configuredServers: () => configuredServers() });
+  const autoRefresh = new AutoRefresh((paseo) => fetcher.refreshStale(paseo));
+  const followSetting = (state: Awaited<ReturnType<typeof settings.read>>) => autoRefresh.apply(state.status === "ready" && state.values.autoRefreshItems);
+  void settings
+    .read()
+    .then(followSetting)
+    .catch((error: unknown) => console.error(`[contextualise] could not read settings for automatic refresh: ${String(error)}`));
+  const stopFollowingSetting = settings.subscribe(followSetting);
   void store
     .failInterruptedFetches()
     .then((count) => count > 0 && console.log(`[contextualise] marked ${count} interrupted fetch(es) as failed`))
@@ -49,7 +58,11 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
     return state.values;
   }
 
-  const directory = (paseo: PaseoApi): Promise<Directory> => directories.get("directory", () => readDirectory(paseo));
+  // Every list and search reads the directory, so this is where the timer gets its Paseo handle.
+  const directory = (paseo: PaseoApi): Promise<Directory> => {
+    autoRefresh.use(paseo);
+    return directories.get("directory", () => readDirectory(paseo));
+  };
 
   async function listTags(paseo: PaseoApi): Promise<TagSummary[]> {
     const [stored, current] = await Promise.all([store.read(), directory(paseo)]);
@@ -59,7 +72,7 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
   server.handle(addTagRpc, async ({ tags, agentId, workspaceId }) => ({ results: await store.add(tags, { agentId, workspaceId }) }));
   server.handle(removeTagRpc, async ({ tags, agentId }) => ({ results: await store.remove(tags, agentId) }));
 
-  server.handle(fetchItemRpc, ({ tag, ref, provider }, { paseo }) => fetcher.start(paseo, tag, parseItemRef(ref), provider));
+  server.handle(fetchItemRpc, ({ tag, ref, provider, notifyAgentId }, { paseo }) => fetcher.start(paseo, tag, parseItemRef(ref), provider, notifyAgentId));
   server.handle(fetchRouteRpc, async ({ ref, provider }) => {
     const item = parseItemRef(ref);
     const route = await fetcher.route(item, provider);
@@ -80,7 +93,11 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
 
   server.handle(addLinkRpc, ({ tag, url, title }) => store.addLink(tag, { url, title }));
   server.handle(removeLinkRpc, ({ tag, url }) => store.removeLink(tag, url));
-  server.handle(listTagsRpc, async (_input, { paseo }) => ({ tags: await listTags(paseo) }));
+  server.handle(listTagsRpc, async (_input, { paseo }) => {
+    const [tags, pins, current] = await Promise.all([listTags(paseo), store.pinnedAgents(), directory(paseo)]);
+    return { tags, pinnedAgents: mergePins(pins, current) };
+  });
+  server.handle(pinAgentRpc, ({ agentId, pinned }) => store.pinAgent(agentId, pinned));
 
   server.handle(previewTagRpc, async ({ tag }, { paseo }) => {
     const options = await currentSettings();
@@ -98,7 +115,8 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
   server.handle(searchAgentsRpc, async ({ query }, { paseo }) => {
     const options = await currentSettings();
     serverId ??= paseo.hosts.list().then((hosts) => hosts.self.serverId);
-    return { items: await searchAgents(paseo, readings, await directory(paseo), await serverId, query, options) };
+    const pinned = new Set((await store.pinnedAgents()).map((pin) => pin.agentId));
+    return { items: await searchAgents(paseo, readings, await directory(paseo), pinned, await serverId, query, options) };
   });
 
   server.handle(searchTerminalsRpc, async ({ query }, { paseo }) => {
@@ -107,6 +125,8 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
   });
 
   return () => {
+    autoRefresh.stop();
+    void stopFollowingSetting();
     readings.clear();
     directories.clear();
   };

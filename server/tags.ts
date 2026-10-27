@@ -1,6 +1,6 @@
-import { normalizeTagName, tagKey, type AgentMember, type TagSummary, type WorkspaceMember } from "../shared/contracts";
+import { normalizeTagName, tagKey, type AgentMember, type PinnedAgent, type TagSummary, type WorkspaceMember } from "../shared/contracts";
 import type { PaseoApi } from "./paseo-types";
-import type { StoredTags } from "./tag-store";
+import type { StoredPin, StoredTags } from "./tag-store";
 
 const PAGE_LIMIT = 200;
 
@@ -98,4 +98,13 @@ export function mergeTags(stored: StoredTags, directory: Directory): TagSummary[
 
   const lastTagged = (tag: TagSummary) => [...tag.agents.map((m) => m.taggedAt), ...tag.links.map((m) => m.taggedAt), ...tag.notes.map((m) => m.addedAt)].reduce((latest, at) => (at > latest ? at : latest), "");
   return [...byKey.values()].sort((a, b) => lastTagged(b).localeCompare(lastTagged(a)) || a.name.localeCompare(b.name));
+}
+
+// Pinned agents as the Tags screen shows them: what the daemon still knows about each, in pin order.
+export function mergePins(pins: readonly StoredPin[], directory: Directory): PinnedAgent[] {
+  const agentsById = new Map(directory.agents.map((agent) => [agent.id, agent]));
+  return pins.map(({ agentId, pinnedAt }) => {
+    const agent = agentsById.get(agentId);
+    return { agentId, pinnedAt, title: agent?.title ?? null, provider: agent?.provider ?? null, workspaceId: agent?.workspaceId ?? null, state: !agent ? "missing" : agent.archivedAt ? "archived" : "active" };
+  });
 }

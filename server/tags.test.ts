@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { mergeTags, type DirectoryWorkspace } from "./tags";
+import { mergePins, mergeTags, type DirectoryWorkspace } from "./tags";
 
 function workspace(id: string, labels: string[]): DirectoryWorkspace {
   return { id, name: `ws-${id}`, projectDisplayName: "payments", projectRootPath: "/src/payments", workspaceDirectory: `/src/payments/${id}`, labels };
@@ -56,4 +56,18 @@ test("recently tagged first, then label-only tags by name", () => {
     { workspaces: [workspace("w1", ["zeta", "alpha"])], agents: [] },
   );
   expect(tags.map((tag) => tag.key)).toEqual(["newer", "older", "alpha", "zeta"]);
+});
+
+test("pinned agents carry the daemon's title and workspace, or show as missing", () => {
+  const pins = mergePins(
+    [
+      { agentId: "a1", pinnedAt: "t1" },
+      { agentId: "gone", pinnedAt: "t2" },
+    ],
+    { workspaces: [], agents: [{ id: "a1", title: "Fix login", provider: "claude", workspaceId: "w1", archivedAt: "2026-10-02" }] },
+  );
+  expect(pins).toEqual([
+    { agentId: "a1", pinnedAt: "t1", title: "Fix login", provider: "claude", workspaceId: "w1", state: "archived" },
+    { agentId: "gone", pinnedAt: "t2", title: null, provider: null, workspaceId: null, state: "missing" },
+  ]);
 });

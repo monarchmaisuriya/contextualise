@@ -1,6 +1,7 @@
 import type { PluginClientContext, PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { readable } from "./client/errors";
+import { FetchResultRow } from "./client/fetch-result";
 import { ReceiptRow } from "./client/receipt";
 import { SnapshotSettingsScreen } from "./client/settings-screen";
 import { tagsChanged } from "./client/tag-events";
@@ -10,10 +11,13 @@ import {
   addLinkRpc,
   addTagRpc,
   agentAttachmentSource,
+  FETCH_RESULT_KIND,
   fetchItemRpc,
+  fetchResultSchema,
   parseFetchCommand,
   parseLinkCommand,
   parseTagNames,
+  pinAgentRpc,
   removeTagRpc,
   RECEIPT_KIND,
   receiptSchema,
@@ -28,6 +32,7 @@ function TagsSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps) 
 
 export default function contribute(client: PluginClientContext) {
   const openTagsFor = (agentId: string, workspaceId?: string) => client.openScreen({ screenId: "tags", params: workspaceId ? { agentId, workspaceId } : { agentId } });
+  const openItem = (tag: string, note: string) => client.openScreen({ screenId: "tags", params: { tag, note } });
   const removers = [
     client.addScreen({ id: "tags", title: (params) => (params.agentId ? "Tags for this agent" : "Tags"), Component: TagsScreen }),
     client.addSidebarFooterItem({ id: "tags", title: "Tags", Component: TagsSidebarItem }),
@@ -37,6 +42,7 @@ export default function contribute(client: PluginClientContext) {
     client.addAttachmentSource(terminalAttachmentSource),
     // Tagging no longer adds timeline rows; this still draws the rows v0.2.1 added.
     client.addTimelineRenderer({ kind: RECEIPT_KIND, version: 1, schema: receiptSchema, Component: (props) => <ReceiptRow {...props} openTags={openTagsFor} /> }),
+    client.addTimelineRenderer({ kind: FETCH_RESULT_KIND, version: 1, schema: fetchResultSchema, Component: (props) => <FetchResultRow {...props} openItem={openItem} openTags={openTagsFor} /> }),
     followAgentPills(client, openTagsFor),
     // Paseo shows a thrown error as a toast and clears the composer either way. The Tags pill's
     // label is the confirmation; a /tag that changed nothing says so.
@@ -76,12 +82,12 @@ export default function contribute(client: PluginClientContext) {
     }),
     client.addSlashCommand({
       name: "tag-fetch",
-      description: "Fetch a Jira, Sentry, Slack, or Notion item into a tag through a background Claude agent",
+      description: "Fetch a Jira, Sentry, Slack, or Notion item into a tag through a background agent; the result shows up here",
       argumentHint: "<PROJ-123 or link> <tag>",
       context: "agent",
-      async onSubmit({ args, rpc }) {
+      async onSubmit({ args, agent, rpc }) {
         const { ref, tag } = parseFetchCommand(args);
-        await readable(() => rpc(fetchItemRpc, { tag, ref }));
+        await readable(() => rpc(fetchItemRpc, { tag, ref, notifyAgentId: agent.id }));
         tagsChanged();
       },
     }),
@@ -95,6 +101,19 @@ export default function contribute(client: PluginClientContext) {
         openTagsFor(agent.id, agent.workspaceId);
       },
     }),
+    ...([true, false] as const).map((pinned) =>
+      client.addCommandCenterItem({
+        id: pinned ? "pin-agent" : "unpin-agent",
+        title: pinned ? "Pin this agent (first in Attach > Agent conversation)" : "Unpin this agent",
+        icon: pinned ? "Pin" : "PinOff",
+        keywords: ["pin", "unpin", "favorite", "contextualise"],
+        context: "agent",
+        async onSelect({ agent, rpc }) {
+          await rpc(pinAgentRpc, { agentId: agent.id, pinned });
+          tagsChanged();
+        },
+      }),
+    ),
     client.addCommandCenterItem({
       id: "open-tags",
       title: "Open tags",

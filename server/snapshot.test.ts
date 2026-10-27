@@ -156,7 +156,7 @@ test("terminal output keeps the newest lines that fit, redacted, and says how ma
 });
 
 test("fetched items are listed with their source, redacted, and counted; pending and failed ones say so", () => {
-  const note = (over: Record<string, unknown>) => ({ id: "n", vendor: "jira" as const, ref: "PROJ-1", title: "PROJ-1", url: null, status: "ready" as const, text: "", error: null, addedAt: "t", fetchedAt: "2026-10-27T10:00:00Z", provider: "claude" as const, ...over });
+  const note = (over: Record<string, unknown>) => ({ id: "n", vendor: "jira" as const, ref: "PROJ-1", title: "PROJ-1", url: null, status: "ready" as const, text: "", error: null, addedAt: "t", fetchedAt: "2026-10-27T10:00:00Z", provider: "claude" as const, notifyAgentId: null, ...over });
   const withNotes = tag({
     notes: [
       note({ title: "Login fails", url: "https://acme.atlassian.net/browse/PROJ-1", text: "Token: xoxb-1234567890-abcdefghij" }),

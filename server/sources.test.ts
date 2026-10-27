@@ -2,11 +2,13 @@ import { expect, test, vi } from "vitest";
 import { DOCS_URL, snapshotSettingsSchema, type TagSummary } from "../shared/contracts";
 import type { PaseoApi } from "./paseo-types";
 import { timeAgo } from "../shared/time";
-import { agentLink, cleanTitle, includedParts, Memo, readAgent, searchAgents, searchTags, searchTerminals } from "./sources";
+import { tokenEstimate } from "../shared/tokens";
+import { agentLink, cleanTitle, includedParts, Memo, readAgent, rowPrefix, searchAgents, searchTags, searchTerminals, shortenLink } from "./sources";
 import type { Directory } from "./tags";
 
-const options = snapshotSettingsSchema.parse({ snapshotMaxChars: 40_000, turnsPerAgent: 2, terminalLines: 50 });
+const options = snapshotSettingsSchema.parse({ snapshotMaxChars: 40_000, turnsPerAgent: 2, terminalLines: 50, showTokenEstimates: false });
 const entry = (type: string, text: string) => ({ item: { type, text } });
+const NO_PINS: ReadonlySet<string> = new Set();
 
 interface FakePage {
   entries: ReturnType<typeof entry>[];
@@ -84,8 +86,8 @@ test("a broken agent does not stop the other tags or its own tag from attaching"
   });
   const items = await searchTags(paseo, new Memo(30_000), [tag("auth", ["good", "broken"]), tag("billing", ["good"])], "", options);
   expect(items.map((item) => [item.identifier, item.title, item.subtitle])).toEqual([
-    ["Tag", "auth", "2 agents: claude; 1 unreadable"],
-    ["Tag", "billing", "1 agent: claude"],
+    ["", "auth", "2 agents: claude; 1 unreadable"],
+    ["", "billing", "1 agent: claude"],
   ]);
   expect(items[0].text).toContain("(conversation could not be read: socket closed)");
   expect(items[0].url).toBe(DOCS_URL);
@@ -94,13 +96,13 @@ test("a broken agent does not stop the other tags or its own tag from attaching"
 test("agent search matches every word, puts archived agents last, and links to the agent", async () => {
   const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
   const { paseo } = fakePaseo({ old: page(), new: page(), other: page() });
-  const items = await searchAgents(paseo, new Memo(30_000), directory, "srv_1", "fix log", options);
+  const items = await searchAgents(paseo, new Memo(30_000), directory, NO_PINS, "srv_1", "fix log", options);
   expect(items.map((item) => item.id)).toEqual(["new", "old"]);
-  expect(items[0]).toMatchObject({ identifier: "Codex", title: "Fix logout", url: agentLink("srv_1", "new"), resourceType: "agent" });
+  expect(items[0]).toMatchObject({ identifier: "", title: "Fix logout", url: agentLink("srv_1", "new"), resourceType: "agent" });
   expect(items[0].subtitle).toMatch(/^payments \/ api · active \d+ d ago$/);
   expect(items[1].subtitle).toMatch(/^payments \/ api · archived · active \d+ d ago$/);
   expect(items[0].text).toContain("**User:** hi");
-  expect((await searchAgents(paseo, new Memo(30_000), directory, "srv_1", "payments", options)).map((item) => item.id)).toEqual(["other", "new", "old"]);
+  expect((await searchAgents(paseo, new Memo(30_000), directory, NO_PINS, "srv_1", "payments", options)).map((item) => item.id)).toEqual(["other", "new", "old"]);
 });
 
 test("agent links use Paseo's own agent link shape", () => {
@@ -115,7 +117,7 @@ test("terminal search captures the newest lines from the setting and says how lo
   const items = await searchTerminals(paseo, new Memo(30_000), directory, "test", options);
   expect(items).toHaveLength(1);
   expect(capture).toHaveBeenCalledWith({ start: -50, stripAnsi: true });
-  expect(items[0]).toMatchObject({ identifier: "Terminal", title: "tests", subtitle: "payments / api · 940 lines", resourceType: "terminal" });
+  expect(items[0]).toMatchObject({ identifier: "", title: "tests", subtitle: "payments / api · 940 lines", resourceType: "terminal" });
   expect(items[0].text).toContain("ok 12 tests");
 });
 
@@ -136,7 +138,7 @@ test("Memo reuses a result within its window and forgets failures", async () => 
 test("switched-off parts of a tag are left out of both the subtitle and the text", async () => {
   const full = { ...tag("auth", ["good"]), links: [{ url: "https://e.com/", title: "Spec", taggedAt: "t" }] };
   const { paseo, refetch } = fakePaseo({ good: [{ entries: [entry("user_message", "hello")], hasOlder: false, startCursor: null, error: null }] });
-  const noAgents = snapshotSettingsSchema.parse({ includeAgents: false });
+  const noAgents = snapshotSettingsSchema.parse({ includeAgents: false, showTokenEstimates: false });
   expect(includedParts(full, noAgents).agents).toEqual([]);
   const [item] = await searchTags(paseo, new Memo(30_000), [full], "", noAgents);
   expect(item.subtitle).toBe("1 link");
@@ -150,17 +152,19 @@ test("each source returns as many results as the setting allows, so the picker c
   const many = { workspaces: directory.workspaces, agents: Array.from({ length: 30 }, (_, i) => ({ id: `a${i}`, title: `Agent ${i}`, provider: "claude", workspaceId: "w1", updatedAt: `2026-10-${String(i + 1).padStart(2, "0")}` })) };
   const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
   const { paseo } = fakePaseo(Object.fromEntries(many.agents.map((agent) => [agent.id, page()])));
-  expect(await searchAgents(paseo, new Memo(30_000), many, "srv", "", options)).toHaveLength(20);
-  expect(await searchAgents(paseo, new Memo(30_000), many, "srv", "", snapshotSettingsSchema.parse({ resultsPerSearch: 25 }))).toHaveLength(25);
+  expect(await searchAgents(paseo, new Memo(30_000), many, NO_PINS, "srv", "", options)).toHaveLength(20);
+  expect(await searchAgents(paseo, new Memo(30_000), many, NO_PINS, "srv", "", snapshotSettingsSchema.parse({ resultsPerSearch: 25 }))).toHaveLength(25);
   const tags = Array.from({ length: 12 }, (_, i) => tag(`t${i}`, []));
   expect(await searchTags(paseo, new Memo(30_000), tags, "", options)).toHaveLength(12);
   expect(await searchTags(paseo, new Memo(30_000), tags, "", snapshotSettingsSchema.parse({ resultsPerSearch: 5 }))).toHaveLength(5);
 });
 
 test("agent titles lose Markdown marks and extra spaces, so the picker shows more of them", () => {
-  expect(cleanTitle("verify this - **Ticket, your call:** Shopline   produ `x`")).toBe("verify this - Ticket, your call: Shopline produ x");
-  expect(cleanTitle("  ## Plan __things__  ")).toBe("Plan things");
-  expect(cleanTitle("   ")).toBe("");
+  expect(cleanTitle("verify this - **Ticket, your call:** Shopline   produ `x`", true)).toBe("verify this - Ticket, your call: Shopline produ x");
+  expect(cleanTitle("  ## Plan __things__  ", true)).toBe("Plan things");
+  expect(cleanTitle("   ", true)).toBe("");
+  expect(cleanTitle("scan https://acme.atlassian.net/browse/PROJ-5896 now", true)).toBe("scan acme.atlassian.net/browse/PROJ-5896 now");
+  expect(cleanTitle("scan https://acme.atlassian.net/browse/PROJ-5896 now", false)).toBe("scan https://acme.atlassian.net/browse/PROJ-5896 now");
 });
 
 test("times read as short relative phrases", () => {
@@ -176,7 +180,71 @@ test("a running agent says so in its picker row", async () => {
   const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
   const { paseo } = fakePaseo({ r: page() });
   const running = { workspaces: directory.workspaces, agents: [{ id: "r", title: "**Live** task", provider: "claude", workspaceId: "w1", status: "running", updatedAt: new Date().toISOString() }] };
-  const [item] = await searchAgents(paseo, new Memo(30_000), running, "srv", "", options);
+  const [item] = await searchAgents(paseo, new Memo(30_000), running, NO_PINS, "srv", "", options);
   expect(item.title).toBe("Live task");
   expect(item.subtitle).toBe("payments / api · running · active just now");
+});
+
+test("long links shrink to host and the last two path parts; short ones only lose the scheme", () => {
+  expect(shortenLink("https://app.notion.com/p/acme/Backend-architecture-review-0123456789abcdef")).toBe("app.notion.com/…/acme/Backend-architecture-review-0123456789abcdef");
+  expect(shortenLink("https://github.com/acme/tasks-service-v2/pull/12?x=1")).toBe("github.com/acme/tasks-service-v2/pull/12");
+  expect(shortenLink("https://github.com/acme/tasks-service-v2-service/pull/1234/files")).toBe("github.com/…/1234/files");
+  expect(shortenLink("https://www.example.com/a")).toBe("example.com/a");
+  expect(shortenLink("https://acme.sentry.io/issues/123/")).toBe("acme.sentry.io/issues/123");
+});
+
+test("row prefixes: none by default (rows start with the title), or words", () => {
+  expect(rowPrefix("agent", "claude", "none")).toBe("");
+  expect(rowPrefix("tag", undefined, "none")).toBe("");
+  expect(rowPrefix("agent", "codex/gpt-6", "word")).toBe("Codex");
+  expect(rowPrefix("agent", "claude", "word")).toBe("Claude");
+  expect(rowPrefix("tag", undefined, "word")).toBe("Tag");
+  expect(rowPrefix("terminal", undefined, "word")).toBe("Terminal");
+  expect(rowPrefix("agent", "claude", "none")).toBe("");
+});
+
+test("agent rows follow the settings: subtitle parts, archived agents, and sort", async () => {
+  const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
+  // A fresh fake per search: each fake timeline page is used up once read.
+  const run = (settings: Record<string, unknown>) => searchAgents(fakePaseo({ old: page(), new: page(), other: page() }).paseo, new Memo(30_000), directory, NO_PINS, "srv", "", snapshotSettingsSchema.parse({ showTokenEstimates: false, ...settings }));
+  expect((await run({ includeArchivedAgents: false })).map((item) => item.id)).toEqual(["other", "new"]);
+  // Archived agents stay last whatever the sort.
+  expect((await run({ agentSort: "title" })).map((item) => item.title)).toEqual(["Billing", "Fix logout", "Fix login"]);
+  expect((await run({ agentShowWorkspace: false, agentShowActivity: false })).map((item) => item.subtitle)).toEqual(["", "", "archived"]);
+  expect((await run({ agentShowStatus: false, agentShowActivity: false }))[2].subtitle).toBe("payments / api");
+  expect((await run({ pickerPrefix: "word" }))[0].identifier).toBe("Claude");
+});
+
+test("pinned agents come first, say so, and stay listed when archived", async () => {
+  const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
+  const run = (pins: string[], settings: Record<string, unknown> = {}) => searchAgents(fakePaseo({ old: page(), new: page(), other: page() }).paseo, new Memo(30_000), directory, new Set(pins), "srv", "", snapshotSettingsSchema.parse({ showTokenEstimates: false, agentShowActivity: false, ...settings }));
+  const pinned = await run(["new"]);
+  expect(pinned.map((item) => item.id)).toEqual(["new", "other", "old"]);
+  expect(pinned[0].subtitle).toBe("pinned · payments / api");
+  expect(pinned[1].subtitle).toBe("payments / api");
+  // An archived agent M pinned is kept even when archived agents are hidden, and still comes first.
+  expect((await run(["old"], { includeArchivedAgents: false })).map((item) => item.id)).toEqual(["old", "other", "new"]);
+  // A pin for an agent Paseo no longer has changes nothing in the list.
+  expect((await run(["gone"])).map((item) => item.id)).toEqual(["other", "new", "old"]);
+});
+
+test("rows end with a token estimate while the setting is on", async () => {
+  const page = () => [{ entries: [entry("user_message", "x".repeat(4_000))], hasOlder: false, startCursor: null, error: null }];
+  const on = snapshotSettingsSchema.parse({ agentShowActivity: false });
+  const [agent] = await searchAgents(fakePaseo({ other: page() }).paseo, new Memo(30_000), { workspaces: directory.workspaces, agents: [directory.agents[2]] }, NO_PINS, "srv", "", on);
+  expect(agent.subtitle).toBe(`payments / api · ${tokenEstimate(agent.text.length)}`);
+  expect(agent.subtitle).toMatch(/~1k tokens$/);
+  const [tagItem] = await searchTags(fakePaseo({ good: page() }).paseo, new Memo(30_000), [tag("auth", ["good"])], "", on);
+  expect(tagItem.subtitle).toBe(`1 agent: claude · ${tokenEstimate(tagItem.text.length)}`);
+  const terminals = fakePaseo({}, [{ id: "t1", workspaceId: "w1", cwd: "/src", name: "tests" }]).paseo;
+  const [terminal] = await searchTerminals(terminals, new Memo(30_000), directory, "", on);
+  expect(terminal.subtitle).toBe(`payments / api · 940 lines · ${tokenEstimate(terminal.text.length)}`);
+});
+
+test("token estimates read as short approximate counts", () => {
+  expect(tokenEstimate(0)).toBe("~0 tokens");
+  expect(tokenEstimate(3_400)).toBe("~850 tokens");
+  expect(tokenEstimate(4_000)).toBe("~1k tokens");
+  expect(tokenEstimate(4_800)).toBe("~1.2k tokens");
+  expect(tokenEstimate(48_000)).toBe("~12k tokens");
 });
