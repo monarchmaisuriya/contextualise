@@ -2,6 +2,12 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.4.0 - 2026-10-27
+
+### Added
+
+- `/tag` is back alongside the Tags pill: `/tag auth-rewrite`, or several with `/tag auth, billing`. The pill's label confirms it; a `/tag` that changes nothing says "Already tagged". Removing tags stays in the pill.
+
 ## 0.3.0 - 2026-10-27
 
 ### Added

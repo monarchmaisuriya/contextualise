@@ -189,7 +189,7 @@ export function TagsScreen({ theme, layout, params, navigation }: PluginScreenPr
       {tags.data && tags.data.tags.length === 0 ? (
         <View style={styles.card}>
           <Text style={styles.title}>No tags yet</Text>
-          <Text style={styles.text}>In any agent, press the Tags pill next to the message box and type a name, for example auth-rewrite.</Text>
+          <Text style={styles.text}>In any agent, press the Tags pill next to the message box, or type /tag auth-rewrite.</Text>
           <Text style={styles.text}>Workspaces you label in Paseo join the tag with the same name.</Text>
           <Text style={styles.text}>Add a web link with /tag-link https://example.com/spec auth-rewrite.</Text>
           <Text style={styles.text}>Then, in any prompt, Attach &gt; Tag sends everything under it.</Text>

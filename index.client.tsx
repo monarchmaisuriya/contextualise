@@ -8,8 +8,10 @@ import { followAgentPills } from "./client/tag-pills";
 import { TagsScreen } from "./client/tags-screen";
 import {
   addLinkRpc,
+  addTagRpc,
   agentAttachmentSource,
   parseLinkCommand,
+  parseTagNames,
   RECEIPT_KIND,
   receiptSchema,
   tagAttachmentSource,
@@ -33,7 +35,19 @@ export default function contribute(client: PluginClientContext) {
     // Tagging no longer adds timeline rows; this still draws the rows v0.2.1 added.
     client.addTimelineRenderer({ kind: RECEIPT_KIND, version: 1, schema: receiptSchema, Component: (props) => <ReceiptRow {...props} openTags={openTagsFor} /> }),
     followAgentPills(client, openTagsFor),
-    // Paseo shows a thrown error as a toast and clears the composer either way.
+    // Paseo shows a thrown error as a toast and clears the composer either way. The Tags pill's
+    // label is the confirmation; a /tag that changed nothing says so.
+    client.addSlashCommand({
+      name: "tag",
+      description: "Tag this agent (several: /tag auth, billing)",
+      argumentHint: "<tag>[, <tag>...]",
+      context: "agent",
+      async onSubmit({ args, agent, rpc }) {
+        const { results } = await readable(() => rpc(addTagRpc, { tags: parseTagNames(args), agentId: agent.id, workspaceId: agent.workspaceId }));
+        tagsChanged();
+        if (!results.some((result) => result.changed)) throw new Error(`Already tagged: ${results.map((result) => result.name).join(", ")}`);
+      },
+    }),
     client.addSlashCommand({
       name: "tag-link",
       description: "Add a web link to a tag; it is listed when the tag is attached",
