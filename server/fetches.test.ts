@@ -113,19 +113,26 @@ test("an unknown agent in the worker folder is denied", async () => {
 test("no more workers run at once than the setting allows", async () => {
   let running = 0;
   let peak = 0;
+  // Workers hold until released, so the overlap does not depend on how fast the starts run.
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((done) => {
+    release = done;
+  });
   const slow: RunWorker = async (_p, _r, job, onCreated) => {
     onCreated(job.title);
     running += 1;
     peak = Math.max(peak, running);
-    await new Promise((done) => setTimeout(done, 15));
+    await gate;
     running -= 1;
     return '{"found":true,"title":"t","url":null,"text":"x"}';
   };
   const instance = fetcher(slow, { maxConcurrentFetches: 3 });
   for (const ref of ["P-1", "P-2", "P-3", "P-4", "P-5", "P-6"]) await instance.start(paseo, "bulk", { vendor: "jira", ref });
-  await new Promise((done) => setTimeout(done, 200));
+  await vi.waitFor(() => expect(running).toBe(3));
   expect(peak).toBe(3);
-  expect((await store.read()).bulk.notes.every((note) => note.status === "ready")).toBe(true);
+  release();
+  await vi.waitFor(async () => expect((await store.read()).bulk.notes.every((note) => note.status === "ready")).toBe(true));
+  expect(peak).toBe(3);
 });
 
 test("a fetch started from an agent is reported to it when it ends, and its refresh reports to it again", async () => {

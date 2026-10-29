@@ -2,10 +2,11 @@ import type { PluginClientContext, PluginSidebarItemProps } from "@getpaseo/plug
 import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { readable } from "./client/errors";
 import { FetchResultRow } from "./client/fetch-result";
-import { LOGO } from "./client/icons";
+import { ICONS, LOGO } from "./client/icons";
 import { ReceiptRow } from "./client/receipt";
 import { SnapshotSettingsScreen } from "./client/settings-screen";
 import { tagsChanged } from "./client/tag-events";
+import { KnowledgeScreen } from "./client/knowledge-screen";
 import { followAgentPills } from "./client/tag-pills";
 import { TagsScreen } from "./client/tags-screen";
 import {
@@ -25,10 +26,15 @@ import {
   tagAttachmentSource,
   terminalAttachmentSource,
 } from "./shared/contracts";
+import { knowledgeAttachmentSource } from "./shared/knowledge";
 
 // Shown, hidden, and moved under Paseo's Settings > Sidebar.
 function TagsSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
   return <SidebarRow icon={LOGO} active={currentScreen?.screenId === "tags"} onPress={() => openScreen({ screenId: "tags" })} />;
+}
+
+function KnowledgeSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
+  return <SidebarRow icon={ICONS.knowledge} active={currentScreen?.screenId === "knowledge"} onPress={() => openScreen({ screenId: "knowledge" })} />;
 }
 
 export default function contribute(client: PluginClientContext) {
@@ -37,10 +43,13 @@ export default function contribute(client: PluginClientContext) {
   const removers = [
     client.addScreen({ id: "tags", title: (params) => (params.agentId ? "Tags for this agent" : "Tags"), Component: TagsScreen }),
     client.addSidebarFooterItem({ id: "tags", title: "Tags", Component: TagsSidebarItem }),
+    client.addScreen({ id: "knowledge", title: "Project knowledge", Component: KnowledgeScreen }),
+    client.addSidebarFooterItem({ id: "knowledge", title: "Project knowledge", Component: KnowledgeSidebarItem }),
     client.addSettingsScreen({ id: "snapshot", title: "Contextualise", icon: LOGO, Component: SnapshotSettingsScreen }),
     client.addAttachmentSource(tagAttachmentSource),
     client.addAttachmentSource(agentAttachmentSource),
     client.addAttachmentSource(terminalAttachmentSource),
+    client.addAttachmentSource(knowledgeAttachmentSource),
     // Tagging no longer adds timeline rows; this still draws the rows v0.2.1 added.
     client.addTimelineRenderer({ kind: RECEIPT_KIND, version: 1, schema: receiptSchema, Component: (props) => <ReceiptRow {...props} openTags={openTagsFor} /> }),
     client.addTimelineRenderer({ kind: FETCH_RESULT_KIND, version: 1, schema: fetchResultSchema, Component: (props) => <FetchResultRow {...props} openItem={openItem} openTags={openTagsFor} /> }),
@@ -115,6 +124,16 @@ export default function contribute(client: PluginClientContext) {
         },
       }),
     ),
+    client.addCommandCenterItem({
+      id: "open-knowledge",
+      title: "Open project knowledge",
+      icon: ICONS.knowledge,
+      keywords: ["knowledge", "docs", "adr", "architecture", "tasks", "contextualise"],
+      context: "global",
+      onSelect({ openScreen }) {
+        openScreen({ screenId: "knowledge" });
+      },
+    }),
     client.addCommandCenterItem({
       id: "open-tags",
       title: "Open tags",

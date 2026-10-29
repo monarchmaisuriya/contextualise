@@ -2,14 +2,14 @@
 
 # contextualise
 
-A [Paseo](https://paseo.sh) plugin that tags agents across workspaces and providers, fetches Jira, Sentry, Slack, and Notion items into tags, and attaches context to a prompt: a whole tag, another agent's conversation, or terminal output.
+A [Paseo](https://paseo.sh) plugin that gives every agent searchable knowledge of its repository (architecture docs, conventions, ADRs, code symbols, and the tasks agents finished there), tags agents across workspaces and providers, fetches Jira, Sentry, Slack, and Notion items into tags, and attaches context to a prompt: a whole tag, another agent's conversation, terminal output, or a piece of project knowledge.
 
 Requires Paseo 0.13.
 
 ## Install
 
 ```bash
-paseo plugin install git:monarchmaisuriya/contextualise --ref v0.10.0
+paseo plugin install git:monarchmaisuriya/contextualise --ref v0.13.0
 ```
 
 ## Tags
@@ -49,15 +49,54 @@ A fetch started from an agent (`/tag-fetch`, or the Fetch box in its Tags pill) 
 
 Fetched items can be refreshed automatically (Advanced, off by default): every 15 minutes, ready items older than the set number of hours (default 24) are fetched again, through the same queue and limit. Automatic refreshes never add rows to agents. The timer starts after the app first talks to the plugin.
 
+## Project knowledge
+
+Every new agent started in a git repository gets two things:
+
+- **A short project map** in its system prompt (40 lines by default): the repository, its architecture docs and conventions files by title, its ADRs with their status, its top-level folders, and the last 3 finished tasks. The map says it describes the repository and is not instructions.
+- **Two read-only tools**, `knowledge_search` and `knowledge_read`, over the repository's own knowledge. Paseo approves their calls automatically, because they only read this repository's index.
+
+What is indexed, from the files git tracks (`.gitignore` is honoured):
+
+| Kind | Files |
+| --- | --- |
+| Architecture | `ARCHITECTURE*.md`, `design*.md`, and Markdown under `architecture/` or `design/` folders |
+| Conventions | `CONTRIBUTING.md`, `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `conventions.md`, `style*.md`, and Markdown under `conventions/` |
+| Decisions (ADRs) | Markdown under `adr/`, `adrs/`, `decisions/`, or `architecture-decisions/`, and `ADR-<n>` files; the status comes from a `Status:` line, front matter, or a Status heading, and "Superseded by" is read too |
+| Docs | Every other Markdown file, up to 2,000 files |
+| Code | Functions, classes, methods, interfaces, types, and enums in TypeScript, JavaScript, Python, and Go, with their signature line (tree-sitter tags queries; definitions inside function bodies are left out) |
+| Tasks | One entry per agent that worked here: its first request, the files it changed, the commands it ran with their exit codes, and how its last turn ended |
+
+Documents are split by heading, so a search hit points at the section that matters. Files over 256 KB, and `node_modules`, `vendor`, `dist`, and `build` folders, are skipped. Search matches words (SQLite full-text search ranked by relevance; `parseItemRef` is also found by "item ref"), not meaning.
+
+**Staying current.** Each time an agent starts or searches, Contextualise compares git's hash of every tracked file with the one it indexed, and reads again only the files that changed, including edits not yet committed. A task entry whose changed files have changed since is marked "needs check", and so is a superseded ADR. A large repository finishes indexing in the background; the first agent's map then says the index is updating.
+
+**Task log.** A task entry is written from the agent's own timeline each time one of its turns ends. No model reads it and nothing leaves the host; secret-shaped text is removed first.
+
+**Where to look.** Project knowledge in the sidebar footer (or "Open project knowledge" in the Command Center) shows each indexed repository: what is indexed, its recent tasks, a search with filters by kind, and Re-index. Attach > Project knowledge sends one entry (a document section, a code symbol, or a task) with your prompt.
+
+Folders outside git get no project knowledge.
+
+### With Memorise
+
+[Memorise](https://paseo.sh/plugins/monarchmaisuriya/memorise) keeps what agents learn while working: decisions, pitfalls, preferences. Contextualise never stores those itself, so the two never hold the same thing. When Memorise 0.10 or later is running, Contextualise also:
+
+- tells agents in its project map to keep decisions and pitfalls in Memorise;
+- shows, under each search result, the Memorise memories about the same file (agents read them with Memorise's `memory_read`);
+- suggests fixes to Memorise when code changes: a memory about a function, class, or method that was renamed (same kind, parameters, and body) gets a suggestion to update its name, one about a definition that no longer exists anywhere gets a suggestion to archive it, and one citing an ADR that became superseded gets a suggestion to archive it. Suggestions wait in Memorise's Suggestions, labelled "Suggested by Contextualise", and nothing changes until you approve them there. Each is sent once, at most 5 per re-index.
+
+Paseo plugins cannot call each other, so this goes through files Memorise publishes for other plugins ([Memorise's INTEROP.md](https://github.com/monarchmaisuriya/memorise/blob/main/INTEROP.md)). Without Memorise, everything above the heading still works, and Settings > Contextualise says what installing, turning on, or updating Memorise would add.
+
 ## Attaching context
 
-In the composer, Attach offers three sources:
+In the composer, Attach offers four sources:
 
 | Source | Sends |
 | --- | --- |
 | **Tag** | The tag's workspaces (project, name, folder), its links, its fetched items, and each tagged agent's most recent turns |
 | **Agent conversation** | One agent's most recent turns, from any workspace or provider on this host |
 | **Terminal output** | The newest lines of any terminal on this host |
+| **Project knowledge** | One document section, code symbol, or finished task from any indexed repository |
 
 Each picker row says what is inside before you send it: providers and member counts for a tag, provider and workspace for an agent, workspace and length for a terminal, and for all three an estimated size (`~1.2k tokens`: characters divided by 4, so code and non-English text can differ). Pinned agents come first and say "pinned". Clicking an attached agent opens that agent; clicking a tag or terminal opens this page.
 
@@ -69,7 +108,9 @@ If an agent's history cannot be read, the attachment says so for that agent and 
 
 Attaching copies other agents' conversations and terminal output into the prompt you are writing, including conversations held by a different provider. Nothing is sent until you send the prompt.
 
-Tags and pinned agents are stored on the daemon host in `<PASEO_HOME>/plugin-data/contextualise/tags.json` (version 4; older files are read and written back as version 4 on the next change, after which plugin versions before 0.11.0 refuse the file). Nothing else is written.
+Tags and pinned agents are stored on the daemon host in `<PASEO_HOME>/plugin-data/contextualise/tags.json` (version 4; older files are read and written back as version 4 on the next change, after which plugin versions before 0.11.0 refuse the file).
+
+Project knowledge is stored in `<PASEO_HOME>/plugin-data/contextualise/knowledge/`: one SQLite index per repository (a cache of its files, rebuilt if deleted), one `.tasks.jsonl` log per repository (the task entries, which cannot be rebuilt), the tools' token secret, and the list of suggestions already sent to Memorise. With Memorise available, Contextualise also writes suggestion files to `<PASEO_HOME>/plugin-data/memorise/interop/v1/inbox/`. The project map, search results, and task entries reach each agent's model provider as part of its prompt and tool results.
 
 ## Settings
 
@@ -77,6 +118,11 @@ Settings > Contextualise:
 
 | Section | Setting | Default |
 | --- | --- | --- |
+| Project knowledge | Project knowledge for new agents | on |
+| | Index code symbols | on |
+| | Suggest memory fixes to Memorise | on (acts only when Memorise 0.10 or later runs) |
+| | Project map length (lines); 0 gives the tools without a map | 40 (0 to 150) |
+| | Knowledge tools port (used after a reload) | 6791 (1024 to 65535, not 6790) |
 | Attachments | Longest attachment (characters) | 40,000 (1,000 to 200,000) |
 | | Recent turns per agent | 6 (1 to 50) |
 | | Terminal lines to attach | 200 (10 to 5,000) |

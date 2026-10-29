@@ -12,6 +12,8 @@ const VERIFIED_LUCIDE = new Set([
   "Pin", "PinOff",
   // Added 2026-10-28, same export table.
   "EllipsisVertical", "Info", "ArrowDownUp",
+  // Added 2026-10-29, checked in Paseo 0.13.2's bundle the same way.
+  "BookOpen",
 ]);
 
 test("every icon the plugin draws is a Lucide name Paseo can draw", () => {

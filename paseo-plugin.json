@@ -7,8 +7,9 @@
     "assets/tags-pill.png",
     "assets/attach-agent.png"
   ],
-  "description": "Tag agents across workspaces and providers, fetch Jira, Sentry, Slack, and Notion items into tags, and attach any of it to a prompt.",
+  "description": "Shared project knowledge for Paseo agents (docs, conventions, ADRs, code symbols, finished tasks), plus tags across workspaces and providers, Jira, Sentry, Slack, and Notion items, and attachments for any prompt.",
   "requirements": {
     "paseo": ">=0.13.0 <0.14.0"
-  }
+  },
+  "build": [["npm", "ci", "--omit=dev", "--ignore-scripts"]]
 }
