@@ -5,6 +5,7 @@ import type { PluginServerContext } from "@getpaseo/plugin/server";
 import type { SnapshotSettings } from "../../shared/contracts";
 import { KIND_LABELS, listProjectsRpc, listTasksRpc, memoriseStatusRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc } from "../../shared/knowledge";
 import type { PaseoApi } from "../paseo-types";
+import { capTitle } from "../rows";
 import { loadTokenSecret, TokenAuthority } from "./auth";
 import { KnowledgeBase } from "./base";
 import { trackedBlobs } from "./indexer";
@@ -191,6 +192,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   server.handle(searchKnowledgeAttachmentsRpc, async ({ query }, { paseo }) => {
     remember(paseo);
     if (!query.trim()) return { items: [] };
+    const { pickerTitleMaxChars } = await deps.settings();
     const items = [];
     for (const found of await base.projects()) {
       const repo = { key: found.repoKey, top: found.top };
@@ -199,7 +201,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
         items.push({
           id: `${found.repoKey}|${hit.id}`,
           identifier: KIND_LABELS[hit.kind],
-          title: hit.title,
+          title: capTitle(hit.title, pickerTitleMaxChars),
           // The snippet shows why the row matched, and Paseo's picker filters rows by their own text.
           subtitle: `${found.name} · ${hit.path}${hit.line > 0 ? `:${hit.line}` : ""}${hit.needsCheck ? " · needs check" : ""} · ${hit.snippet.replace(/\s+/g, " ").trim()}`.slice(0, 200),
           url: DOCS_URL,

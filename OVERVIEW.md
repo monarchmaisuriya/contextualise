@@ -29,7 +29,7 @@ The composer's Attach menu gets four sources:
 - **Terminal output**: the newest lines of any terminal.
 - **Project knowledge**: one document section, code symbol, or finished task from any indexed repository.
 
-Each picker row says what is inside before you send, for example "2 agents: claude, codex; 1 workspace · ~3.4k tokens" (an estimate). Conversations include your messages and the agents' replies; tool calls and reasoning are left out. Secret-shaped text such as API keys, tokens, and `password=` assignments is replaced with `[removed: <kind>]`. Every attachment starts with a note that it is reference material, not instructions. An agent whose history cannot be read is listed with the reason, and the rest still attaches.
+Each picker row says what is inside before you send, for example "2 agents: claude, codex; 1 workspace · ~3.4k tokens" (an estimate). Agents in a worktree are titled with the worktree's title, and their rows lead with when they were last active and the git branch, changes, and pull request. Conversations include your messages and the agents' replies; tool calls and reasoning are left out. Secret-shaped text such as API keys, tokens, and `password=` assignments is replaced with `[removed: <kind>]`. Every attachment starts with a note that it is reference material, not instructions. An agent whose history cannot be read is listed with the reason, and the rest still attaches.
 
 ## What it reads and sends
 
@@ -44,7 +44,7 @@ Settings > Contextualise has six sections:
 - **Project knowledge**: on or off for new agents, code symbols, suggestions to Memorise, map length (0 gives the tools without a map), and the tools' local port.
 - **Attachments**: longest attachment (default 40,000 characters), turns per agent (6), terminal lines (200), and which parts a tag attachment includes (labeled workspaces, links, fetched items, agent conversations).
 - **Tags pill**: show or hide it; label it with tag names or a count; longest name shown.
-- **Pickers**: what starts each Attach picker row (nothing, or a word such as Claude or Tag), results per picker (20), shorter links in agent titles, which details agent rows show, whether archived agents appear, agent sort order, and token estimates.
+- **Pickers**: what starts each Attach picker row (nothing, or a word such as Claude or Tag), results per picker (20), shorter links in agent titles, the longest title shown (44 characters), which details agent rows show (last active, git, workspace, status), whether archived agents appear, agent sort order, and token estimates.
 - **Fetching**: which agent fetches (automatic, Claude only, Codex only), the model for each, and whether results show in the asking agent.
 - **Advanced**: fetch time limit, fetches at once, stored item size, comments per item, extra instructions for workers, automatic refresh, and custom routes (another agent and MCP server for a vendor, with the read tools it may use).
 
