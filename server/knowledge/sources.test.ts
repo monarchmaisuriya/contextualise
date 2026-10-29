@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adrInfo, chunkMarkdown, classify } from "./sources";
+import { adrInfo, chunkMarkdown, classify, plainHeading } from "./sources";
 
 describe("classify", () => {
   it.each([
@@ -72,5 +72,13 @@ describe("classify with settings", () => {
     expect(classify("server/plugin.ts", pythonOnly)).toBeNull();
     expect(classify("client/a.tsx", { languages: new Set(["typescript"] as const) })).toBe("code");
     expect(classify("README.md", { exclude: ["*.txt"], extraDocs: ["*.md"] })).toBe("doc");
+  });
+});
+
+describe("plain section titles", () => {
+  it("drops emphasis, code marks, and link addresses from headings", () => {
+    expect(plainHeading("**Setup** with `npm` and [the guide](docs/guide.md) ~~old~~")).toBe("Setup with npm and the guide old");
+    expect(plainHeading("_Why_ we use *SQLite*")).toBe("Why we use SQLite");
+    expect(chunkMarkdown("a.md", "# **Install** `cli`\nRun it.\n")[0].title).toBe("Install cli");
   });
 });

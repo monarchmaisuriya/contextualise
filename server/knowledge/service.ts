@@ -56,7 +56,7 @@ export class KnowledgeService {
           kind: "task" as const,
           path: task.files[0] ?? "",
           line: 0,
-          title: task.title,
+          title: task.generatedTitle ?? task.title,
           snippet,
           needsCheck: taskNeedsCheck(task, blobs),
         }))
@@ -74,7 +74,7 @@ export class KnowledgeService {
     if (id.startsWith("task:")) {
       const task = store.task(id);
       if (!task) throw new Error(`No task ${id} in ${repo.key}; search again for current ids`);
-      const [entry] = await this.withRelated(repo.key, [{ id, kind: "task", path: task.files[0] ?? "", line: 0, title: task.title, snippet: "", needsCheck: taskNeedsCheck(task, store.fileBlobs()) }]);
+      const [entry] = await this.withRelated(repo.key, [{ id, kind: "task", path: task.files[0] ?? "", line: 0, title: task.generatedTitle ?? task.title, snippet: "", needsCheck: taskNeedsCheck(task, store.fileBlobs()) }]);
       return { ...entry, body: taskText(task) };
     }
     const entry = store.read(id);
@@ -100,9 +100,20 @@ export class KnowledgeService {
       .map(({ citations, ...task }) => ({ ...task, needsCheck: taskNeedsCheck({ citations }, blobs) }));
   }
 
-  async tasks(repo: ProjectRoot, limit: number) {
-    const store = await this.base.open(repo);
+  async tasks(repo: ProjectRoot, limit: number, offset = 0) {
+    // Fresh file versions decide "needs check", the same as search and browse.
+    const store = await this.current(repo);
     const blobs = store.fileBlobs();
-    return store.tasks(limit).map(({ citations, ...task }) => ({ ...task, needsCheck: taskNeedsCheck({ citations }, blobs) }));
+    return { tasks: store.tasks(limit, offset).map(({ citations, ...task }) => ({ ...task, needsCheck: taskNeedsCheck({ citations }, blobs) })), total: store.counts().task };
+  }
+
+  async browse(repo: ProjectRoot, kind: Exclude<KnowledgeKind, "task">, limit: number, offset: number): Promise<{ hits: SearchHit[]; total: number }> {
+    const store = await this.current(repo);
+    const { entries, total } = store.browse(kind, limit, offset);
+    const hits = await this.withRelated(
+      repo.key,
+      entries.map(({ body, ...entry }) => ({ ...entry, snippet: body.replace(/\s+/g, " ").trim(), needsCheck: entry.kind === "adr" && store.sourceStatus(entry.path)?.status === "superseded" })),
+    );
+    return { hits, total };
   }
 }

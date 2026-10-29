@@ -5,6 +5,7 @@ import { dirname, join, sep } from "node:path";
 import type { Project } from "../../shared/knowledge";
 import { type ProjectRoot, projectName, projectRoot } from "./git";
 import { type IndexChange, type IndexerOptions, indexRepo } from "./indexer";
+import { cleanTitle } from "../rows";
 import { ProjectKeys } from "./projects";
 import { KnowledgeStore, type TaskRecord } from "./store";
 import type { SymbolReader } from "./symbols";
@@ -13,6 +14,8 @@ import type { SymbolReader } from "./symbols";
 // searches runs git once.
 export const FRESH_MS = 30_000;
 const REPO_CACHE_MS = 60_000;
+// Raised when what is stored from files changes shape, so old indexes are rebuilt once.
+const CONTENT_VERSION = "2";
 
 export interface KnowledgeBaseDeps {
   root: () => Promise<string>;
@@ -110,8 +113,21 @@ export class KnowledgeBase {
         }
       }
     }
+    KnowledgeBase.upgrade(store);
     this.opened.set(repo.key, { repo, store });
     return store;
+  }
+
+  // Indexes made before titles were cleaned (0.16.1 and older) are read again from the files, and
+  // recorded tasks get plain titles. The index is a cache; tasks are kept. Runs once per index.
+  private static upgrade(store: KnowledgeStore): void {
+    if (store.getMeta("contentVersion") === CONTENT_VERSION) return;
+    store.resetSources();
+    for (const task of store.tasks(100_000)) {
+      const title = cleanTitle(task.title, true);
+      if (title !== task.title) store.upsertTask({ ...task, title });
+    }
+    store.setMeta("contentVersion", CONTENT_VERSION);
   }
 
   // Resolves when the index is current, or after `maxWaitMs` with "updating" while it carries on.
@@ -171,6 +187,7 @@ export class KnowledgeBase {
         store.close();
         continue;
       }
+      KnowledgeBase.upgrade(store);
       this.opened.set(repoKey, { repo: projectRoot(repoKey, top), store });
     }
     return [...this.opened.values()]

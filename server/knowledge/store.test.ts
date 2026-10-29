@@ -83,6 +83,19 @@ describe("KnowledgeStore", () => {
     expect(store.fileBlobs()).toEqual(new Map([["a.ts", "3"]]));
   });
 
+  it("lists one kind in file order a page at a time, and resets file entries but keeps tasks and the brief", () => {
+    for (const name of ["b.md", "a.md", "c.md"]) store.replaceSource({ path: `docs/${name}`, kind: "doc", blob: "x", chunks: [{ title: name, body: `About ${name}`, line: 1 }] });
+    store.replaceSource({ path: "(brief)", kind: "brief", blob: "g", chunks: [{ title: "Project brief", body: "An API.", line: 1 }] });
+    store.upsertTask(task());
+    expect(store.browse("doc", 2, 0)).toMatchObject({ total: 3, entries: [{ path: "docs/a.md", body: "About a.md" }, { path: "docs/b.md" }] });
+    expect(store.browse("doc", 2, 2).entries.map((entry) => entry.path)).toEqual(["docs/c.md"]);
+    expect(store.tasks(1, 1)).toEqual([]);
+    store.resetSources();
+    expect(store.browse("doc", 10, 0).total).toBe(0);
+    expect(store.browse("brief", 10, 0).total).toBe(1);
+    expect(store.tasks(10)).toHaveLength(1);
+  });
+
   it("splits identifiers into words", () => {
     expect(identifierWords("parseItemRef")).toBe("parse item ref");
     expect(identifierWords("HTTP_server-name")).toBe("http server name");

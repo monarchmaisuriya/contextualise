@@ -158,6 +158,16 @@ describe("contributeKnowledge", () => {
     expect(items[0].text).toContain("quoted from the repository:\n\nOne daemon.");
   });
 
+  it("offers each project's essentials in Attach when nothing is typed", async () => {
+    await create(top);
+    await emit("agent.turn_ended", { agent: { id: "a1", provider: "codex", cwd: top, title: null }, outcome: { kind: "completed" } });
+    const { items } = (await (rpcs.get("knowledge.attach-search") as (input: unknown, context: unknown) => Promise<{ items: { identifier: string; title: string }[] }>)({ query: "" }, { paseo }))!;
+    expect(items.map((item) => [item.identifier, item.title])).toEqual([
+      ["Design", "Overview"],
+      ["Past work", "Document the queue"],
+    ]);
+  });
+
   it("records a task when an agent's turn ends, shown to the next agent", async () => {
     await emit("agent.turn_ended", { agent: { id: "a1", provider: "codex", cwd: top, title: null }, outcome: { kind: "completed" } });
     expect((await create(top)).config.systemPrompt).toContain('"Document the queue" (completed; README.md)');

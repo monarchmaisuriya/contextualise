@@ -197,8 +197,25 @@ export class KnowledgeStore {
     });
   }
 
-  tasks(limit: number): TaskRecord[] {
-    return (this.db.prepare("SELECT record FROM tasks ORDER BY ended_at DESC LIMIT ?").all(limit) as { record: string }[]).map((row) => JSON.parse(row.record) as TaskRecord);
+  tasks(limit: number, offset = 0): TaskRecord[] {
+    return (this.db.prepare("SELECT record FROM tasks ORDER BY ended_at DESC LIMIT ? OFFSET ?").all(limit, offset) as { record: string }[]).map((row) => JSON.parse(row.record) as TaskRecord);
+  }
+
+  // Every entry of one kind, in file order, a page at a time: what the screen lists without a search.
+  browse(kind: Exclude<KnowledgeKind, "task">, limit: number, offset: number): { entries: StoredEntry[]; total: number } {
+    const total = (this.db.prepare("SELECT COUNT(*) AS n FROM chunks WHERE kind = ?").get(kind) as { n: number }).n;
+    const rows = this.db
+      .prepare("SELECT id, kind, path, line, title, substr(body, 1, 200) AS body FROM chunks WHERE kind = ? ORDER BY path, CAST(line AS INTEGER) LIMIT ? OFFSET ?")
+      .all(kind, limit, offset) as unknown as StoredEntry[];
+    return { entries: rows.map((row) => ({ ...row, line: Number(row.line) })), total };
+  }
+
+  // Drops everything indexed from files, keeping tasks: the next refresh reads every file again.
+  // Used when the way files are read changes, so old entries do not keep old titles.
+  resetSources(): void {
+    this.transaction(() => {
+      for (const table of ["sources", "chunks", "symbols", "files"]) this.db.exec(`DELETE FROM ${table} WHERE path NOT LIKE '(%'`);
+    });
   }
 
   task(id: string): TaskRecord | null {

@@ -61,6 +61,16 @@ export interface TextChunk {
 
 const CHUNK_MAX_CHARS = 4_000;
 const HEADING = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
+
+// A heading as people read it: link text without the address, no emphasis or code marks.
+export function plainHeading(text: string): string {
+  return text
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__|`|~~)/g, "")
+    .replace(/(^|\s)[*_]([^*_]+)[*_](?=\s|$)/g, "$1$2")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 const FENCE = /^\s*(```|~~~)/;
 
 // One chunk per heading section, so a search hit points at the part of a document that matters. The
@@ -87,7 +97,7 @@ export function chunkMarkdown(path: string, text: string): TextChunk[] {
     }
     flush();
     const depth = heading[1].length;
-    trail.splice(depth - 1, trail.length, heading[2]);
+    trail.splice(depth - 1, trail.length, plainHeading(heading[2]));
     title = trail.filter(Boolean).join(" > ");
     line = index + 1;
   });

@@ -109,7 +109,7 @@ export class KnowledgeMcp {
           const tasks = await this.service.history(repo, path, limit ?? 8);
           return text(
             tasks.length > 0
-              ? tasks.map((task) => `[${task.id}] ${task.endedAt.slice(0, 10)} ${task.title} (${task.outcome})${task.needsCheck ? " [needs check: its files changed since]" : ""}${task.summary ? `\n  ${task.summary}` : ""}`).join("\n")
+              ? tasks.map((task) => `[${task.id}] ${task.endedAt.slice(0, 10)} ${task.generatedTitle ?? task.title} (${task.outcome})${task.needsCheck ? " [needs check: its files changed since]" : ""}${task.summary ? `\n  ${task.summary}` : ""}`).join("\n")
               : `No finished task changed ${path}.`,
           );
         } catch (error) {

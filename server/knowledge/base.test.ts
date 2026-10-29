@@ -110,6 +110,23 @@ describe("KnowledgeBase", () => {
     expect((await base.repoFor(join(rootFolder, "client", "src")))?.top).toBe(realpathSync(rootFolder));
   });
 
+  it("rebuilds an index made by an older version once, and gives its recorded tasks plain titles", async () => {
+    const repo = (await base.repoFor(top))!;
+    await base.refresh(repo, 10_000);
+    await base.recordTask(repo, { ...task, title: "**Handoff:** docs" });
+    const store = await base.open(repo);
+    store.setMeta("contentVersion", "1");
+    base.close();
+    base = make();
+    const reopened = await base.open(repo);
+    expect(reopened.task("task:agent-1")?.title).toBe("Handoff: docs");
+    expect(reopened.counts().doc).toBe(0);
+    now += FRESH_MS + 1;
+    await base.refresh(repo, 10_000);
+    expect(reopened.counts().doc).toBe(1);
+    expect(reopened.getMeta("contentVersion")).toBe("2");
+  });
+
   it("never takes the home folder or the filesystem root as a project", async () => {
     expect(await base.repoFor(homedir())).toBeNull();
     expect(await base.repoFor("/")).toBeNull();

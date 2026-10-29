@@ -1,9 +1,9 @@
 import { type PluginScreenProps, useRpc } from "@getpaseo/plugin/client";
 import { copyText, Icon, ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/ui";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { BRIEF_ID, generateKnowledgeRpc, KIND_LABELS, KNOWLEDGE_KINDS, type KnowledgeKind, listProjectsRpc, listTasksRpc, pinEntryRpc, type Project, readKnowledgeRpc, reindexRpc, type SearchHit, searchKnowledgeRpc, setProjectEnabledRpc, type TaskSummary } from "../shared/knowledge";
+import { BRIEF_ID, browseKnowledgeRpc, generateKnowledgeRpc, KIND_LABELS, KNOWLEDGE_KINDS, type KnowledgeKind, listProjectsRpc, listTasksRpc, pinEntryRpc, type Project, readKnowledgeRpc, reindexRpc, type SearchHit, searchKnowledgeRpc, setProjectEnabledRpc, type TaskSummary } from "../shared/knowledge";
 import { errorText } from "./errors";
 import { ICONS } from "./icons";
 import { ago, Button, Chip, IconButton, plural, SectionTitle, type Styles, useStyles } from "./kit";
@@ -16,10 +16,18 @@ function where(hit: Pick<SearchHit, "path" | "line">): string {
 }
 
 // What each kind's count counts: documents are counted by section, code by definition.
-const COUNT_NOUNS: Record<KnowledgeKind, string> = { brief: "brief", architecture: "architecture section", convention: "convention section", adr: "ADR section", doc: "doc section", code: "code symbol", task: "task" };
+const COUNT_NOUNS: Record<KnowledgeKind, readonly [string, string]> = {
+  brief: ["description", "descriptions"],
+  architecture: ["design section", "design sections"],
+  convention: ["team rule", "team rules"],
+  adr: ["decision", "decisions"],
+  doc: ["document section", "document sections"],
+  code: ["function or class", "functions and classes"],
+  task: ["conversation", "conversations"],
+};
 
 function countsLine(project: Project): string {
-  const parts = KNOWLEDGE_KINDS.filter((kind) => project.counts[kind] > 0).map((kind) => plural(project.counts[kind], COUNT_NOUNS[kind]));
+  const parts = KNOWLEDGE_KINDS.filter((kind) => project.counts[kind] > 0).map((kind) => `${project.counts[kind]} ${COUNT_NOUNS[kind][project.counts[kind] === 1 ? 0 : 1]}`);
   return parts.length > 0 ? parts.join(" · ") : "Nothing indexed yet";
 }
 
@@ -98,6 +106,83 @@ function TaskRow({ task, styles }: { task: TaskSummary; styles: Styles }) {
   );
 }
 
+const OVERVIEW_ROWS = 5;
+const PAGE = 50;
+// Fewer recorded conversations than this, and the screen offers to add the earlier ones.
+const FEW_TASKS = 5;
+// The overview's sections; the brief has its own card and past work its own list.
+const BROWSE_ORDER = ["architecture", "convention", "adr", "doc", "code"] as const;
+
+type PinRow = (hit: SearchHit) => { pinned: boolean; onPin(pinned: boolean): void };
+
+// One kind in the overview: its first entries and a way to see all of them.
+function KindSection({ repoKey, kind, total, onShowAll, pinRow, styles }: { repoKey: string; kind: (typeof BROWSE_ORDER)[number]; total: number; onShowAll(): void; pinRow: PinRow; styles: Styles }) {
+  const browse = useRpc(browseKnowledgeRpc);
+  const page = useQuery({ queryKey: ["contextualise", "knowledge", "browse", repoKey, kind, "overview"], queryFn: () => browse({ repoKey, kind, limit: OVERVIEW_ROWS, offset: 0 }) });
+  return (
+    <>
+      <View style={styles.row}>
+        <SectionTitle label={KIND_LABELS[kind]} count={total} styles={styles} />
+        <View style={styles.grow} />
+        {total > OVERVIEW_ROWS ? <Button label={`Show all ${total}`} styles={styles} onPress={onShowAll} /> : null}
+      </View>
+      {page.error ? <Text style={styles.danger}>{errorText(page.error)}</Text> : null}
+      {page.data?.hits.map((hit) => <HitRow key={hit.id} hit={hit} repoKey={repoKey} {...pinRow(hit)} styles={styles} />)}
+    </>
+  );
+}
+
+// Every entry of one kind, a page at a time.
+function KindList({ repoKey, kind, pinRow, styles }: { repoKey: string; kind: Exclude<KnowledgeKind, "task">; pinRow: PinRow; styles: Styles }) {
+  const browse = useRpc(browseKnowledgeRpc);
+  const pages = useInfiniteQuery({
+    queryKey: ["contextualise", "knowledge", "browse", repoKey, kind],
+    queryFn: ({ pageParam }) => browse({ repoKey, kind, limit: PAGE, offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (last, all) => {
+      const shown = all.reduce((sum, page) => sum + page.hits.length, 0);
+      return shown < last.total ? shown : undefined;
+    },
+  });
+  const hits = pages.data?.pages.flatMap((page) => page.hits) ?? [];
+  const total = pages.data?.pages[0]?.total ?? 0;
+  return (
+    <>
+      <SectionTitle label={KIND_LABELS[kind]} count={total} hint={hits.length < total ? `showing ${hits.length}` : undefined} styles={styles} />
+      {pages.error ? <Text style={styles.danger}>{errorText(pages.error)}</Text> : null}
+      {hits.map((hit) => <HitRow key={hit.id} hit={hit} repoKey={repoKey} {...pinRow(hit)} styles={styles} />)}
+      {pages.hasNextPage ? <Button label="Show more" styles={styles} disabled={pages.isFetchingNextPage} onPress={() => void pages.fetchNextPage()} /> : null}
+    </>
+  );
+}
+
+// Every recorded conversation, newest first, a page at a time.
+function TaskList({ repoKey, styles }: { repoKey: string; styles: Styles }) {
+  const listTasks = useRpc(listTasksRpc);
+  const pages = useInfiniteQuery({
+    queryKey: ["contextualise", "knowledge", "tasks", repoKey, "all"],
+    queryFn: ({ pageParam }) => listTasks({ repoKey, limit: PAGE, offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (last, all) => {
+      const shown = all.reduce((sum, page) => sum + page.tasks.length, 0);
+      return shown < last.total ? shown : undefined;
+    },
+  });
+  const tasks = pages.data?.pages.flatMap((page) => page.tasks) ?? [];
+  const total = pages.data?.pages[0]?.total ?? 0;
+  return (
+    <>
+      <SectionTitle label="Past work" count={total} hint={tasks.length < total ? `showing ${tasks.length}` : undefined} styles={styles} />
+      <View style={styles.card}>
+        {pages.error ? <Text style={styles.danger}>{errorText(pages.error)}</Text> : null}
+        {tasks.length === 0 && !pages.isLoading ? <Text style={styles.muted}>No work recorded yet.</Text> : null}
+        {tasks.map((task) => <TaskRow key={task.id} task={task} styles={styles} />)}
+      </View>
+      {pages.hasNextPage ? <Button label="Show more" styles={styles} disabled={pages.isFetchingNextPage} onPress={() => void pages.fetchNextPage()} /> : null}
+    </>
+  );
+}
+
 // Project knowledge per project: search its docs, ADRs, code, and finished tasks, see what is
 // indexed, and re-index it. Agents get the same through their knowledge tools.
 export function KnowledgeScreen({ theme, layout }: PluginScreenProps) {
@@ -106,7 +191,8 @@ export function KnowledgeScreen({ theme, layout }: PluginScreenProps) {
   const projects = useQuery({ queryKey: PROJECTS_QUERY, queryFn: () => listProjects({}), refetchInterval: (query) => (query.state.data?.projects.some((project) => project.indexing || project.generation?.state === "running") ? 3_000 : false) });
   const [repoKey, setRepoKey] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [kinds, setKinds] = useState<KnowledgeKind[]>([]);
+  // The tab: one kind, or none for the overview. Search narrows to it when words are typed.
+  const [kind, setKind] = useState<KnowledgeKind | null>(null);
   const all = projects.data?.projects ?? [];
   useEffect(() => {
     if (all.length > 0 && !all.some((project) => project.repoKey === repoKey)) setRepoKey(all[0].repoKey);
@@ -114,12 +200,12 @@ export function KnowledgeScreen({ theme, layout }: PluginScreenProps) {
   const project = all.find((candidate) => candidate.repoKey === repoKey) ?? null;
   const search = useRpc(searchKnowledgeRpc);
   const hits = useQuery({
-    queryKey: ["contextualise", "knowledge", "search", repoKey, query.trim(), kinds],
-    queryFn: () => search({ repoKey: repoKey ?? "", query: query.trim(), kinds, limit: 30 }),
+    queryKey: ["contextualise", "knowledge", "search", repoKey, query.trim(), kind],
+    queryFn: () => search({ repoKey: repoKey ?? "", query: query.trim(), kinds: kind ? [kind] : [], limit: 50 }),
     enabled: repoKey !== null && query.trim() !== "",
   });
   const listTasks = useRpc(listTasksRpc);
-  const tasks = useQuery({ queryKey: ["contextualise", "knowledge", "tasks", repoKey], queryFn: () => listTasks({ repoKey: repoKey ?? "", limit: 20 }), enabled: repoKey !== null && query.trim() === "" });
+  const tasks = useQuery({ queryKey: ["contextualise", "knowledge", "tasks", repoKey], queryFn: () => listTasks({ repoKey: repoKey ?? "", limit: OVERVIEW_ROWS }), enabled: repoKey !== null });
   const reindex = useRpc(reindexRpc);
   const setProjectEnabled = useRpc(setProjectEnabledRpc);
   const generate = useRpc(generateKnowledgeRpc);
@@ -134,7 +220,7 @@ export function KnowledgeScreen({ theme, layout }: PluginScreenProps) {
       .then(() => Promise.all([projects.refetch(), tasks.refetch(), brief.refetch()]))
       .catch((error: unknown) => toast.error(errorText(error)));
   const note = projects.data ? memoriseNote(projects.data.memorise) : null;
-  const toggleKind = (kind: KnowledgeKind) => setKinds((current) => (current.includes(kind) ? current.filter((entry) => entry !== kind) : [...current, kind]));
+  const pinRow = (hit: SearchHit) => ({ pinned: project?.pins.includes(hit.id) ?? false, onPin: (pinned: boolean) => project && change(pin({ repoKey: project.repoKey, id: hit.id, pinned })) });
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
@@ -207,24 +293,48 @@ export function KnowledgeScreen({ theme, layout }: PluginScreenProps) {
             {query !== "" ? <IconButton icon={ICONS.close} label="Clear search" onPress={() => setQuery("")} styles={styles} /> : null}
           </View>
           <View style={styles.wrap}>
-            {KNOWLEDGE_KINDS.map((kind) => (
-              <Chip key={kind} label={KIND_LABELS[kind]} on={kinds.includes(kind)} onPress={() => toggleKind(kind)} styles={styles} />
+            {KNOWLEDGE_KINDS.filter((entry) => project.counts[entry] > 0).map((entry) => (
+              <Chip
+                key={entry}
+                label={`${KIND_LABELS[entry]} ${project.counts[entry]}`}
+                on={kind === entry}
+                onPress={() => setKind(kind === entry ? null : entry)}
+                accessibilityLabel={kind === entry ? `Showing ${KIND_LABELS[entry]}; show everything` : `Show only ${KIND_LABELS[entry]}`}
+                styles={styles}
+              />
             ))}
           </View>
+          {(tasks.data?.total ?? 0) < FEW_TASKS && project.generation?.state !== "running" ? (
+            <View style={[styles.card, styles.row]}>
+              <Text style={[styles.muted, styles.grow]}>
+                {tasks.data?.total ? `Only ${plural(tasks.data.total, "conversation")} recorded here so far.` : "No conversations recorded here yet."} Add past conversations to bring in the earlier ones.
+              </Text>
+              <Button label="Add past conversations" kind="primary" styles={styles} onPress={() => change(generate({ repoKey: project.repoKey, generate: false }))} />
+            </View>
+          ) : null}
           {query.trim() !== "" ? (
             <>
-              <SectionTitle label="Results" count={hits.data?.hits.length} styles={styles} />
+              <SectionTitle label="Results" count={hits.data?.hits.length} hint={kind ? KIND_LABELS[kind] : undefined} styles={styles} />
               {hits.error ? <Text style={styles.danger}>{errorText(hits.error)}</Text> : null}
               {hits.data?.hits.length === 0 ? <Text style={styles.muted}>Nothing matches. Try other words, or fewer.</Text> : null}
-              {hits.data?.hits.map((hit) => (
-                <HitRow key={hit.id} hit={hit} repoKey={project.repoKey} pinned={project.pins.includes(hit.id)} onPin={(pinned) => change(pin({ repoKey: project.repoKey, id: hit.id, pinned }))} styles={styles} />
-              ))}
+              {hits.data?.hits.map((hit) => <HitRow key={hit.id} hit={hit} repoKey={project.repoKey} {...pinRow(hit)} styles={styles} />)}
             </>
+          ) : kind === "task" ? (
+            <TaskList repoKey={project.repoKey} styles={styles} />
+          ) : kind ? (
+            <KindList repoKey={project.repoKey} kind={kind} pinRow={pinRow} styles={styles} />
           ) : (
             <>
-              <SectionTitle label="Recent work" count={tasks.data?.tasks.length} styles={styles} />
+              {BROWSE_ORDER.filter((entry) => project.counts[entry] > 0).map((entry) => (
+                <KindSection key={entry} repoKey={project.repoKey} kind={entry} total={project.counts[entry]} onShowAll={() => setKind(entry)} pinRow={pinRow} styles={styles} />
+              ))}
+              <View style={styles.row}>
+                <SectionTitle label="Recent work" count={tasks.data?.total} styles={styles} />
+                <View style={styles.grow} />
+                {(tasks.data?.total ?? 0) > OVERVIEW_ROWS ? <Button label={`Show all ${tasks.data?.total}`} styles={styles} onPress={() => setKind("task")} /> : null}
+              </View>
               <View style={styles.card}>
-                {tasks.data?.tasks.length === 0 ? <Text style={styles.muted}>No work recorded yet. Each conversation in this project is recorded as it goes, or use Add past conversations.</Text> : null}
+                {tasks.data?.tasks.length === 0 ? <Text style={styles.muted}>No work recorded yet.</Text> : null}
                 {tasks.data?.tasks.map((task) => <TaskRow key={task.id} task={task} styles={styles} />)}
               </View>
             </>

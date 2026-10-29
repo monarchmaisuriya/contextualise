@@ -1,4 +1,5 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { cleanTitle } from "../rows";
 import { redactSecrets } from "../secrets";
 import type { AgentTimelineItem } from "../paseo-types";
 import type { TaskRecord } from "./store";
@@ -57,7 +58,8 @@ export function buildTask(input: TaskInput): Omit<TaskRecord, "citations"> | nul
     id: `task:${agent.id}`,
     agentId: agent.id,
     provider: agent.provider,
-    title: oneLine(agent.title?.trim() || request, TITLE_MAX_CHARS),
+    // The first request often starts with Markdown ("**Handoff: …**"); a title is plain text.
+    title: oneLine(cleanTitle(agent.title?.trim() || request, true), TITLE_MAX_CHARS),
     request,
     outcome: input.outcome,
     files: [...files].slice(0, MAX_FILES),
