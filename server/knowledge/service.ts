@@ -1,6 +1,8 @@
-import type { KnowledgeEntry, KnowledgeKind, RelatedMemory, SearchHit } from "../../shared/knowledge";
+import { type Busy, busySchema, type KnowledgeEntry, type KnowledgeKind, type ProjectFacts, type RelatedMemory, type SearchHit } from "../../shared/knowledge";
 import type { KnowledgeBase } from "./base";
+import { AREA_PREFIX, areaOf, storedFacts, updateFacts } from "./facts";
 import type { ProjectRoot } from "./git";
+import { BUSY_DAYS, recentChanges } from "./history";
 import type { KnowledgeStore, TaskRecord } from "./store";
 import { anyGlob } from "./globs";
 import { taskNeedsCheck } from "./task-log";
@@ -8,6 +10,11 @@ import { taskNeedsCheck } from "./task-log";
 // How long a search waits for a re-index before answering from the index as it is.
 const SEARCH_WAIT_MS = 3_000;
 const MAX_TASK_HITS = 5;
+// Change history is read again at most this often per project; git log is the slow part of facts.
+const BUSY_REFRESH_MS = 10 * 60_000;
+const AREA_BUSY = 8;
+const AREA_DOCUMENTS = 10;
+const AREA_TASKS = 5;
 
 export type RelatedLookup = (repoKey: string, path: string) => Promise<RelatedMemory[]>;
 
@@ -26,6 +33,7 @@ export class KnowledgeService {
     private readonly base: KnowledgeBase,
     // Memories about a path, when Memorise is available; null when it is not.
     private readonly related: () => Promise<RelatedLookup | null>,
+    private readonly now: () => number = Date.now,
   ) {}
 
   private async current(repo: ProjectRoot): Promise<KnowledgeStore> {
@@ -105,6 +113,72 @@ export class KnowledgeService {
     const store = await this.current(repo);
     const blobs = store.fileBlobs();
     return { tasks: store.tasks(limit, offset).map(({ citations, ...task }) => ({ ...task, needsCheck: taskNeedsCheck({ citations }, blobs) })), total: store.counts().task };
+  }
+
+  private async busy(repo: ProjectRoot, store: KnowledgeStore): Promise<Busy> {
+    const kept = store.getMeta("busy");
+    const cached = kept ? busySchema.safeParse(JSON.parse(kept)) : null;
+    if (cached?.success && this.now() - Date.parse(cached.data.at) < BUSY_REFRESH_MS) return cached.data;
+    const at = new Date(this.now()).toISOString();
+    let busy: Busy;
+    if (!repo.git) busy = { at, days: BUSY_DAYS, available: false, problem: null, files: [] };
+    else {
+      try {
+        busy = { at, days: BUSY_DAYS, available: true, problem: null, files: await recentChanges(repo.top) };
+      } catch (error) {
+        console.error(`[contextualise] could not read the change history of ${repo.key}: ${String(error)}`);
+        busy = { at, days: BUSY_DAYS, available: false, problem: `Could not read the change history: ${error instanceof Error ? error.message : String(error)}`, files: [] };
+      }
+    }
+    store.setMeta("busy", JSON.stringify(busy));
+    return busy;
+  }
+
+  // One written line per area, kept only for areas that still exist.
+  private static areaLines(store: KnowledgeStore, facts: ProjectFacts): Record<string, string> {
+    const kept = JSON.parse(store.getMeta("areaLines") ?? "{}") as Record<string, string>;
+    return Object.fromEntries(facts.areas.filter((area) => typeof kept[area.path] === "string").map((area) => [area.path, kept[area.path]]));
+  }
+
+  // The project's structure alone, without change history: for callers that need no git.
+  async structure(repo: ProjectRoot): Promise<ProjectFacts> {
+    const store = await this.current(repo);
+    return storedFacts(store) ?? (await updateFacts(repo, store));
+  }
+
+  async facts(repo: ProjectRoot): Promise<{ facts: ProjectFacts; busy: Busy; areaLines: Record<string, string> }> {
+    const facts = await this.structure(repo);
+    const store = await this.base.open(repo);
+    const busy = await this.busy(repo, store);
+    return { facts, busy: { ...busy, files: busy.files.map((file) => ({ ...file, area: areaOf(file.path, facts) })) }, areaLines: KnowledgeService.areaLines(store, facts) };
+  }
+
+  // One area: its facts, the areas it depends on and that use it, its busy files, and the documents
+  // and recorded work in it.
+  async area(repo: ProjectRoot, path: string) {
+    const { facts, busy, areaLines } = await this.facts(repo);
+    const area = facts.areas.find((candidate) => candidate.path === path);
+    if (!area) throw new Error(`Unknown area "${path}" in ${repo.key}; the project's areas may have changed, so open the overview again`);
+    const store = await this.base.open(repo);
+    const blobs = store.fileBlobs();
+    const explained = store.read(`brief:${AREA_PREFIX}${path}:1`);
+    return {
+      area,
+      line: areaLines[path] ?? null,
+      explanation: explained ? { body: explained.body, at: store.indexedSources().get(`${AREA_PREFIX}${path}`)?.blob.replace(/^generated:/, "") ?? "" } : null,
+      dependsOn: facts.links.filter((link) => link.from === path),
+      usedBy: facts.links.filter((link) => link.to === path),
+      busy: busy.files.filter((file) => file.area === path).slice(0, AREA_BUSY),
+      documents: store
+        .documents(2_000)
+        .filter((document) => areaOf(document.path, facts) === path)
+        .slice(0, AREA_DOCUMENTS),
+      tasks: store
+        .tasks(500)
+        .filter((task) => task.files.some((file) => areaOf(file, facts) === path))
+        .slice(0, AREA_TASKS)
+        .map(({ citations, ...task }) => ({ ...task, needsCheck: taskNeedsCheck({ citations }, blobs) })),
+    };
   }
 
   async browse(repo: ProjectRoot, kind: Exclude<KnowledgeKind, "task">, limit: number, offset: number): Promise<{ hits: SearchHit[]; total: number }> {

@@ -26,6 +26,7 @@ export const ICONS = {
   unpin: "PinOff",
   knowledge: "BookOpen",
   refresh: "RefreshCw",
+  back: "ArrowLeft",
 } as const;
 
 // The Contextualise mark (contextualise.png without its dark square), for places that stand for the

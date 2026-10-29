@@ -101,7 +101,7 @@ const MAP_PART_LABELS: Record<KnowledgeMapPart, string> = {
   architecture: "design documents",
   conventions: "team rules and guides",
   adrs: "decision records",
-  folders: "main folders",
+  folders: "main areas of code",
   tasks: "recent work",
 };
 const LANGUAGE_LABELS: Record<SymbolLanguage, string> = { typescript: "TypeScript and TSX", javascript: "JavaScript", python: "Python", go: "Go" };

@@ -1,11 +1,14 @@
 import { basename } from "node:path";
 import { KNOWLEDGE_MAP_PARTS, type KnowledgeMapPart } from "../../shared/contracts";
+import { areaLabel } from "../../shared/diagram";
+import { storedFacts } from "./facts";
 import { BRIEF_ID, type KnowledgeStore, type TaskRecord } from "./store";
 
 export const SECTION_START = "<!-- contextualise:knowledge -->";
 export const SECTION_END = "<!-- /contextualise:knowledge -->";
 export const SECTION_MAX_BYTES = 4 * 1024;
 const MAX_FOLDERS = 15;
+const MAX_AREAS = 15;
 
 // Removes this plugin's section only, so other plugins' parts of the prompt are left as they were.
 export function withoutSection(prompt: string | undefined): string | undefined {
@@ -67,18 +70,26 @@ export function buildSection(input: SectionInput): string | null {
     SECTION_END,
   ];
   const folders = [...new Set([...store.fileBlobs().keys()].filter((path) => path.includes("/")).map((path) => path.split("/")[0]))].sort();
+  // Main areas with their written line, or the names other areas use most; top-level folders until
+  // the project's facts exist.
+  const facts = storedFacts(store);
+  const areaLines = JSON.parse(store.getMeta("areaLines") ?? "{}") as Record<string, string>;
+  const areas = (facts?.areas ?? []).slice(0, MAX_AREAS).map((area) => `- ${areaLabel(area.path)} (${area.files + area.tests} files): ${quoted(areaLines[area.path] ?? area.keyNames.slice(0, 4).map((key) => key.name).join(", "))}`);
   const brief = store.read(BRIEF_ID);
   const pinned = (input.pins ?? []).map((id) => (id.startsWith("task:") ? store.task(id) : store.read(id))).filter((entry) => entry !== null);
   const build: Record<KnowledgeMapPart, () => { title: string | null; lines: string[] }> = {
     brief: () => ({
-      title: "Project brief (generated from past sessions and files; verify)",
+      title: "Project overview (written by an agent from the code's structure and past work; verify)",
       lines: brief ? brief.body.split("\n").map((line) => line.replace(/<!--|-->/g, "").replace(/\s+/g, " ").trim().slice(0, 200)).filter(Boolean).slice(0, BRIEF_LINES).map((line) => `  ${line}`) : [],
     }),
     pinned: () => ({ title: "Pinned", lines: pinned.map((entry) => ("agentId" in entry ? taskLine(entry) : `- ${entry.path}${entry.line > 0 ? `:${entry.line}` : ""} ${quoted(entry.title)}`)) }),
     architecture: () => ({ title: "Architecture", lines: store.titles("architecture").map((doc) => `- ${doc.path} ${quoted(doc.title)}`) }),
     conventions: () => ({ title: "Conventions", lines: store.titles("convention").map((doc) => `- ${doc.path} ${quoted(doc.title)}`) }),
     adrs: () => ({ title: "Decisions (ADRs)", lines: store.adrs().map((adr) => `- ${basename(adr.path)} ${quoted(adr.title)} (${adr.status ?? "no status"}${adr.supersededBy ? `, superseded by ${basename(adr.supersededBy)}` : ""})`) }),
-    folders: () => ({ title: null, lines: folders.length > 0 ? [`Top-level folders: ${folders.slice(0, MAX_FOLDERS).join(", ")}${folders.length > MAX_FOLDERS ? ", …" : ""}`] : [] }),
+    folders: () =>
+      areas.length > 0
+        ? { title: `Main areas (folders of code, biggest first; knowledge_outline on a folder shows one)${(facts?.areas.length ?? 0) > MAX_AREAS ? `, ${facts?.areas.length} in all` : ""}`, lines: areas }
+        : { title: null, lines: folders.length > 0 ? [`Top-level folders: ${folders.slice(0, MAX_FOLDERS).join(", ")}${folders.length > MAX_FOLDERS ? ", …" : ""}`] : [] },
     tasks: () => ({ title: "Recent tasks", lines: store.tasks(input.recentTasks ?? 3).map(taskLine) }),
   };
   const groups = KNOWLEDGE_MAP_PARTS.filter((part) => parts.has(part))

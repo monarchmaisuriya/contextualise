@@ -65,6 +65,43 @@ export const MEMORISE_STATES = ["available", "disabled", "needs-update", "not-in
 export const memoriseStateSchema = z.enum(MEMORISE_STATES);
 export type MemoriseState = z.infer<typeof memoriseStateSchema>;
 
+// A project's structure, computed from its index: areas of code, how they import each other, the
+// names other areas use most, and the libraries the code imports.
+export const keyNameSchema = z.object({ name: z.string(), kind: z.string(), path: z.string(), line: z.number(), uses: z.number() });
+export const areaSchema = z.object({
+  // "" for files at the root; "(other)" for small areas listed together, named in `merged`.
+  path: z.string(),
+  files: z.number(),
+  tests: z.number(),
+  symbols: z.number(),
+  languages: z.record(z.string(), z.number()),
+  keyNames: z.array(keyNameSchema),
+  // The area's files that other files import most, by number of importing files.
+  mainFiles: z.array(z.object({ path: z.string(), usedBy: z.number() })),
+  merged: z.array(z.string()),
+});
+export type Area = z.infer<typeof areaSchema>;
+export const areaLinkSchema = z.object({ from: z.string(), to: z.string(), count: z.number() });
+export type AreaLink = z.infer<typeof areaLinkSchema>;
+export const projectFactsSchema = z.object({
+  version: z.number(),
+  codeFiles: z.number(),
+  testFiles: z.number(),
+  languages: z.record(z.string(), z.number()),
+  areas: z.array(areaSchema),
+  links: z.array(areaLinkSchema),
+  libraries: z.array(z.object({ name: z.string(), files: z.number() })),
+  fingerprint: z.string(),
+});
+export type ProjectFacts = z.infer<typeof projectFactsSchema>;
+// Files changed most in recent history; `available` is false outside git, and `problem` says why git
+// could not be read.
+// `area`: the area the file is in, or null for files outside every area (docs/ with no code).
+export const busyFileSchema = z.object({ path: z.string(), changes: z.number(), lastAt: z.string(), area: z.string().nullable() });
+export type BusyFile = z.infer<typeof busyFileSchema>;
+export const busySchema = z.object({ at: z.string(), days: z.number(), available: z.boolean(), problem: z.string().nullable(), files: z.array(busyFileSchema) });
+export type Busy = z.infer<typeof busySchema>;
+
 export const projectSchema = z.object({
   repoKey: z.string(),
   name: z.string(),
@@ -145,6 +182,33 @@ export const memoriseStatusRpc = defineRpc({
   input: z.object({}),
   output: z.object({ state: memoriseStateSchema }),
 });
+
+export const projectFactsRpc = defineRpc({
+  name: "knowledge.facts",
+  input: z.object({ repoKey: z.string() }),
+  // `areaLines`: one written line per area path, when an agent has written them.
+  output: z.object({ facts: projectFactsSchema, busy: busySchema, areaLines: z.record(z.string(), z.string()) }),
+});
+
+export const areaRpc = defineRpc({
+  name: "knowledge.area",
+  input: z.object({ repoKey: z.string(), path: z.string() }),
+  output: z.object({
+    area: areaSchema,
+    line: z.string().nullable(),
+    // Written on request ("Explain this area"), with when it was written.
+    explanation: z.object({ body: z.string(), at: z.string() }).nullable(),
+    dependsOn: z.array(areaLinkSchema),
+    usedBy: z.array(areaLinkSchema),
+    busy: z.array(busyFileSchema),
+    documents: z.array(z.object({ id: z.string(), kind: knowledgeKindSchema, path: z.string(), title: z.string() })),
+    tasks: z.array(taskSummarySchema),
+  }),
+});
+
+// Background writing for a project; progress and outcome show as the project's `generation`.
+export const describeProjectRpc = defineRpc({ name: "knowledge.describe", input: z.object({ repoKey: z.string() }), output: z.object({ started: z.boolean() }) });
+export const explainAreaRpc = defineRpc({ name: "knowledge.explain-area", input: z.object({ repoKey: z.string(), path: z.string() }), output: z.object({ started: z.boolean() }) });
 
 // Attach > Project knowledge: one entry from any indexed project, sent in full with the prompt.
 export const searchKnowledgeAttachmentsRpc = defineRpc({ name: "knowledge.attach-search", input: z.object({ query: z.string() }), output: PluginAttachmentSearchPayloadSchema });

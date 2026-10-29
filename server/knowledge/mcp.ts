@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { areaLabel } from "../../shared/diagram";
 import { KNOWLEDGE_KINDS, type KnowledgeEntry, type SearchHit } from "../../shared/knowledge";
 import type { AgentScope, TokenAuthority } from "./auth";
 import { projectRoot } from "./git";
@@ -37,6 +38,19 @@ function describeEntry(entry: KnowledgeEntry): string {
 
 // The agents' read-only tools over their own repository's knowledge. Stateless, like Memorise's: a
 // fresh MCP server per request, scoped by the agent's token.
+// An area as an agent reads it: its written line, size, links, key names with places, and main files.
+function describeArea(found: Awaited<ReturnType<KnowledgeService["area"]>>): string {
+  const { area } = found;
+  return [
+    `Area ${areaLabel(area.path)}: ${area.files} code files, ${area.tests} test files${found.line ? `. ${found.line}` : ""}`,
+    ...(found.dependsOn.length > 0 ? [`Uses: ${found.dependsOn.map((link) => `${areaLabel(link.to)} (${link.count} files)`).join(", ")}`] : []),
+    ...(found.usedBy.length > 0 ? [`Used by: ${found.usedBy.map((link) => `${areaLabel(link.from)} (${link.count} files)`).join(", ")}`] : []),
+    ...(area.keyNames.length > 0 ? ["Key names:", ...area.keyNames.map((key) => `- ${key.name} (${key.kind}) ${key.path}:${key.line}${key.uses > 0 ? `, used in ${key.uses} files elsewhere` : ""}`)] : []),
+    ...(area.mainFiles.length > 0 ? ["Main files:", ...area.mainFiles.map((file) => `- ${file.path} (imported by ${file.usedBy} files)`)] : []),
+    ...(found.explanation ? ["Explanation (written by an agent; verify):", found.explanation.body] : []),
+  ].join("\n");
+}
+
 export class KnowledgeMcp {
   constructor(
     private readonly tokens: TokenAuthority,
@@ -86,11 +100,14 @@ export class KnowledgeMcp {
     mcp.registerTool(
       "knowledge_outline",
       {
-        description: "List one file's sections (documents) or functions, classes, methods, and types (code), with line numbers, to see what it holds before reading it.",
-        inputSchema: { path: z.string().min(1).max(300).describe("A file path relative to the project root") },
+        description: "List one file's sections (documents) or functions, classes, methods, and types (code), with line numbers, to see what it holds before reading it. Given a main area's folder (from the project map), describe that area instead: what it uses, what uses it, its key names, and its main files.",
+        inputSchema: { path: z.string().min(1).max(300).describe("A file path, or a main area's folder, relative to the project root") },
       },
       async ({ path }) => {
         try {
+          const folder = path.replace(/^\.?\//, "").replace(/\/+$/, "");
+          const facts = await this.service.structure(repo);
+          if (facts.areas.some((area) => area.path === folder && folder !== "")) return text(describeArea(await this.service.area(repo, folder)));
           const outline = await this.service.outline(repo, path);
           return text(outline.length > 0 ? outline.map((entry) => `${entry.line}: ${entry.kind === "code" ? "" : "§ "}${entry.title}  [${entry.id}]`).join("\n") : `Nothing indexed for ${path}. It may be outside the index, too large, or not a document or code file.`);
         } catch (error) {

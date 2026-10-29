@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import type { Project } from "../../shared/knowledge";
 import { type ProjectRoot, projectName, projectRoot } from "./git";
+import { storedFacts, updateFacts } from "./facts";
 import { type IndexChange, type IndexerOptions, indexRepo } from "./indexer";
 import { cleanTitle } from "../rows";
 import { ProjectKeys } from "./projects";
@@ -15,7 +16,7 @@ import type { SymbolReader } from "./symbols";
 export const FRESH_MS = 30_000;
 const REPO_CACHE_MS = 60_000;
 // Raised when what is stored from files changes shape, so old indexes are rebuilt once.
-const CONTENT_VERSION = "2";
+const CONTENT_VERSION = "3";
 
 export interface KnowledgeBaseDeps {
   root: () => Promise<string>;
@@ -118,8 +119,9 @@ export class KnowledgeBase {
     return store;
   }
 
-  // Indexes made before titles were cleaned (0.16.1 and older) are read again from the files, and
-  // recorded tasks get plain titles. The index is a cache; tasks are kept. Runs once per index.
+  // Indexes made before titles were cleaned (0.16.1 and older), or before imports were kept (0.16.2
+  // and older), are read again from the files, and recorded tasks get plain titles. The index is a
+  // cache; tasks are kept. Runs once per index.
   private static upgrade(store: KnowledgeStore): void {
     if (store.getMeta("contentVersion") === CONTENT_VERSION) return;
     store.resetSources();
@@ -138,6 +140,8 @@ export class KnowledgeBase {
       run = (async () => {
         const store = await this.open(repo);
         const changes = await indexRepo(repo, store, { symbols: this.deps.symbols, ...(await this.deps.indexOptions()) });
+        // The project's structure follows its files: rebuilt when any changed, or made by another version.
+        if (changes.length > 0 || !storedFacts(store)) await updateFacts(repo, store);
         this.problems.delete(repo.key);
         this.freshUntil.set(repo.key, this.now() + FRESH_MS);
         if (changes.length > 0 && this.deps.onChanges) {

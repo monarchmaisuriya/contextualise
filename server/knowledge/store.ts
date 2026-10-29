@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { KNOWLEDGE_KINDS, type KnowledgeKind, type TaskSummary } from "../../shared/knowledge";
 import type { AdrInfo, TextChunk } from "./sources";
-import type { CodeSymbol } from "./symbols";
+import type { CodeImport, CodeSymbol } from "./symbols";
 
 export interface StoredHit {
   id: string;
@@ -51,6 +51,8 @@ export class KnowledgeStore {
       CREATE TABLE IF NOT EXISTS sources (path TEXT PRIMARY KEY, kind TEXT NOT NULL, blob TEXT NOT NULL, status TEXT, superseded_by TEXT);
       CREATE TABLE IF NOT EXISTS symbols (path TEXT NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL, line INTEGER NOT NULL, signature TEXT NOT NULL, params INTEGER NOT NULL, shape TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS symbols_by_path ON symbols (path);
+      CREATE TABLE IF NOT EXISTS imports (path TEXT NOT NULL, spec TEXT NOT NULL, names TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS imports_by_path ON imports (path);
       CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(id UNINDEXED, path UNINDEXED, kind UNINDEXED, line UNINDEXED, title, body, tokenize = 'unicode61');
       CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, ended_at TEXT NOT NULL, record TEXT NOT NULL);
       CREATE VIRTUAL TABLE IF NOT EXISTS tasks_text USING fts5(id UNINDEXED, title, request, files, tokenize = 'unicode61');
@@ -104,7 +106,7 @@ export class KnowledgeStore {
     return new Map(rows.map((row) => [row.path, { kind: row.kind, blob: row.blob }]));
   }
 
-  replaceSource(source: { path: string; kind: KnowledgeKind; blob: string; chunks: readonly TextChunk[]; symbols?: readonly CodeSymbol[]; adr?: AdrInfo }): void {
+  replaceSource(source: { path: string; kind: KnowledgeKind; blob: string; chunks: readonly TextChunk[]; symbols?: readonly CodeSymbol[]; imports?: readonly CodeImport[]; adr?: AdrInfo }): void {
     this.transaction(() => {
       this.deleteSource(source.path);
       this.db.prepare("INSERT INTO sources (path, kind, blob, status, superseded_by) VALUES (?, ?, ?, ?, ?)").run(source.path, source.kind, source.blob, source.adr?.status ?? null, source.adr?.supersededBy ?? null);
@@ -115,11 +117,13 @@ export class KnowledgeStore {
         symbol.run(source.path, found.name, found.kind, found.line, found.signature, found.params, found.shape);
         chunk.run(`code:${source.path}:${found.line}:${found.name}`, source.path, "code", found.line, found.name, `${found.kind} ${found.name} (${identifierWords(found.name)})\n${found.signature}`);
       }
+      const imported = this.db.prepare("INSERT INTO imports (path, spec, names) VALUES (?, ?, ?)");
+      for (const entry of source.imports ?? []) imported.run(source.path, entry.spec, JSON.stringify(entry.names));
     });
   }
 
   private deleteSource(path: string): void {
-    for (const table of ["sources", "chunks", "symbols"]) this.db.prepare(`DELETE FROM ${table} WHERE path = ?`).run(path);
+    for (const table of ["sources", "chunks", "symbols", "imports"]) this.db.prepare(`DELETE FROM ${table} WHERE path = ?`).run(path);
   }
 
   removeSource(path: string): void {
@@ -128,6 +132,30 @@ export class KnowledgeStore {
 
   symbolsIn(path: string): CodeSymbol[] {
     return this.db.prepare("SELECT name, kind, line, signature, params, shape FROM symbols WHERE path = ? ORDER BY line").all(path) as unknown as CodeSymbol[];
+  }
+
+  // Every code file with its definitions and imports: the input of the project's facts.
+  codeFiles(): { path: string; symbols: Pick<CodeSymbol, "name" | "kind" | "line">[]; imports: CodeImport[] }[] {
+    const files = new Map<string, { path: string; symbols: Pick<CodeSymbol, "name" | "kind" | "line">[]; imports: CodeImport[] }>();
+    for (const { path } of this.db.prepare("SELECT path FROM sources WHERE kind = 'code' ORDER BY path").all() as { path: string }[]) files.set(path, { path, symbols: [], imports: [] });
+    for (const row of this.db.prepare("SELECT path, name, kind, line FROM symbols ORDER BY path, line").all() as { path: string; name: string; kind: string; line: number }[]) {
+      files.get(row.path)?.symbols.push({ name: row.name, kind: row.kind, line: Number(row.line) });
+    }
+    for (const row of this.db.prepare("SELECT path, spec, names FROM imports").all() as { path: string; spec: string; names: string }[]) {
+      files.get(row.path)?.imports.push({ spec: row.spec, names: JSON.parse(row.names) as string[] });
+    }
+    return [...files.values()];
+  }
+
+  // Indexed files that are not code or generated, with each file's first heading, in path order.
+  documents(limit: number): { id: string; kind: KnowledgeKind; path: string; title: string }[] {
+    return this.db
+      .prepare(
+        `SELECT c.id AS id, c.kind AS kind, c.path AS path, c.title AS title FROM chunks c JOIN sources s ON s.path = c.path
+         WHERE s.kind NOT IN ('code', 'brief') AND CAST(c.line AS INTEGER) = (SELECT MIN(CAST(line AS INTEGER)) FROM chunks WHERE path = s.path)
+         ORDER BY s.path LIMIT ?`,
+      )
+      .all(limit) as { id: string; kind: KnowledgeKind; path: string; title: string }[];
   }
 
   hasSymbol(name: string): boolean {
@@ -214,7 +242,7 @@ export class KnowledgeStore {
   // Used when the way files are read changes, so old entries do not keep old titles.
   resetSources(): void {
     this.transaction(() => {
-      for (const table of ["sources", "chunks", "symbols", "files"]) this.db.exec(`DELETE FROM ${table} WHERE path NOT LIKE '(%'`);
+      for (const table of ["sources", "chunks", "symbols", "imports", "files"]) this.db.exec(`DELETE FROM ${table} WHERE path NOT LIKE '(%'`);
     });
   }
 

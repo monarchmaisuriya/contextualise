@@ -2,6 +2,25 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.17.0 - 2026-10-29
+
+### Added
+
+- The Project knowledge screen explains a project instead of listing its index:
+  - **Overview:** the project description, its size and languages, its most used libraries, a diagram of how its main areas connect, a card per area, the files busy in the last 90 days, design documents, decisions, and team rules by heading, and recent work.
+  - **Area pages:** what an area uses and what uses it (with a diagram), its key names, main files, busy files, documents, and recent work.
+  - **Areas, Documents, Code, and Past work** views.
+- The structure comes from the code, with no model: main areas of code, which areas import which, the names other areas use most, declared libraries ranked by use, and change counts from `git log`. Imports are read from the same parse as definitions.
+- With conversation summaries on, a background agent writes a project overview and one line per area from that structure, again when it changes (at most weekly) or on "Rewrite"; "Explain this area" writes how one area works. Diagrams and numbers never come from a model.
+- Agents' project map lists the main areas with their lines, and `knowledge_outline` on an area's folder describes it.
+- An explanation of an area that no longer exists is removed when the structure is rebuilt.
+
+### Changed
+
+- The written project overview replaces the project brief, under the same entry; it is written when the structure changes instead of after every 5 summaries. The map part "folders" now lists main areas.
+- The project's documents render as Markdown, and code entries as highlighted code, instead of plain text. Text an agent wrote (descriptions, explanations, summaries) stays plain text, so it cannot show links or images.
+- Indexes made by earlier versions are read again once, to collect imports; recorded conversations are kept.
+
 ## 0.16.2 - 2026-10-29
 
 ### Fixed

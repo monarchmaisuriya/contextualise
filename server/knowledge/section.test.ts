@@ -47,8 +47,17 @@ describe("project section", () => {
     store.replaceSource({ path: "(brief)", kind: "brief", blob: "g", chunks: [{ title: "Project brief", body: "An API for orders.\nWorkers drain the queue.", line: 1 }] });
     store.upsertTask({ id: "task:b", agentId: "b", provider: "codex", title: "Queue docs", request: "r", outcome: "completed", files: [], commands: [], startedAt: "2026-10-29T10:00:00.000Z", endedAt: "2026-10-29T11:00:00.000Z", citations: [], generatedTitle: "Documented the queue" });
     const text = section({ parts: ["tasks", "brief", "pinned"], recentTasks: 1, pins: ["architecture:ARCHITECTURE.md:1", "gone:x:1"] }) ?? "";
-    expect(text).toContain("Project brief (generated from past sessions and files; verify):\n  An API for orders.\n  Workers drain the queue.\nPinned:\n- ARCHITECTURE.md:1 \"Overview\"\nRecent tasks:\n- 2026-10-29 \"Documented the queue\" (completed)\nSearch with");
+    expect(text).toContain("Project overview (written by an agent from the code's structure and past work; verify):\n  An API for orders.\n  Workers drain the queue.\nPinned:\n- ARCHITECTURE.md:1 \"Overview\"\nRecent tasks:\n- 2026-10-29 \"Documented the queue\" (completed)\nSearch with");
     expect(text).not.toContain("Decisions (ADRs)");
+    expect(text).not.toContain("Top-level folders");
+  });
+
+  it("lists main areas with their written line, or the names other areas use, once facts exist", () => {
+    const area = (path: string, files: number, keyNames: string[]) => ({ path, files, tests: 0, symbols: 0, languages: {}, keyNames: keyNames.map((name) => ({ name, kind: "class", path: `${path}/x.py`, line: 1, uses: 1 })), mainFiles: [], merged: [] });
+    store.setMeta("facts", JSON.stringify({ version: 1, codeFiles: 5, testFiles: 0, languages: {}, areas: [area("core", 3, ["User", "Shop"]), area("api", 2, [])], links: [], libraries: [], fingerprint: "f" }));
+    store.setMeta("areaLines", JSON.stringify({ api: "Serves the HTTP endpoints." }));
+    const text = section() ?? "";
+    expect(text).toContain('Main areas (folders of code, biggest first; knowledge_outline on a folder shows one):\n- core (3 files): "User, Shop"\n- api (2 files): "Serves the HTTP endpoints."');
     expect(text).not.toContain("Top-level folders");
   });
 

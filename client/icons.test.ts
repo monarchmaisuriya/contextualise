@@ -14,6 +14,8 @@ const VERIFIED_LUCIDE = new Set([
   "EllipsisVertical", "Info", "ArrowDownUp",
   // Added 2026-10-29, checked in Paseo 0.13.2's bundle the same way.
   "BookOpen",
+  // Added 2026-10-29, found in the installed Paseo app's web bundle (/Applications/Paseo.app).
+  "ArrowLeft",
 ]);
 
 test("every icon the plugin draws is a Lucide name Paseo can draw", () => {
