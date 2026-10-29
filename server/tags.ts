@@ -1,16 +1,25 @@
 import { normalizeTagName, tagKey, type AgentInfo, type AgentMember, type PinnedAgent, type TagSummary, type WorkspaceMember } from "../shared/contracts";
 import type { PaseoApi } from "./paseo-types";
+import { workspaceTitle } from "./rows";
 import type { StoredPin, StoredTags } from "./tag-store";
 
 const PAGE_LIMIT = 200;
 
+// The parts of Paseo's workspace descriptor Contextualise reads. Git and pull request details are
+// present only when Paseo has them.
 export interface DirectoryWorkspace {
   id: string;
   name: string;
+  title?: string | null;
   projectDisplayName: string;
   workspaceDirectory?: string;
   projectRootPath: string;
   labels?: string[];
+  workspaceKind?: string;
+  worktreeSlug?: string;
+  gitRuntime?: { currentBranch?: string | null; isDirty?: boolean | null } | null;
+  diffStat?: { additions: number; deletions: number } | null;
+  githubRuntime?: { pullRequest?: { number?: number; state: string; isDraft?: boolean; title?: string } | null } | null;
 }
 
 export interface DirectoryAgent {
@@ -58,7 +67,7 @@ export function describeAgent(directory: Directory, agentId: string, fallbackWor
     title: agent?.title ?? null,
     provider: agent?.provider ?? null,
     workspaceId: agent ? (agent.workspaceId ?? null) : null,
-    workspaceName: workspace?.name ?? null,
+    workspaceName: workspace ? workspaceTitle(workspace) : null,
     state: !agent ? "missing" : agent.archivedAt ? "archived" : "active",
   };
 }
@@ -84,7 +93,7 @@ export function mergeTags(stored: StoredTags, directory: Directory): TagSummary[
       tag.hasWorkspaceLabel = true;
       const member: WorkspaceMember = {
         workspaceId: workspace.id,
-        name: workspace.name,
+        name: workspaceTitle(workspace),
         projectName: workspace.projectDisplayName,
         directory: workspace.workspaceDirectory ?? workspace.projectRootPath,
       };

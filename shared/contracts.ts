@@ -369,6 +369,9 @@ export const snapshotSettingsSchema = z.object({
   agentShowWorkspace: z.boolean().default(true),
   agentShowStatus: z.boolean().default(true),
   agentShowActivity: z.boolean().default(true),
+  agentShowGit: z.boolean().default(true),
+  // Paseo never shrinks a picker title, so a long one hides the muted details beside it.
+  pickerTitleMaxChars: boundedCount(20, 120, 44),
   includeArchivedAgents: z.boolean().default(true),
   agentSort: z.enum(["recent", "title"]).default("recent"),
   showTokenEstimates: z.boolean().default(true),

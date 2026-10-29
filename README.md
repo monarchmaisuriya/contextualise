@@ -98,7 +98,16 @@ In the composer, Attach offers four sources:
 | **Terminal output** | The newest lines of any terminal on this host |
 | **Project knowledge** | One document section, code symbol, or finished task from any indexed repository |
 
-Each picker row says what is inside before you send it: providers and member counts for a tag, provider and workspace for an agent, workspace and length for a terminal, and for all three an estimated size (`~1.2k tokens`: characters divided by 4, so code and non-English text can differ). Pinned agents come first and say "pinned". Clicking an attached agent opens that agent; clicking a tag or terminal opens this page.
+Each picker row says what is inside before you send it: providers and member counts for a tag, workspace and length for a terminal, and for all of them an estimated size (`~1.2k tokens`: characters divided by 4, so code and non-English text can differ). Pinned agents come first and say "pinned".
+
+Agent rows are titled the way Paseo's sidebar titles the work:
+
+- **In a worktree:** an agent is titled with the worktree's title ("Review PR 5854"). When several agents share the worktree, each title also carries the agent's first request.
+- **Elsewhere:** in a plain folder, which collects unrelated work, an agent keeps its first request as its title, since Paseo has no other title for an agent.
+
+The muted text after the title starts with what tells agents apart: how long ago it was active, then git details from Paseo (branch, uncommitted changes such as `+12 −3`, and the pull request such as `PR #42`), then the workspace when the title does not already name it, then running or archived. Searching also matches the workspace title, branch, and pull request number or title.
+
+Paseo draws each picker row on one line and never shortens the title, so a long title hides the muted text; titles are cut at 44 characters by default (a setting). Paseo decides the picker's width, which a plugin cannot change. Clicking an attached agent opens that agent; clicking a tag or terminal opens this page.
 
 Conversations contain your messages and the agents' replies; tool calls and reasoning are left out. Secret-shaped text (private keys, AWS, GitHub, Slack and Google keys, `sk-` API keys, JSON web tokens, `password=`-style assignments) is replaced with `[removed: <kind>]` in conversations and terminal output. Every attachment starts with a note that it is reference material, not instructions.
 
@@ -132,7 +141,8 @@ Settings > Contextualise:
 | Pickers | Row prefix: none (rows start with the title) or words (Claude, Tag, Terminal) | none |
 | | Results per picker | 20 (5 to 50) |
 | | Shorten links in agent titles | on |
-| | Agent subtitles: workspace, running or archived, last active | all on |
+| | Agent subtitles: last active, git details, workspace, running or archived | all on |
+| | Longest title in pickers | 44 (20 to 120) |
 | | Include archived agents (pinned ones always show); sort agents by recent activity or title | on; recent |
 | | Show token estimates | on |
 | Fetching | Fetch with: automatic, Claude only, Codex only | automatic |

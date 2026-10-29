@@ -8,7 +8,7 @@ import { memoriseStatusRpc } from "../shared/knowledge";
 import { memoriseNote } from "./memorise-note";
 import { tagsChanged } from "./tag-events";
 
-type NumberKey = "knowledgeMapLines" | "knowledgePort" | "snapshotMaxChars" | "turnsPerAgent" | "terminalLines" | "resultsPerSearch" | "pillNameMaxChars" | "fetchTimeoutSeconds" | "maxConcurrentFetches" | "noteMaxChars" | "commentsPerItem" | "autoRefreshHours";
+type NumberKey = "pickerTitleMaxChars" | "knowledgeMapLines" | "knowledgePort" | "snapshotMaxChars" | "turnsPerAgent" | "terminalLines" | "resultsPerSearch" | "pillNameMaxChars" | "fetchTimeoutSeconds" | "maxConcurrentFetches" | "noteMaxChars" | "commentsPerItem" | "autoRefreshHours";
 type TextKey = "claudeFetchModel" | "codexFetchModel" | "extraInstructions" | "customRoutes";
 type DraftKey = NumberKey | TextKey;
 type SwitchKey =
@@ -21,6 +21,7 @@ type SwitchKey =
   | "agentShowWorkspace"
   | "agentShowStatus"
   | "agentShowActivity"
+  | "agentShowGit"
   | "includeArchivedAgents"
   | "showTokenEstimates"
   | "notifyFetchResults"
@@ -39,9 +40,10 @@ const SECTION_SWITCHES: ReadonlyArray<{ key: SwitchKey; label: string; hint: str
 ];
 const PICKER_SWITCHES: ReadonlyArray<{ key: SwitchKey; label: string; hint: string }> = [
   { key: "shortenLinks", label: "Shorten links in agent titles", hint: "github.com/…/pull/12 instead of the whole address, so more of the title fits." },
-  { key: "agentShowWorkspace", label: "Show the workspace", hint: "In each agent row's subtitle." },
+  { key: "agentShowWorkspace", label: "Show the workspace", hint: "In each agent row's subtitle, unless the row's title already is the workspace's title." },
   { key: "agentShowStatus", label: "Show running or archived", hint: "In each agent row's subtitle. An agent that cannot be read always says so." },
-  { key: "agentShowActivity", label: "Show when it was last active", hint: "In each agent row's subtitle, for example: 5 min ago." },
+  { key: "agentShowActivity", label: "Show when it was last active", hint: "First in each agent row's subtitle, for example: 5 min ago." },
+  { key: "agentShowGit", label: "Show git details", hint: "After the time in each agent row's subtitle: branch, uncommitted changes (+12 −3), and pull request (PR #42), when Paseo has them." },
   { key: "includeArchivedAgents", label: "Include archived agents", hint: "Archived agents are listed after the others. Pinned agents are always listed." },
   { key: "showTokenEstimates", label: "Show token estimates", hint: "At the end of every agent, tag, and terminal row, for example: ~1.2k tokens. An estimate (characters divided by 4); code and non-English text can differ." },
 ];
@@ -74,9 +76,10 @@ const ROUTES_EXAMPLE = '[{"vendor":"jira","provider":"codex","server":"my-jira",
 
 const MAP_LINES_FIELD = { key: "knowledgeMapLines" as const, label: "Project map length (lines)", hint: "Default 40, up to 150. The map each new agent gets: architecture docs, conventions, ADRs with status, folders, and the last 3 tasks. 0 gives agents the search tools without a map." };
 const PORT_FIELD = { key: "knowledgePort" as const, label: "Knowledge tools port", hint: "Default 6791, from 1024 to 65535 (not Memorise's 6790). Agents reach the knowledge tools on 127.0.0.1 at this port. Used after the plugin reloads; agents created before keep the old address." };
+const TITLE_LENGTH_FIELD = { key: "pickerTitleMaxChars" as const, label: "Longest title in pickers (characters)", hint: "Default 44, from 20 to 120. Paseo never shortens a picker title, so a long one hides the details beside it; longer titles end in …. 0 means the default." };
 const RESULTS_FIELD = { key: "resultsPerSearch" as const, label: "Results per picker", hint: "Default 20, from 5 to 50. More results scroll; each agent result reads that agent's recent turns. 0 means the default." };
 const PILL_LENGTH_FIELD = { key: "pillNameMaxChars" as const, label: "Longest tag name on the pill", hint: "Default 24, from 10 to 60 characters; longer names end in …. 0 means the default." };
-const NUMBER_LABELS = new Map([...ATTACHMENT_NUMBERS, ...ADVANCED_NUMBERS, RESULTS_FIELD, PILL_LENGTH_FIELD, REFRESH_HOURS_FIELD, MAP_LINES_FIELD, PORT_FIELD].map(({ key, label }) => [key, label]));
+const NUMBER_LABELS = new Map([...ATTACHMENT_NUMBERS, ...ADVANCED_NUMBERS, RESULTS_FIELD, TITLE_LENGTH_FIELD, PILL_LENGTH_FIELD, REFRESH_HOURS_FIELD, MAP_LINES_FIELD, PORT_FIELD].map(({ key, label }) => [key, label]));
 
 function draftValue(values: SnapshotSettings, key: DraftKey): string {
   if (key === "customRoutes") return values.customRoutes.length === 0 ? "" : JSON.stringify(values.customRoutes);
@@ -221,6 +224,7 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
             onValueChange={(value) => persist({ ...values, pickerPrefix: value })}
           />
           {draftInput(RESULTS_FIELD.key, RESULTS_FIELD.label, RESULTS_FIELD.hint)}
+          {draftInput(TITLE_LENGTH_FIELD.key, TITLE_LENGTH_FIELD.label, TITLE_LENGTH_FIELD.hint)}
           {saveRow}
         </SettingsCard>
         <SettingsCard>

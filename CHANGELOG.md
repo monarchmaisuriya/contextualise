@@ -2,6 +2,23 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.14.0 - 2026-10-29
+
+### Changed
+
+- Attach > Agent conversation titles an agent with its worktree's title (the title Paseo's sidebar shows) instead of its first request; agents sharing a worktree get "worktree title · their request". Agents in plain folders keep their first request, the only title Paseo has for them.
+- Agent rows' muted text now starts with how long ago the agent was active, then git details from Paseo: branch, uncommitted changes (`+12 −3`), and pull request (`PR #42`, with draft or merged). The workspace follows only when the title does not already name it.
+- Search in the agent picker also matches the workspace title, branch, and pull request number or title. Terminal rows show the branch.
+- Picker titles are cut at 44 characters (Settings > Contextualise > Pickers > Longest title in pickers, 20 to 120), because Paseo never shortens a title and a long one hid the details beside it.
+
+### Added
+
+- Settings > Contextualise > Pickers: "Show git details" and "Longest title in pickers".
+
+### Fixed
+
+- Workspaces renamed in Paseo showed their old name in tags, pickers, and the Tags pill. Contextualise now names a workspace the way Paseo does (its title, else its name).
+
 ## 0.13.0 - 2026-10-29
 
 ### Added

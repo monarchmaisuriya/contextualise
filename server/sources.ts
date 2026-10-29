@@ -1,11 +1,11 @@
 import type { PluginAttachmentItem } from "@getpaseo/plugin";
 import { timeAgo } from "../shared/time";
-import { shortenLink } from "../shared/links";
 import { tokenEstimate } from "../shared/tokens";
 import { DOCS_URL, type AgentMember, type SnapshotSettings, type TagSummary } from "../shared/contracts";
 import type { AgentTimelineItem, PaseoApi } from "./paseo-types";
 import { describeMembers, isUnreadable, lastTurns, matchTags, renderConversation, renderSnapshot, renderTerminal, type AgentReading } from "./snapshot";
-import type { Directory, DirectoryAgent } from "./tags";
+import { agentTitle, capTitle, cleanTitle, gitParts, workspaceLabel, workspaceSearchText } from "./rows";
+import type { Directory, DirectoryAgent, DirectoryWorkspace } from "./tags";
 
 const TIMELINE_PAGE = 200;
 const MAX_TIMELINE_PAGES = 5;
@@ -56,17 +56,6 @@ export async function readAgent(paseo: PaseoApi, agentId: string, turnsPerAgent:
   }
 }
 
-// Agent titles are often the first prompt, with Markdown and links in it; the picker shows one
-// plain line.
-export function cleanTitle(title: string, shortenLinks: boolean): string {
-  const plain = title
-    .replace(/^\s*#+\s*/, "")
-    .replace(/(\*\*|__|`)/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return shortenLinks ? plain.replace(/https?:\/\/\S+/gi, shortenLink) : plain;
-}
-
 // The text before a picker row's title: nothing, or the provider or source word. Paseo draws
 // plugin picker rows from text only (no icon), so these are the only choices.
 export function rowPrefix(kind: "agent" | "tag" | "terminal", provider: string | undefined, style: SnapshotSettings["pickerPrefix"]): string {
@@ -106,7 +95,7 @@ export async function tagAttachment(paseo: PaseoApi, memo: Memo, fullTag: TagSum
   return {
     id: tag.key,
     identifier: rowPrefix("tag", undefined, options.pickerPrefix),
-    title: tag.name,
+    title: capTitle(tag.name, options.pickerTitleMaxChars),
     subtitle: subtitle([describeMembers(tag, readings.filter(isUnreadable).length)], text, options),
     url: DOCS_URL,
     text,
@@ -128,9 +117,8 @@ function matches(haystack: string, query: string): boolean {
   return words(query).every((word) => text.includes(word));
 }
 
-function workspaceNames(directory: Directory): Map<string, string> {
-  // A plain-folder workspace has its project's name; "checkout-web / checkout-web" says nothing more.
-  return new Map(directory.workspaces.map((workspace) => [workspace.id, workspace.name === workspace.projectDisplayName ? workspace.name : `${workspace.projectDisplayName} / ${workspace.name}`]));
+function workspacesById(directory: Directory): Map<string, DirectoryWorkspace> {
+  return new Map(directory.workspaces.map((workspace) => [workspace.id, workspace]));
 }
 
 function asMember(agent: DirectoryAgent, workspaceName: string | null): AgentMember {
@@ -148,10 +136,12 @@ function asMember(agent: DirectoryAgent, workspaceName: string | null): AgentMem
 // Any agent on this host, matched on title, provider, workspace, and folder. Pinned agents first
 // (kept even when archived agents are hidden), then most recently active, archived ones last.
 export async function searchAgents(paseo: PaseoApi, memo: Memo, directory: Directory, pinned: ReadonlySet<string>, serverId: string | null, query: string, options: SnapshotSettings): Promise<PluginAttachmentItem[]> {
-  const names = workspaceNames(directory);
+  const workspaces = workspacesById(directory);
+  const sharing = new Map<string, number>();
+  for (const agent of directory.agents) if (agent.workspaceId) sharing.set(agent.workspaceId, (sharing.get(agent.workspaceId) ?? 0) + 1);
   const found = directory.agents
     .filter((agent) => options.includeArchivedAgents || !agent.archivedAt || pinned.has(agent.id))
-    .filter((agent) => matches([agent.title, agent.provider, names.get(agent.workspaceId ?? ""), agent.cwd, agent.id].join(" "), query))
+    .filter((agent) => matches([agent.title, agent.provider, workspaceSearchText(workspaces.get(agent.workspaceId ?? "")), agent.cwd, agent.id].join(" "), query))
     .sort(
       (a, b) =>
         Number(pinned.has(b.id)) - Number(pinned.has(a.id)) ||
@@ -161,23 +151,27 @@ export async function searchAgents(paseo: PaseoApi, memo: Memo, directory: Direc
     .slice(0, options.resultsPerSearch);
   return Promise.all(
     found.map(async (agent) => {
-      const workspaceName = names.get(agent.workspaceId ?? "") ?? null;
+      const workspace = workspaces.get(agent.workspaceId ?? "");
+      const workspaceName = workspace ? workspaceLabel(workspace) : null;
       const member = asMember(agent, workspaceName);
       const reading = await memo.get(`agent:${agent.id}:${options.turnsPerAgent}`, () => readAgent(paseo, agent.id, options.turnsPerAgent));
       const state = isUnreadable(reading) ? "unreadable" : agent.archivedAt ? "archived" : agent.status === "running" ? "running" : null;
       const active = agent.updatedAt ? timeAgo(agent.updatedAt) : "";
       const text = renderConversation(member, workspaceName, reading, options.snapshotMaxChars);
+      const { title, includesWorkspace } = agentTitle(agent, workspace, sharing.get(agent.workspaceId ?? "") ?? 1, { maxChars: options.pickerTitleMaxChars, shortenLinks: options.shortenLinks });
       return {
         id: agent.id,
         // Paseo labels a row "<identifier> <title>" and the attached pill "<source> <identifier>".
         identifier: rowPrefix("agent", agent.provider, options.pickerPrefix),
-        title: cleanTitle(agent.title ?? "", options.shortenLinks) || agent.id,
+        title,
+        // Paseo cuts the muted text where the popup ends, so it leads with what tells rows apart.
         subtitle: subtitle(
           [
             pinned.has(agent.id) && "pinned",
-            options.agentShowWorkspace ? (workspaceName ?? "no workspace") : null,
-            options.agentShowStatus || state === "unreadable" ? state : null,
             options.agentShowActivity && active ? active : null,
+            ...(options.agentShowGit ? gitParts(workspace) : []),
+            options.agentShowWorkspace && !includesWorkspace ? (workspaceName ?? "no workspace") : null,
+            options.agentShowStatus || state === "unreadable" ? state : null,
           ],
           text,
           options,
@@ -192,19 +186,20 @@ export async function searchAgents(paseo: PaseoApi, memo: Memo, directory: Direc
 
 // Any terminal on this host, matched on name, workspace, and folder.
 export async function searchTerminals(paseo: PaseoApi, memo: Memo, directory: Directory, query: string, options: SnapshotSettings): Promise<PluginAttachmentItem[]> {
-  const names = workspaceNames(directory);
+  const workspaces = workspacesById(directory);
   const { entries } = await paseo.terminals.list();
-  const found = entries.filter((terminal) => matches([terminal.name, names.get(terminal.workspaceId), terminal.cwd].join(" "), query)).slice(0, options.resultsPerSearch);
+  const found = entries.filter((terminal) => matches([terminal.name, workspaceSearchText(workspaces.get(terminal.workspaceId)), terminal.cwd].join(" "), query)).slice(0, options.resultsPerSearch);
   return Promise.all(
     found.map(async (terminal) => {
-      const workspaceName = names.get(terminal.workspaceId) ?? null;
+      const workspace = workspaces.get(terminal.workspaceId);
+      const workspaceName = workspace ? workspaceLabel(workspace) : null;
       const capture = await memo.get(`terminal:${terminal.id}:${options.terminalLines}`, () => paseo.terminals.ref(terminal.id).capture({ start: -options.terminalLines, stripAnsi: true }));
       const text = renderTerminal(terminal, workspaceName, capture.lines, capture.totalLines, options.snapshotMaxChars);
       return {
         id: terminal.id,
         identifier: rowPrefix("terminal", undefined, options.pickerPrefix),
-        title: terminal.name,
-        subtitle: subtitle([workspaceName, `${capture.totalLines} lines`], text, options),
+        title: capTitle(terminal.name, options.pickerTitleMaxChars),
+        subtitle: subtitle([workspaceName, workspace?.gitRuntime?.currentBranch, `${capture.totalLines} lines`], text, options),
         url: DOCS_URL,
         text,
         resourceType: "terminal",

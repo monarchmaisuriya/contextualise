@@ -86,3 +86,12 @@ test("one agent is described from the directory, or as missing", () => {
   expect(describeAgent(directory, "a1")).toEqual({ agentId: "a1", title: "Fix login", provider: "claude", workspaceId: "w1", workspaceName: "ws-w1", state: "active" });
   expect(describeAgent(directory, "gone")).toEqual({ agentId: "gone", title: null, provider: null, workspaceId: null, workspaceName: null, state: "missing" });
 });
+
+test("a workspace renamed in Paseo shows its new title in tags and agent descriptions", () => {
+  const renamed: DirectoryWorkspace = { id: "w9", name: "glorious-tiger", title: "Review PR 5854", projectDisplayName: "payments", projectRootPath: "/src/payments", labels: ["auth"] };
+  const directory = { workspaces: [renamed], agents: [{ id: "a9", title: "scan", provider: "claude", workspaceId: "w9" }] };
+  expect(describeAgent(directory, "a9").workspaceName).toBe("Review PR 5854");
+  const [tag] = mergeTags({ auth: { name: "auth", agents: [{ agentId: "a9", workspaceId: "w9", taggedAt: "2026-10-29T10:00:00.000Z" }], links: [], notes: [] } }, directory);
+  expect(tag.workspaces[0].name).toBe("Review PR 5854");
+  expect(tag.agents[0].workspaceName).toBe("Review PR 5854");
+});
