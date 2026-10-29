@@ -2,6 +2,25 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.13.0 - 2026-10-29
+
+### Added
+
+- Project knowledge. Every new agent in a git repository gets a short project map in its system prompt (architecture docs, conventions files, ADRs with their status, top-level folders, and the last 3 finished tasks; 40 lines by default) and two read-only tools, `knowledge_search` and `knowledge_read`. They cover the repository's docs, conventions, ADRs, code symbols (TypeScript, JavaScript, Python, and Go through tree-sitter), and finished tasks. Calls to them are approved automatically.
+- The index follows git's file hashes: only changed files are read again, uncommitted edits included. Task entries whose changed files have changed since, and superseded ADRs, are marked "needs check". Large repositories finish indexing in the background.
+- A task log: each finished turn updates that agent's entry (first request, files changed, commands with exit codes, outcome), built from its timeline without a model. Secret-shaped text is removed first.
+- A Project knowledge screen (sidebar footer and Command Center) to search each repository's knowledge by kind, see recent tasks, and re-index; and Attach > Project knowledge.
+- With Memorise 0.10 or later running: search results show the Memorise memories about the same file, the map points agents to Memorise for decisions and pitfalls, and renamed or removed definitions and superseded ADRs lead to suggestions in Memorise that wait for your approval. Without it, Settings > Contextualise says what installing, turning on, or updating Memorise would add. Contextualise never stores decisions or pitfalls itself.
+- Settings > Contextualise > Project knowledge: on or off, code symbols, suggestions to Memorise, map length, and the tools' port (6791).
+
+### Changed
+
+- The plugin now has runtime dependencies (`@modelcontextprotocol/sdk`, `web-tree-sitter`) and a build step for Git installs, and ships prebuilt tree-sitter grammars in `grammars/` (MIT).
+
+### Fixed
+
+- A test of the fetch concurrency limit depended on timing and could fail under load; it now holds its workers until released.
+
 ## 0.12.0 - 2026-10-28
 
 ### Changed

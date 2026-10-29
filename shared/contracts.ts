@@ -346,6 +346,7 @@ export type Receipt = z.infer<typeof receiptSchema>;
 export const SNAPSHOT_MAX_CHARS_DEFAULT = 40_000;
 export const TURNS_PER_AGENT_DEFAULT = 6;
 export const TERMINAL_LINES_DEFAULT = 200;
+export const KNOWLEDGE_MAP_LINES_DEFAULT = 40;
 
 // 0 means "use the default", never "unlimited"; anything else outside the range is invalid, and
 // Paseo reports invalid stored settings instead of replacing them.
@@ -396,6 +397,14 @@ export const snapshotSettingsSchema = z.object({
   commentsPerItem: z.number().int().min(0).max(50).default(10),
   extraInstructions: z.string().max(1_000).default(""),
   customRoutes: z.array(routeSchema).max(MAX_CUSTOM_ROUTES).default([]),
+  // Project knowledge. Off: no section, no tools, no task log, no Memorise suggestions; indexes stay.
+  knowledgeEnabled: z.boolean().default(true),
+  // 0 is meaningful here (tools only, no map in the prompt), so it is not a "0 means default" count.
+  knowledgeMapLines: z.number().int().min(0).max(150).default(KNOWLEDGE_MAP_LINES_DEFAULT),
+  // Read when the plugin starts; Memorise's tool server uses 6790.
+  knowledgePort: z.number().int().min(1024).max(65535).refine((port) => port !== 6790, "Port 6790 is Memorise's; choose another").default(6791),
+  knowledgeCodeSymbols: z.boolean().default(true),
+  memoriseSuggestions: z.boolean().default(true),
 });
 export type SnapshotSettings = z.infer<typeof snapshotSettingsSchema>;
 

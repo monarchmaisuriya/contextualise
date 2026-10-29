@@ -22,6 +22,7 @@ import {
   type TagSummary,
 } from "../shared/contracts";
 import { AutoRefresh } from "./auto-refresh";
+import { contributeKnowledge } from "./knowledge/plugin";
 import { Fetcher } from "./fetches";
 import { configuredServers } from "./provider-config";
 import type { PaseoApi } from "./paseo-types";
@@ -126,10 +127,13 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
     return { items: await searchTerminals(paseo, readings, await directory(paseo), query, options) };
   });
 
-  return () => {
+  const stopKnowledge = contributeKnowledge(server, { resolveRoot, settings: currentSettings });
+
+  return async () => {
     autoRefresh.stop();
     void stopFollowingSetting();
     readings.clear();
     directories.clear();
+    await stopKnowledge();
   };
 }

@@ -1,7 +1,7 @@
 {
   "name": "contextualise",
   "private": true,
-  "version": "0.12.0",
+  "version": "0.13.0",
   "files": [
     "paseo-plugin.json",
     "contextualise.png",
@@ -11,6 +11,7 @@
     "CHANGELOG.md",
     "index.client.tsx",
     "index.server.ts",
+    "grammars/",
     "client/",
     "server/",
     "shared/",
@@ -31,5 +32,9 @@
     "vitest": "^3.2.7",
     "zod": "^4.4.3"
   },
-  "description": "Tag Paseo agents across workspaces and providers, then attach a tag, another agent's conversation, or terminal output to a prompt."
+  "description": "Shared project knowledge for Paseo agents (docs, conventions, ADRs, code symbols, finished tasks), plus tags across workspaces and providers, Jira, Sentry, Slack, and Notion items, and attachments for any prompt.",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "web-tree-sitter": "0.25.10"
+  }
 }

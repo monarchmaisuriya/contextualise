@@ -1,4 +1,10 @@
-Contextualise lets you tag agents across workspaces and providers, fetch Jira, Sentry, Slack, and Notion items into tags, find it all again by tag, and attach context to a prompt: a whole tag, another agent's conversation, or terminal output.
+Contextualise gives every agent searchable knowledge of its repository, lets you tag agents across workspaces and providers, fetch Jira, Sentry, Slack, and Notion items into tags, find it all again by tag, and attach context to a prompt: a whole tag, another agent's conversation, terminal output, or a piece of project knowledge.
+
+## Project knowledge
+
+Each new agent in a git repository gets a short project map (architecture docs, conventions, ADRs with their status, top-level folders, and the last few finished tasks) and two read-only tools, `knowledge_search` and `knowledge_read`, over the repository's docs, conventions, ADRs, code symbols (TypeScript, JavaScript, Python, Go), and finished tasks. The index follows git's file hashes, so changed files are read again, including uncommitted edits, and task entries whose files changed since are marked "needs check". A task entry is built from the agent's own timeline when its turn ends; no model reads it. The Project knowledge screen in the sidebar searches the same knowledge, and Attach > Project knowledge sends one entry with a prompt.
+
+Contextualise never stores what agents learn while working (decisions, pitfalls, preferences): that is Memorise's job. With Memorise 0.10 or later running, search results show the Memorise memories about the same file, and when a function a memory is about is renamed or removed, or an ADR it cites is superseded, Contextualise suggests a fix that waits for you in Memorise. Without Memorise, Settings > Contextualise shows one line on what installing it would add.
 
 ## Tagging
 
@@ -16,11 +22,12 @@ Pin the agents you attach often, from the Tags pill or the Command Center. Pinne
 
 ## Attaching context
 
-The composer's Attach menu gets three sources:
+The composer's Attach menu gets four sources:
 
 - **Tag**: the tag's workspaces, links, and each tagged agent's most recent turns.
 - **Agent conversation**: one agent's most recent turns, from any workspace or provider. Clicking the attachment opens that agent.
 - **Terminal output**: the newest lines of any terminal.
+- **Project knowledge**: one document section, code symbol, or finished task from any indexed repository.
 
 Each picker row says what is inside before you send, for example "2 agents: claude, codex; 1 workspace · ~3.4k tokens" (an estimate). Conversations include your messages and the agents' replies; tool calls and reasoning are left out. Secret-shaped text such as API keys, tokens, and `password=` assignments is replaced with `[removed: <kind>]`. Every attachment starts with a note that it is reference material, not instructions. An agent whose history cannot be read is listed with the reason, and the rest still attaches.
 
@@ -28,12 +35,13 @@ Each picker row says what is inside before you send, for example "2 agents: clau
 
 Attaching copies other agents' conversations and terminal output into the prompt you are writing, including conversations held by a different provider. Check the picker row before you send. Nothing is sent until you send the prompt.
 
-Tags, links, and pinned agents are stored on the daemon host in `plugin-data/contextualise/tags.json` under the Paseo home folder. Nothing leaves that host except what you attach and send.
+Tags, links, and pinned agents are stored on the daemon host in `plugin-data/contextualise/tags.json` under the Paseo home folder, and project knowledge in `plugin-data/contextualise/knowledge/`. The project map and the knowledge tools' results reach each agent's model provider as part of its prompt; nothing else leaves that host except what you attach and send.
 
 ## Settings
 
-Settings > Contextualise has five sections:
+Settings > Contextualise has six sections:
 
+- **Project knowledge**: on or off for new agents, code symbols, suggestions to Memorise, map length (0 gives the tools without a map), and the tools' local port.
 - **Attachments**: longest attachment (default 40,000 characters), turns per agent (6), terminal lines (200), and which parts a tag attachment includes (labeled workspaces, links, fetched items, agent conversations).
 - **Tags pill**: show or hide it; label it with tag names or a count; longest name shown.
 - **Pickers**: what starts each Attach picker row (nothing, or a word such as Claude or Tag), results per picker (20), shorter links in agent titles, which details agent rows show, whether archived agents appear, agent sort order, and token estimates.

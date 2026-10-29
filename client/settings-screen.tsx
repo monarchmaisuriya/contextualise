@@ -1,11 +1,14 @@
-import { type PluginSurfaceProps, useSettings } from "@getpaseo/plugin/client";
+import { type PluginSurfaceProps, useRpc, useSettings } from "@getpaseo/plugin/client";
 import { SettingsAction, SettingsCard, SettingsInput, SettingsRow, SettingsSection, SettingsSelect, SettingsSwitch, TextInput } from "@getpaseo/plugin/client/ui";
+import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Text } from "react-native";
 import { type FetchPreference, MAX_CUSTOM_ROUTES, type SnapshotSettings, snapshotSettings } from "../shared/contracts";
+import { memoriseStatusRpc } from "../shared/knowledge";
+import { memoriseNote } from "./memorise-note";
 import { tagsChanged } from "./tag-events";
 
-type NumberKey = "snapshotMaxChars" | "turnsPerAgent" | "terminalLines" | "resultsPerSearch" | "pillNameMaxChars" | "fetchTimeoutSeconds" | "maxConcurrentFetches" | "noteMaxChars" | "commentsPerItem" | "autoRefreshHours";
+type NumberKey = "knowledgeMapLines" | "knowledgePort" | "snapshotMaxChars" | "turnsPerAgent" | "terminalLines" | "resultsPerSearch" | "pillNameMaxChars" | "fetchTimeoutSeconds" | "maxConcurrentFetches" | "noteMaxChars" | "commentsPerItem" | "autoRefreshHours";
 type TextKey = "claudeFetchModel" | "codexFetchModel" | "extraInstructions" | "customRoutes";
 type DraftKey = NumberKey | TextKey;
 type SwitchKey =
@@ -69,9 +72,11 @@ const PILL_LABEL_OPTIONS = [
 ];
 const ROUTES_EXAMPLE = '[{"vendor":"jira","provider":"codex","server":"my-jira","tools":["get_issue","search_issues"]}]';
 
+const MAP_LINES_FIELD = { key: "knowledgeMapLines" as const, label: "Project map length (lines)", hint: "Default 40, up to 150. The map each new agent gets: architecture docs, conventions, ADRs with status, folders, and the last 3 tasks. 0 gives agents the search tools without a map." };
+const PORT_FIELD = { key: "knowledgePort" as const, label: "Knowledge tools port", hint: "Default 6791, from 1024 to 65535 (not Memorise's 6790). Agents reach the knowledge tools on 127.0.0.1 at this port. Used after the plugin reloads; agents created before keep the old address." };
 const RESULTS_FIELD = { key: "resultsPerSearch" as const, label: "Results per picker", hint: "Default 20, from 5 to 50. More results scroll; each agent result reads that agent's recent turns. 0 means the default." };
 const PILL_LENGTH_FIELD = { key: "pillNameMaxChars" as const, label: "Longest tag name on the pill", hint: "Default 24, from 10 to 60 characters; longer names end in …. 0 means the default." };
-const NUMBER_LABELS = new Map([...ATTACHMENT_NUMBERS, ...ADVANCED_NUMBERS, RESULTS_FIELD, PILL_LENGTH_FIELD, REFRESH_HOURS_FIELD].map(({ key, label }) => [key, label]));
+const NUMBER_LABELS = new Map([...ATTACHMENT_NUMBERS, ...ADVANCED_NUMBERS, RESULTS_FIELD, PILL_LENGTH_FIELD, REFRESH_HOURS_FIELD, MAP_LINES_FIELD, PORT_FIELD].map(({ key, label }) => [key, label]));
 
 function draftValue(values: SnapshotSettings, key: DraftKey): string {
   if (key === "customRoutes") return values.customRoutes.length === 0 ? "" : JSON.stringify(values.customRoutes);
@@ -80,6 +85,9 @@ function draftValue(values: SnapshotSettings, key: DraftKey): string {
 
 export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
   const settings = useSettings(snapshotSettings);
+  const memoriseStatus = useRpc(memoriseStatusRpc);
+  const memorise = useQuery({ queryKey: ["contextualise", "knowledge", "memorise"], queryFn: () => memoriseStatus({}) });
+  const note = memorise.data ? memoriseNote(memorise.data.state) : null;
   const [drafts, setDrafts] = useState<Partial<Record<DraftKey, string>>>({});
   const [errors, setErrors] = useState<Partial<Record<DraftKey, string>>>({});
   if (settings.status === "loading") return <Text style={{ color: theme.colors.foregroundMuted, padding: 16 }}>Loading settings</Text>;
@@ -149,6 +157,40 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
 
   return (
     <>
+      <SettingsSection title="Project knowledge">
+        {note ? (
+          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, paddingHorizontal: 4, paddingBottom: 6 }} selectable>
+            {note.text}
+            {note.command ? ` Run: ${note.command}` : ""}
+          </Text>
+        ) : null}
+        <SettingsCard>
+          <SettingsSwitch
+            label="Project knowledge for new agents"
+            hint="Each new agent in a git repository gets a short project map and two read-only tools, knowledge_search and knowledge_read, over the repository's docs, conventions, ADRs, code symbols, and finished tasks. Off: nothing is added, no tasks are logged, and indexes stay on disk."
+            value={values.knowledgeEnabled}
+            disabled={settings.saving}
+            onValueChange={(value) => persist({ ...values, knowledgeEnabled: value })}
+          />
+          <SettingsSwitch
+            label="Index code symbols"
+            hint="Functions, classes, methods, and types in TypeScript, JavaScript, Python, and Go. Off: documents only, and no memory checks when code changes."
+            value={values.knowledgeCodeSymbols}
+            disabled={settings.saving || !values.knowledgeEnabled}
+            onValueChange={(value) => persist({ ...values, knowledgeCodeSymbols: value })}
+          />
+          <SettingsSwitch
+            label="Suggest memory fixes to Memorise"
+            hint="When a function or class a Memorise memory is about is renamed or removed, or an ADR it cites is superseded, a suggestion waits in Memorise's Suggestions for you. Nothing changes until you approve it there. Needs Memorise 0.10 or later."
+            value={values.memoriseSuggestions}
+            disabled={settings.saving || !values.knowledgeEnabled}
+            onValueChange={(value) => persist({ ...values, memoriseSuggestions: value })}
+          />
+          {draftInput(MAP_LINES_FIELD.key, MAP_LINES_FIELD.label, MAP_LINES_FIELD.hint)}
+          {draftInput(PORT_FIELD.key, PORT_FIELD.label, PORT_FIELD.hint)}
+          {saveRow}
+        </SettingsCard>
+      </SettingsSection>
       <SettingsSection title="Attachments">
         <SettingsCard>
           {ATTACHMENT_NUMBERS.map(({ key, label, hint }) => draftInput(key, label, hint))}
