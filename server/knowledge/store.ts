@@ -21,6 +21,7 @@ export interface StoredEntry extends Omit<StoredHit, "snippet"> {
 export type TaskRecord = Omit<TaskSummary, "needsCheck"> & { citations: { path: string; blob: string }[] };
 
 const SCHEMA_VERSION = "1";
+export { BRIEF_ID } from "../../shared/knowledge";
 
 // Splits camelCase and snake_case so "parseItemRef" is found by "item" and "parse ref".
 export function identifierWords(name: string): string {
@@ -171,6 +172,12 @@ export class KnowledgeStore {
       if (rows.length > 0 || join === "OR") return rows.map((row) => ({ ...row, line: Number(row.line) }));
     }
     return [];
+  }
+
+  // A file's sections or code symbols in line order.
+  outline(path: string): { id: string; kind: KnowledgeKind; title: string; line: number }[] {
+    const rows = this.db.prepare("SELECT id, kind, title, line FROM chunks WHERE path = ?").all(path) as unknown as { id: string; kind: KnowledgeKind; title: string; line: number }[];
+    return rows.map((row) => ({ ...row, line: Number(row.line) })).sort((a, b) => a.line - b.line);
   }
 
   read(id: string): StoredEntry | null {

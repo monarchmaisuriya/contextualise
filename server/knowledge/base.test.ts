@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FRESH_MS, KnowledgeBase } from "./base";
@@ -25,14 +25,16 @@ const task: TaskRecord = {
 describe("KnowledgeBase", () => {
   let top: string;
   let root: string;
+  let home: string;
   let now: number;
   let base: KnowledgeBase;
   const onChanges = vi.fn(async () => {});
-  const make = () => new KnowledgeBase({ root: async () => root, symbols, codeSymbols: async () => true, onChanges, now: () => now });
+  const make = () => new KnowledgeBase({ root: async () => root, symbols, indexOptions: async () => ({ codeSymbols: true }), onChanges, now: () => now });
 
   beforeEach(() => {
     top = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-base-repo-")));
-    root = mkdtempSync(join(tmpdir(), "contextualise-base-data-"));
+    home = mkdtempSync(join(tmpdir(), "contextualise-base-data-"));
+    root = join(home, "plugin-data", "contextualise");
     execFileSync("git", ["init", "-q", top]);
     execFileSync("git", ["-C", top, "remote", "add", "origin", "https://github.com/acme/api.git"]);
     writeFileSync(join(top, "README.md"), "# Api\nHello.\n");
@@ -44,7 +46,7 @@ describe("KnowledgeBase", () => {
   afterEach(() => {
     base.close();
     rmSync(top, { recursive: true, force: true });
-    rmSync(root, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
   });
 
   it("indexes once per freshness window, and reports changes only when something changed", async () => {
@@ -84,7 +86,39 @@ describe("KnowledgeBase", () => {
     expect((await base.projects()).map((project) => project.repoKey)).toEqual(["github.com/acme/api"]);
   });
 
-  it("finds no repository outside git", async () => {
-    expect(await base.repoFor(root)).toBeNull();
+  it("indexes a folder outside git under a folder key, keeps the key after a rename, and sees edits", async () => {
+    const folder = join(home, "Notes");
+    mkdirSync(join(folder, "docs"), { recursive: true });
+    writeFileSync(join(folder, "docs", "setup.md"), "# Setup\nInstall it.\n");
+    const project = (await base.repoFor(folder))!;
+    expect(project).toMatchObject({ git: false, top: realpathSync(folder) });
+    expect(project.key).toMatch(/^folder\/notes-[0-9a-f]{12}$/);
+    await base.refresh(project, 10_000);
+    expect((await base.open(project)).search("install", { kinds: [], limit: 5 })).toHaveLength(1);
+    writeFileSync(join(folder, "docs", "setup.md"), "# Setup\nInstall it with brew.\n");
+    now += FRESH_MS + 1;
+    await base.refresh(project, 10_000);
+    expect((await base.open(project)).search("brew", { kinds: [], limit: 5 })).toHaveLength(1);
+    renameSync(folder, join(home, "Notebook"));
+    expect((await make().repoFor(join(home, "Notebook")))?.key).toBe(project.key);
+  });
+
+  it("gives subfolders of a Paseo project root the root's project", async () => {
+    const rootFolder = join(home, "Work");
+    mkdirSync(join(rootFolder, "client", "src"), { recursive: true });
+    await base.markRoot(rootFolder);
+    expect((await base.repoFor(join(rootFolder, "client", "src")))?.top).toBe(realpathSync(rootFolder));
+  });
+
+  it("never takes the home folder or the filesystem root as a project", async () => {
+    expect(await base.repoFor(homedir())).toBeNull();
+    expect(await base.repoFor("/")).toBeNull();
+  });
+
+  it("gives plugin data folders no project", async () => {
+    mkdirSync(join(root, "workers"), { recursive: true });
+    expect(await base.repoFor(join(root, "workers"))).toBeNull();
+    mkdirSync(join(home, "plugin-data", "memorise", "workers"), { recursive: true });
+    expect(await base.repoFor(join(home, "plugin-data", "memorise", "workers"))).toBeNull();
   });
 });

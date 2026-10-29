@@ -135,13 +135,23 @@ function asMember(agent: DirectoryAgent, workspaceName: string | null): AgentMem
 
 // Any agent on this host, matched on title, provider, workspace, and folder. Pinned agents first
 // (kept even when archived agents are hidden), then most recently active, archived ones last.
-export async function searchAgents(paseo: PaseoApi, memo: Memo, directory: Directory, pinned: ReadonlySet<string>, serverId: string | null, query: string, options: SnapshotSettings): Promise<PluginAttachmentItem[]> {
+// `generatedTitles`: titles written for past sessions (project knowledge), used where Paseo has none.
+export async function searchAgents(
+  paseo: PaseoApi,
+  memo: Memo,
+  directory: Directory,
+  pinned: ReadonlySet<string>,
+  serverId: string | null,
+  query: string,
+  options: SnapshotSettings,
+  generatedTitles: ReadonlyMap<string, string> = new Map(),
+): Promise<PluginAttachmentItem[]> {
   const workspaces = workspacesById(directory);
   const sharing = new Map<string, number>();
   for (const agent of directory.agents) if (agent.workspaceId) sharing.set(agent.workspaceId, (sharing.get(agent.workspaceId) ?? 0) + 1);
   const found = directory.agents
     .filter((agent) => options.includeArchivedAgents || !agent.archivedAt || pinned.has(agent.id))
-    .filter((agent) => matches([agent.title, agent.provider, workspaceSearchText(workspaces.get(agent.workspaceId ?? "")), agent.cwd, agent.id].join(" "), query))
+    .filter((agent) => matches([agent.title, generatedTitles.get(agent.id), agent.provider, workspaceSearchText(workspaces.get(agent.workspaceId ?? "")), agent.cwd, agent.id].join(" "), query))
     .sort(
       (a, b) =>
         Number(pinned.has(b.id)) - Number(pinned.has(a.id)) ||
@@ -158,7 +168,7 @@ export async function searchAgents(paseo: PaseoApi, memo: Memo, directory: Direc
       const state = isUnreadable(reading) ? "unreadable" : agent.archivedAt ? "archived" : agent.status === "running" ? "running" : null;
       const active = agent.updatedAt ? timeAgo(agent.updatedAt) : "";
       const text = renderConversation(member, workspaceName, reading, options.snapshotMaxChars);
-      const { title, includesWorkspace } = agentTitle(agent, workspace, sharing.get(agent.workspaceId ?? "") ?? 1, { maxChars: options.pickerTitleMaxChars, shortenLinks: options.shortenLinks });
+      const { title, includesWorkspace } = agentTitle(agent, workspace, sharing.get(agent.workspaceId ?? "") ?? 1, { maxChars: options.pickerTitleMaxChars, shortenLinks: options.shortenLinks, generated: generatedTitles.get(agent.id) });
       return {
         id: agent.id,
         // Paseo labels a row "<identifier> <title>" and the attached pill "<source> <identifier>".

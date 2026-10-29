@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
-import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { access, appendFile, mkdir, readdir, readFile, realpath } from "node:fs/promises";
+import { homedir } from "node:os";
+import { basename, dirname, join, sep } from "node:path";
 import type { Project } from "../../shared/knowledge";
-import { type GitRepo, readGitRepo } from "./git";
-import { type IndexChange, indexRepo } from "./indexer";
+import { type ProjectRoot, projectRoot } from "./git";
+import { type IndexChange, type IndexerOptions, indexRepo } from "./indexer";
+import { ProjectKeys } from "./projects";
 import { KnowledgeStore, type TaskRecord } from "./store";
 import type { SymbolReader } from "./symbols";
 
@@ -15,14 +17,15 @@ const REPO_CACHE_MS = 60_000;
 export interface KnowledgeBaseDeps {
   root: () => Promise<string>;
   symbols: SymbolReader;
-  codeSymbols: () => Promise<boolean>;
+  // Read at each re-index, so a settings change applies on the next one.
+  indexOptions: () => Promise<Omit<IndexerOptions, "symbols">>;
   // Called after each re-index that changed something; failures are logged, never thrown.
-  onChanges?: (repo: GitRepo, store: KnowledgeStore, changes: IndexChange[]) => Promise<void>;
+  onChanges?: (repo: ProjectRoot, store: KnowledgeStore, changes: IndexChange[]) => Promise<void>;
   now?: () => number;
 }
 
 interface Opened {
-  repo: GitRepo;
+  repo: ProjectRoot;
   store: KnowledgeStore;
 }
 
@@ -33,11 +36,26 @@ export class KnowledgeBase {
   private readonly running = new Map<string, Promise<void>>();
   private readonly freshUntil = new Map<string, number>();
   private readonly problems = new Map<string, string>();
-  private readonly repos = new Map<string, { repo: GitRepo | null; at: number }>();
+  private readonly repos = new Map<string, { repo: ProjectRoot | null; at: number }>();
   private readonly now: () => number;
+  private keys: ProjectKeys | null = null;
 
   constructor(private readonly deps: KnowledgeBaseDeps) {
     this.now = deps.now ?? Date.now;
+  }
+
+  private async projectKeys(): Promise<ProjectKeys> {
+    if (!this.keys) {
+      const dir = await this.dir();
+      // A folder with an index of its own stays its own project under a later project root.
+      this.keys = new ProjectKeys(dir, (key) => access(join(dir, `${KnowledgeBase.fileName(key)}.sqlite`)).then(() => true, () => false));
+    }
+    return this.keys;
+  }
+
+  // Records a Paseo project's folder as a project root, so agents in its subfolders share it.
+  async markRoot(folder: string): Promise<void> {
+    await (await this.projectKeys()).markRoot(folder);
   }
 
   private async dir(): Promise<string> {
@@ -50,15 +68,25 @@ export class KnowledgeBase {
     return createHash("sha256").update(repoKey).digest("hex").slice(0, 32);
   }
 
-  async repoFor(cwd: string): Promise<GitRepo | null> {
+  // The project `cwd` belongs to, or null for folders that never get knowledge: plugin data (where
+  // this plugin's and Memorise's background workers run), the home folder, and the filesystem root.
+  async repoFor(cwd: string): Promise<ProjectRoot | null> {
     const cached = this.repos.get(cwd);
     if (cached && this.now() - cached.at < REPO_CACHE_MS) return cached.repo;
-    const repo = await readGitRepo(cwd);
+    const real = await realpath(cwd).catch(() => null);
+    const dataParent = dirname(await this.deps.root());
+    const pluginData = await realpath(dataParent).catch(() => dataParent);
+    let repo: ProjectRoot | null = null;
+    if (real && real !== pluginData && !real.startsWith(`${pluginData}${sep}`)) {
+      const found = await (await this.projectKeys()).resolve(real);
+      const home = await realpath(homedir()).catch(() => homedir());
+      repo = !found.git && (found.top === home || found.top === dirname(found.top)) ? null : found;
+    }
     this.repos.set(cwd, { repo, at: this.now() });
     return repo;
   }
 
-  async open(repo: GitRepo): Promise<KnowledgeStore> {
+  async open(repo: ProjectRoot): Promise<KnowledgeStore> {
     const known = this.opened.get(repo.key);
     if (known) {
       if (known.repo.top !== repo.top) known.store.setMeta("top", repo.top);
@@ -86,13 +114,13 @@ export class KnowledgeBase {
   }
 
   // Resolves when the index is current, or after `maxWaitMs` with "updating" while it carries on.
-  async refresh(repo: GitRepo, maxWaitMs: number): Promise<"fresh" | "updating"> {
+  async refresh(repo: ProjectRoot, maxWaitMs: number): Promise<"fresh" | "updating"> {
     if ((this.freshUntil.get(repo.key) ?? 0) > this.now()) return "fresh";
     let run = this.running.get(repo.key);
     if (!run) {
       run = (async () => {
         const store = await this.open(repo);
-        const changes = await indexRepo(repo, store, { symbols: this.deps.symbols, codeSymbols: await this.deps.codeSymbols() });
+        const changes = await indexRepo(repo, store, { symbols: this.deps.symbols, ...(await this.deps.indexOptions()) });
         this.problems.delete(repo.key);
         this.freshUntil.set(repo.key, this.now() + FRESH_MS);
         if (changes.length > 0 && this.deps.onChanges) {
@@ -123,14 +151,14 @@ export class KnowledgeBase {
     this.freshUntil.delete(repoKey);
   }
 
-  async recordTask(repo: GitRepo, task: TaskRecord): Promise<void> {
+  async recordTask(repo: ProjectRoot, task: TaskRecord): Promise<void> {
     const store = await this.open(repo);
     store.upsertTask(task);
     await appendFile(join(await this.dir(), `${KnowledgeBase.fileName(repo.key)}.tasks.jsonl`), `${JSON.stringify(task)}\n`, { mode: 0o600 });
   }
 
   // Every repository that has an index, including ones not opened since the plugin started.
-  async projects(): Promise<Project[]> {
+  async projects(): Promise<Omit<Project, "enabled" | "pins" | "generation">[]> {
     const dir = await this.dir();
     for (const name of await readdir(dir)) {
       if (!name.endsWith(".sqlite")) continue;
@@ -142,7 +170,7 @@ export class KnowledgeBase {
         store.close();
         continue;
       }
-      this.opened.set(repoKey, { repo: { key: repoKey, top }, store });
+      this.opened.set(repoKey, { repo: projectRoot(repoKey, top), store });
     }
     return [...this.opened.values()]
       .map(({ repo, store }) => ({
@@ -153,6 +181,7 @@ export class KnowledgeBase {
         indexedAt: store.getMeta("indexedAt"),
         indexing: this.running.has(repo.key),
         problem: this.problems.get(repo.key) ?? null,
+        git: repo.git,
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }

@@ -3,13 +3,21 @@ import { SettingsAction, SettingsCard, SettingsInput, SettingsRow, SettingsSecti
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Text } from "react-native";
-import { type FetchPreference, MAX_CUSTOM_ROUTES, type SnapshotSettings, snapshotSettings } from "../shared/contracts";
+import { type FetchPreference, KNOWLEDGE_MAP_PARTS, type KnowledgeMapPart, MAX_CUSTOM_ROUTES, SYMBOL_LANGUAGES, type SymbolLanguage, type SnapshotSettings, snapshotSettings } from "../shared/contracts";
 import { memoriseStatusRpc } from "../shared/knowledge";
 import { memoriseNote } from "./memorise-note";
 import { tagsChanged } from "./tag-events";
 
-type NumberKey = "pickerTitleMaxChars" | "knowledgeMapLines" | "knowledgePort" | "snapshotMaxChars" | "turnsPerAgent" | "terminalLines" | "resultsPerSearch" | "pillNameMaxChars" | "fetchTimeoutSeconds" | "maxConcurrentFetches" | "noteMaxChars" | "commentsPerItem" | "autoRefreshHours";
-type TextKey = "claudeFetchModel" | "codexFetchModel" | "extraInstructions" | "customRoutes";
+type NumberKey =
+  | "knowledgeRecentTasks"
+  | "knowledgeMaxFileKb"
+  | "knowledgeMaxDocs"
+  | "knowledgeGenerateIdleMinutes"
+  | "knowledgeGenerateMaxPerDay"
+  | "pickerTitleMaxChars"
+  | "knowledgeMapLines"
+  | "knowledgePort" | "snapshotMaxChars" | "turnsPerAgent" | "terminalLines" | "resultsPerSearch" | "pillNameMaxChars" | "fetchTimeoutSeconds" | "maxConcurrentFetches" | "noteMaxChars" | "commentsPerItem" | "autoRefreshHours";
+type TextKey = "claudeFetchModel" | "codexFetchModel" | "extraInstructions" | "customRoutes" | "knowledgeExtraDocGlobs" | "knowledgeExcludeGlobs";
 type DraftKey = NumberKey | TextKey;
 type SwitchKey =
   | "includeWorkspaces"
@@ -74,12 +82,36 @@ const PILL_LABEL_OPTIONS = [
 ];
 const ROUTES_EXAMPLE = '[{"vendor":"jira","provider":"codex","server":"my-jira","tools":["get_issue","search_issues"]}]';
 
-const MAP_LINES_FIELD = { key: "knowledgeMapLines" as const, label: "Project map length (lines)", hint: "Default 40, up to 150. The map each new agent gets: architecture docs, conventions, ADRs with status, folders, and the last 3 tasks. 0 gives agents the search tools without a map." };
+const MAP_LINES_FIELD = { key: "knowledgeMapLines" as const, label: "Project map length (lines)", hint: "Default 40, up to 150. The map each new agent gets; what it lists is chosen below. 0 gives agents the search tools without a map." };
 const PORT_FIELD = { key: "knowledgePort" as const, label: "Knowledge tools port", hint: "Default 6791, from 1024 to 65535 (not Memorise's 6790). Agents reach the knowledge tools on 127.0.0.1 at this port. Used after the plugin reloads; agents created before keep the old address." };
 const TITLE_LENGTH_FIELD = { key: "pickerTitleMaxChars" as const, label: "Longest title in pickers (characters)", hint: "Default 44, from 20 to 120. Paseo never shortens a picker title, so a long one hides the details beside it; longer titles end in …. 0 means the default." };
 const RESULTS_FIELD = { key: "resultsPerSearch" as const, label: "Results per picker", hint: "Default 20, from 5 to 50. More results scroll; each agent result reads that agent's recent turns. 0 means the default." };
 const PILL_LENGTH_FIELD = { key: "pillNameMaxChars" as const, label: "Longest tag name on the pill", hint: "Default 24, from 10 to 60 characters; longer names end in …. 0 means the default." };
-const NUMBER_LABELS = new Map([...ATTACHMENT_NUMBERS, ...ADVANCED_NUMBERS, RESULTS_FIELD, TITLE_LENGTH_FIELD, PILL_LENGTH_FIELD, REFRESH_HOURS_FIELD, MAP_LINES_FIELD, PORT_FIELD].map(({ key, label }) => [key, label]));
+const KNOWLEDGE_NUMBERS: ReadonlyArray<{ key: NumberKey; label: string; hint: string }> = [
+  { key: "knowledgeRecentTasks", label: "Recent tasks in the map", hint: "Default 3, from 0 to 10." },
+  { key: "knowledgeMaxFileKb", label: "Largest file to index (KB)", hint: "Default 256, from 16 to 2,048. Larger files are left out. 0 means the default." },
+  { key: "knowledgeMaxDocs", label: "Most documents per project", hint: "Default 2,000, from 100 to 20,000. Code files are not counted. 0 means the default." },
+];
+const GENERATE_NUMBERS: ReadonlyArray<{ key: NumberKey; label: string; hint: string }> = [
+  { key: "knowledgeGenerateIdleMinutes", label: "Summarise after a quiet period of (minutes)", hint: "Default 20, from 5 to 240. A new turn restarts the wait. 0 means the default." },
+  { key: "knowledgeGenerateMaxPerDay", label: "Background runs per day", hint: "Default 20, from 1 to 200. Each summary and each brief is one run of one agent. 0 means the default." },
+];
+const MAP_PART_LABELS: Record<KnowledgeMapPart, string> = {
+  brief: "Project brief (generated)",
+  pinned: "Pinned entries",
+  architecture: "Architecture docs",
+  conventions: "Conventions",
+  adrs: "Decisions (ADRs) with status",
+  folders: "Top-level folders",
+  tasks: "Recent tasks",
+};
+const LANGUAGE_LABELS: Record<SymbolLanguage, string> = { typescript: "TypeScript and TSX", javascript: "JavaScript", python: "Python", go: "Go" };
+const GENERATE_PROVIDER_OPTIONS = [
+  { label: "The session's own (Claude or Codex; OpenCode sessions use Claude)", value: "same" as const },
+  { label: "Claude for every session", value: "claude" as const },
+  { label: "Codex for every session", value: "codex" as const },
+];
+const NUMBER_LABELS = new Map([...KNOWLEDGE_NUMBERS, ...GENERATE_NUMBERS, ...ATTACHMENT_NUMBERS, ...ADVANCED_NUMBERS, RESULTS_FIELD, TITLE_LENGTH_FIELD, PILL_LENGTH_FIELD, REFRESH_HOURS_FIELD, MAP_LINES_FIELD, PORT_FIELD].map(({ key, label }) => [key, label]));
 
 function draftValue(values: SnapshotSettings, key: DraftKey): string {
   if (key === "customRoutes") return values.customRoutes.length === 0 ? "" : JSON.stringify(values.customRoutes);
@@ -125,7 +157,7 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
         } catch {
           problems.customRoutes = "Expected a JSON list of routes, like the example.";
         }
-      } else if (key === "claudeFetchModel" || key === "codexFetchModel" || key === "extraInstructions") next[key] = text;
+      } else if (key === "claudeFetchModel" || key === "codexFetchModel" || key === "extraInstructions" || key === "knowledgeExtraDocGlobs" || key === "knowledgeExcludeGlobs") next[key] = text;
       else if (!/^\d+$/.test(text)) problems[key] = `Enter a whole number for "${NUMBER_LABELS.get(key)}" (got "${text}").`;
       else next[key] = Number(text);
     }
@@ -191,6 +223,62 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
           />
           {draftInput(MAP_LINES_FIELD.key, MAP_LINES_FIELD.label, MAP_LINES_FIELD.hint)}
           {draftInput(PORT_FIELD.key, PORT_FIELD.label, PORT_FIELD.hint)}
+          {saveRow}
+        </SettingsCard>
+        <SettingsCard>
+          {KNOWLEDGE_MAP_PARTS.map((part) => (
+            <SettingsSwitch
+              key={part}
+              label={`Map: ${MAP_PART_LABELS[part]}`}
+              value={values.knowledgeMapParts.includes(part)}
+              disabled={settings.saving || !values.knowledgeEnabled}
+              onValueChange={(on) => persist({ ...values, knowledgeMapParts: KNOWLEDGE_MAP_PARTS.filter((entry) => (entry === part ? on : values.knowledgeMapParts.includes(entry))) })}
+            />
+          ))}
+          {KNOWLEDGE_NUMBERS.slice(0, 1).map(({ key, label, hint }) => draftInput(key, label, hint))}
+          {saveRow}
+        </SettingsCard>
+        <SettingsCard>
+          {SYMBOL_LANGUAGES.map((language) => (
+            <SettingsSwitch
+              key={language}
+              label={`Symbols: ${LANGUAGE_LABELS[language]}`}
+              value={values.knowledgeLanguages.includes(language)}
+              disabled={settings.saving || !values.knowledgeEnabled || !values.knowledgeCodeSymbols}
+              onValueChange={(on) => persist({ ...values, knowledgeLanguages: SYMBOL_LANGUAGES.filter((entry) => (entry === language ? on : values.knowledgeLanguages.includes(entry))) })}
+            />
+          ))}
+          {draftInput("knowledgeExtraDocGlobs", "Also index as docs", "Comma-separated file globs from the project root, such as notes/**/*.txt, docs/*.rst. Markdown is always indexed.", "notes/**/*.txt")}
+          {draftInput("knowledgeExcludeGlobs", "Never index", "Comma-separated file globs from the project root, such as docs/private/**, *.generated.ts.", "docs/private/**")}
+          {KNOWLEDGE_NUMBERS.slice(1).map(({ key, label, hint }) => draftInput(key, label, hint))}
+          <SettingsSwitch
+            label="Approve the knowledge tools automatically"
+            hint="They only read this project's index. Off: each call asks you, like any other tool."
+            value={values.knowledgeAutoApproveTools}
+            disabled={settings.saving || !values.knowledgeEnabled}
+            onValueChange={(value) => persist({ ...values, knowledgeAutoApproveTools: value })}
+          />
+          {saveRow}
+        </SettingsCard>
+      </SettingsSection>
+      <SettingsSection title="Generated knowledge">
+        <SettingsCard>
+          <SettingsSwitch
+            label="Generate session summaries and project briefs"
+            hint="Off by default. On: when an agent has been quiet for the minutes below, a background agent reads its session (your messages, its replies, commands, and files touched; secrets removed first) and writes a short title and summary into the task log; after every 5 summaries it writes a project brief. Each run is one agent run and uses tokens, and the session text is sent to the chosen provider. Background agents have no tools and are archived when done. Decisions and pitfalls are never written here; that is Memorise's job. Import past sessions (on the Project knowledge screen) needs no model and works either way."
+            value={values.knowledgeGenerate}
+            disabled={settings.saving || !values.knowledgeEnabled}
+            onValueChange={(value) => persist({ ...values, knowledgeGenerate: value })}
+          />
+          <SettingsSelect
+            label="Read sessions with"
+            hint="Uses the Claude and Codex models set under Fetching."
+            value={values.knowledgeGenerateProvider}
+            options={GENERATE_PROVIDER_OPTIONS}
+            disabled={settings.saving || !values.knowledgeGenerate}
+            onValueChange={(value) => persist({ ...values, knowledgeGenerateProvider: value })}
+          />
+          {GENERATE_NUMBERS.map(({ key, label, hint }) => draftInput(key, label, hint))}
           {saveRow}
         </SettingsCard>
       </SettingsSection>

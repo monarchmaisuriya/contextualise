@@ -9,7 +9,7 @@ Requires Paseo 0.13.
 ## Install
 
 ```bash
-paseo plugin install git:monarchmaisuriya/contextualise --ref v0.13.0
+paseo plugin install git:monarchmaisuriya/contextualise --ref v0.15.0
 ```
 
 ## Tags
@@ -51,31 +51,73 @@ Fetched items can be refreshed automatically (Advanced, off by default): every 1
 
 ## Project knowledge
 
-Every new agent started in a git repository gets two things:
+Every new agent started in a project, a git repository or a folder outside git, gets two things:
 
-- **A short project map** in its system prompt (40 lines by default): the repository, its architecture docs and conventions files by title, its ADRs with their status, its top-level folders, and the last 3 finished tasks. The map says it describes the repository and is not instructions.
-- **Two read-only tools**, `knowledge_search` and `knowledge_read`, over the repository's own knowledge. Paseo approves their calls automatically, because they only read this repository's index.
+- **A short project map** in its system prompt (40 lines by default). It lists:
+  - the generated project brief, if there is one;
+  - the entries you pinned;
+  - architecture docs and conventions files by title;
+  - ADRs with their status;
+  - top-level folders;
+  - the most recent finished tasks.
 
-What is indexed, from the files git tracks (`.gitignore` is honoured):
+  The map says it describes the project and is not instructions. Settings choose which parts it lists and how many tasks.
+- **Four read-only tools** over the project's own knowledge:
+  - `knowledge_search`: search, optionally limited to files, folders, or globs with `paths`;
+  - `knowledge_read`: open one entry;
+  - `knowledge_outline`: a file's sections or functions and classes, with lines;
+  - `knowledge_history`: the finished tasks that changed a file or folder.
+
+  Paseo approves their calls automatically, because they only read this project's index (a setting turns that off).
+
+**Folders outside git** are projects too, keyed the way Memorise keys them:
+- the key comes from the folder's name and real path;
+- it is kept when the folder is renamed or moved on the same disk;
+- agents in the subfolders of a Paseo project share the project's knowledge.
+
+Files are found by walking the folder, skipping hidden, dependency, and build folders, up to 50,000 entries. A file is read again when its modified time or size changes. The home folder, the filesystem root, and Paseo's plugin data folders never become projects.
+
+What is indexed (in git, the files git tracks, so `.gitignore` is honoured):
 
 | Kind | Files |
 | --- | --- |
 | Architecture | `ARCHITECTURE*.md`, `design*.md`, and Markdown under `architecture/` or `design/` folders |
 | Conventions | `CONTRIBUTING.md`, `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `conventions.md`, `style*.md`, and Markdown under `conventions/` |
 | Decisions (ADRs) | Markdown under `adr/`, `adrs/`, `decisions/`, or `architecture-decisions/`, and `ADR-<n>` files; the status comes from a `Status:` line, front matter, or a Status heading, and "Superseded by" is read too |
-| Docs | Every other Markdown file, up to 2,000 files |
-| Code | Functions, classes, methods, interfaces, types, and enums in TypeScript, JavaScript, Python, and Go, with their signature line (tree-sitter tags queries; definitions inside function bodies are left out) |
+| Docs | Every other Markdown file, up to 2,000 files, plus files matching "Also index as docs" |
+| Code | Functions, classes, methods, interfaces, types, and enums in TypeScript, JavaScript, Python, and Go (each can be switched off), with their signature line (tree-sitter tags queries; definitions inside function bodies are left out) |
+| Project brief | Generated (see below) |
 | Tasks | One entry per agent that worked here: its first request, the files it changed, the commands it ran with their exit codes, and how its last turn ended |
 
-Documents are split by heading, so a search hit points at the section that matters. Files over 256 KB, and `node_modules`, `vendor`, `dist`, and `build` folders, are skipped. Search matches words (SQLite full-text search ranked by relevance; `parseItemRef` is also found by "item ref"), not meaning.
+Documents are split by heading, so a search hit points at the section that matters. Files over 256 KB (a setting), files matching "Never index", and `node_modules`, `vendor`, `dist`, and `build` folders are skipped. Search matches words (SQLite full-text search ranked by relevance; `parseItemRef` is also found by "item ref"), not meaning.
 
-**Staying current.** Each time an agent starts or searches, Contextualise compares git's hash of every tracked file with the one it indexed, and reads again only the files that changed, including edits not yet committed. A task entry whose changed files have changed since is marked "needs check", and so is a superseded ADR. A large repository finishes indexing in the background; the first agent's map then says the index is updating.
+**Staying current.** Each time an agent starts or searches, Contextualise checks every file against what it indexed: git's hash in a repository, modified time and size outside git. It reads again only the files that changed, including edits not yet committed. A task entry whose changed files have changed since is marked "needs check", and so is a superseded ADR. A large repository finishes indexing in the background; the first agent's map then says the index is updating.
 
 **Task log.** A task entry is written from the agent's own timeline each time one of its turns ends. No model reads it and nothing leaves the host; secret-shaped text is removed first.
 
-**Where to look.** Project knowledge in the sidebar footer (or "Open project knowledge" in the Command Center) shows each indexed repository: what is indexed, its recent tasks, a search with filters by kind, and Re-index. Attach > Project knowledge sends one entry (a document section, a code symbol, or a task) with your prompt.
+**Knowledge from existing sessions:**
 
-Folders outside git get no project knowledge.
+- **Import past sessions** (on the Project knowledge screen) adds a task entry for every existing agent of the project from its timeline. It uses no model.
+- **Generated knowledge** is off until you turn it on in Settings > Contextualise > Generated knowledge, like Memorise's suggestions from sessions. When on:
+  - a background agent reads a session once the agent has been quiet for 20 minutes (a setting), and writes a short title and a 2 to 4 sentence summary into its task entry;
+  - after every 5 summaries it writes a project brief: what the project is, its main areas, and recent work.
+  - "Generate summaries and brief" does the same for every past session on request.
+- **Limits:**
+  - Each session is read by its own provider when that is Claude or Codex; OpenCode sessions, which cannot be kept read-only, are read by Claude, or you choose one provider for all.
+  - Secret-shaped text is removed before anything is sent.
+  - Background agents have no tools, run in a hidden workspace, and are archived when done.
+  - At most 20 runs a day (a setting).
+  - A session is summarised again only after new turns.
+- **Never generated here:** decisions, pitfalls, and preferences; Memorise keeps those.
+- **Generated titles** also name agents in plain folders in Attach > Agent conversation, where Paseo has only the first request.
+
+**Where to look.** Project knowledge in the sidebar footer (or "Open project knowledge" in the Command Center) shows each project:
+
+- what is indexed, the brief, and recent tasks with their summaries;
+- a search with filters by kind;
+- a switch to turn the project off, pins (pinned entries always appear in the map), Import past sessions, Generate summaries and brief, and Re-index.
+
+Attach > Project knowledge sends one entry (a document section, a code symbol, or a task) with your prompt.
 
 ### With Memorise
 
@@ -132,6 +174,14 @@ Settings > Contextualise:
 | | Suggest memory fixes to Memorise | on (acts only when Memorise 0.10 or later runs) |
 | | Project map length (lines); 0 gives the tools without a map | 40 (0 to 150) |
 | | Knowledge tools port (used after a reload) | 6791 (1024 to 65535, not 6790) |
+| | Map parts: brief, pinned, architecture, conventions, ADRs, folders, tasks; recent tasks | all on; 3 (0 to 10) |
+| | Symbols per language (TypeScript, JavaScript, Python, Go) | all on |
+| | Also index as docs; never index (comma-separated globs) | empty |
+| | Largest file to index (KB); most documents per project | 256 (16 to 2,048); 2,000 (100 to 20,000) |
+| | Approve the knowledge tools automatically | on |
+| Generated knowledge | Generate session summaries and project briefs | off |
+| | Read sessions with: the session's own provider, Claude, or Codex | the session's own |
+| | Summarise after a quiet period of (minutes); background runs per day | 20 (5 to 240); 20 (1 to 200) |
 | Attachments | Longest attachment (characters) | 40,000 (1,000 to 200,000) |
 | | Recent turns per agent | 6 (1 to 50) |
 | | Terminal lines to attach | 200 (10 to 5,000) |

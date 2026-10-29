@@ -40,7 +40,7 @@ async function fetchModel(paseo: PaseoApi, provider: FetchProvider, configured: 
   const { models } = await paseo.providers.listModels(provider);
   if (configured) {
     if (models?.some((model) => model.id === configured)) return `${provider}/${configured}`;
-    throw new Error(`Paseo lists no ${provider} model "${configured}"; change it in Settings > Contextualise > Fetching`);
+    throw new Error(`Paseo lists no ${provider} model "${configured}"; change it in Settings > Contextualise > Fetching (the models there are used for every background agent)`);
   }
   const chosen = models?.find((model) => model.isDefault) ?? models?.[0];
   if (!chosen) throw new Error(`Paseo lists no ${provider} models`);
@@ -53,6 +53,17 @@ export interface FetchJob {
   prompt: string;
   model: string;
   timeoutMs: number;
+}
+
+// Any background agent: a locked-down Claude or Codex agent in the hidden worker workspace that
+// answers one prompt in the shape of `outputSchema`, then is archived.
+export interface WorkerJob {
+  provider: FetchProvider;
+  title: string;
+  prompt: string;
+  model: string;
+  timeoutMs: number;
+  outputSchema: Record<string, unknown>;
 }
 
 const workspaceLookups = new Map<string, Promise<string>>();
@@ -78,17 +89,23 @@ export function workerWorkspace(paseo: PaseoApi, root: string): Promise<string> 
   return next;
 }
 
-// Runs one fetch worker to its final message. The worker is archived afterwards whatever happens.
-export async function runFetchWorker(paseo: PaseoApi, root: string, job: FetchJob, onCreated: (agentId: string) => void): Promise<string> {
+// Runs one fetch worker to its final message.
+export function runFetchWorker(paseo: PaseoApi, root: string, job: FetchJob, onCreated: (agentId: string) => void): Promise<string> {
+  const { route, ...rest } = job;
+  return runWorker(paseo, root, { ...rest, provider: route.provider, outputSchema: FETCH_OUTPUT_SCHEMA as unknown as Record<string, unknown> }, onCreated);
+}
+
+// Runs one background agent to its final message. The agent is archived afterwards whatever happens.
+export async function runWorker(paseo: PaseoApi, root: string, job: WorkerJob, onCreated: (agentId: string) => void): Promise<string> {
   const workspaceId = await workerWorkspace(paseo, root);
   let handle: Awaited<ReturnType<PaseoApi["agents"]["create"]>> | null = null;
   try {
-    const { modeId, options } = LOCKDOWN[job.route.provider];
+    const { modeId, options } = LOCKDOWN[job.provider];
     handle = await paseo.workspaces.ref(workspaceId).agents.create({
       title: job.title.slice(0, 120),
-      config: { provider: await fetchModel(paseo, job.route.provider, job.model), modeId, options },
+      config: { provider: await fetchModel(paseo, job.provider, job.model), modeId, options },
       prompt: job.prompt,
-      outputSchema: FETCH_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+      outputSchema: job.outputSchema,
     });
     onCreated(handle.id);
     const deadline = Date.now() + job.timeoutMs;
@@ -110,6 +127,6 @@ export async function runFetchWorker(paseo: PaseoApi, root: string, job: FetchJo
       return result.lastMessage;
     }
   } finally {
-    await handle?.archive().catch((error: unknown) => console.error(`[contextualise] could not archive fetch worker ${handle?.id}: ${String(error)}`));
+    await handle?.archive().catch((error: unknown) => console.error(`[contextualise] could not archive background agent ${handle?.id}: ${String(error)}`));
   }
 }

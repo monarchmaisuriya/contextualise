@@ -104,13 +104,17 @@ export interface FetchReply {
 }
 
 // Workers answer with JSON, sometimes wrapped in a Markdown code fence or a sentence.
-export function parseFetchReply(reply: string): FetchReply {
+export function jsonObjectIn(reply: string): unknown {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(reply);
   const candidate = (fenced ? fenced[1] : reply).trim();
   const start = candidate.indexOf("{");
   const end = candidate.lastIndexOf("}");
   if (start < 0 || end <= start) throw new Error(`The worker's reply had no JSON object: "${reply.slice(0, 120)}"`);
-  const data: unknown = JSON.parse(candidate.slice(start, end + 1));
+  return JSON.parse(candidate.slice(start, end + 1));
+}
+
+export function parseFetchReply(reply: string): FetchReply {
+  const data = jsonObjectIn(reply);
   const field = (name: string) => Reflect.get(Object(data), name);
   const found = field("found");
   const title = field("title");

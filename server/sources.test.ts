@@ -178,6 +178,13 @@ test("times read as short relative phrases", () => {
   expect(timeAgo("not a date", now)).toBe("");
 });
 
+test("agents with a generated session title show it and are found by it", async () => {
+  const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
+  const titled = new Map([["new", "Fixed the logout redirect"]]);
+  const items = await searchAgents(fakePaseo({ new: page() }).paseo, new Memo(30_000), directory, NO_PINS, "srv", "redirect", options, titled);
+  expect(items.map((item) => [item.id, item.title])).toEqual([["new", "Fixed the logout redirect"]]);
+});
+
 test("a running agent says so in its picker row", async () => {
   const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
   const { paseo } = fakePaseo({ r: page() });

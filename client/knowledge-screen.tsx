@@ -3,7 +3,7 @@ import { copyText, Icon, ScrollView, TextInput, useToast } from "@getpaseo/plugi
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { KIND_LABELS, KNOWLEDGE_KINDS, type KnowledgeKind, listProjectsRpc, listTasksRpc, type Project, readKnowledgeRpc, reindexRpc, type SearchHit, searchKnowledgeRpc, type TaskSummary } from "../shared/knowledge";
+import { BRIEF_ID, generateKnowledgeRpc, KIND_LABELS, KNOWLEDGE_KINDS, type KnowledgeKind, listProjectsRpc, listTasksRpc, pinEntryRpc, type Project, readKnowledgeRpc, reindexRpc, type SearchHit, searchKnowledgeRpc, setProjectEnabledRpc, type TaskSummary } from "../shared/knowledge";
 import { errorText } from "./errors";
 import { ICONS } from "./icons";
 import { ago, Button, Chip, IconButton, plural, SectionTitle, type Styles, useStyles } from "./kit";
@@ -16,7 +16,7 @@ function where(hit: Pick<SearchHit, "path" | "line">): string {
 }
 
 // What each kind's count counts: documents are counted by section, code by definition.
-const COUNT_NOUNS: Record<KnowledgeKind, string> = { architecture: "architecture section", convention: "convention section", adr: "ADR section", doc: "doc section", code: "code symbol", task: "task" };
+const COUNT_NOUNS: Record<KnowledgeKind, string> = { brief: "brief", architecture: "architecture section", convention: "convention section", adr: "ADR section", doc: "doc section", code: "code symbol", task: "task" };
 
 function countsLine(project: Project): string {
   const parts = KNOWLEDGE_KINDS.filter((kind) => project.counts[kind] > 0).map((kind) => plural(project.counts[kind], COUNT_NOUNS[kind]));
@@ -24,7 +24,7 @@ function countsLine(project: Project): string {
 }
 
 // One result: its kind, place, and snippet; pressed, it opens the full entry below it.
-function HitRow({ hit, repoKey, styles }: { hit: SearchHit; repoKey: string; styles: Styles }) {
+function HitRow({ hit, repoKey, pinned, onPin, styles }: { hit: SearchHit; repoKey: string; pinned: boolean; onPin(pinned: boolean): void; styles: Styles }) {
   const [open, setOpen] = useState(false);
   const read = useRpc(readKnowledgeRpc);
   const entry = useQuery({ queryKey: ["contextualise", "knowledge", "read", repoKey, hit.id], queryFn: () => read({ repoKey, id: hit.id }), enabled: open });
@@ -38,6 +38,7 @@ function HitRow({ hit, repoKey, styles }: { hit: SearchHit; repoKey: string; sty
             {hit.title}
           </Text>
           <Text style={styles.faint}>{KIND_LABELS[hit.kind]}</Text>
+          <IconButton icon={pinned ? ICONS.unpin : ICONS.pin} label={`${pinned ? "Unpin" : "Pin"} ${hit.title} ${pinned ? "from" : "to"} the project map`} tone={pinned ? "accent" : "muted"} onPress={() => onPin(!pinned)} styles={styles} />
         </View>
         <Text style={styles.faint} numberOfLines={1}>
           {hit.kind === "task" ? (hit.path ? `changed ${hit.path}` : "task") : where(hit)}
@@ -79,10 +80,15 @@ function TaskRow({ task, styles }: { task: TaskSummary; styles: Styles }) {
     <View style={{ gap: 2, paddingVertical: 4 }}>
       <View style={styles.row}>
         <Text style={[styles.text, styles.grow]} numberOfLines={1}>
-          {task.title}
+          {task.generatedTitle ?? task.title}
         </Text>
         <Text style={task.outcome === "completed" ? styles.faint : styles.danger}>{task.outcome}</Text>
       </View>
+      {task.summary ? (
+        <Text style={styles.muted} numberOfLines={3}>
+          {task.summary}
+        </Text>
+      ) : null}
       <Text style={styles.faint} numberOfLines={1}>
         {ago(task.endedAt)} · {task.provider}
         {task.files.length > 0 ? ` · ${task.files.slice(0, 3).join(", ")}${task.files.length > 3 ? `, +${task.files.length - 3}` : ""}` : ""}
@@ -92,12 +98,12 @@ function TaskRow({ task, styles }: { task: TaskSummary; styles: Styles }) {
   );
 }
 
-// Project knowledge per repository: search its docs, ADRs, code, and finished tasks, see what is
+// Project knowledge per project: search its docs, ADRs, code, and finished tasks, see what is
 // indexed, and re-index it. Agents get the same through their knowledge tools.
 export function KnowledgeScreen({ theme, layout }: PluginScreenProps) {
   const styles = useStyles(theme, layout.compact);
   const listProjects = useRpc(listProjectsRpc);
-  const projects = useQuery({ queryKey: PROJECTS_QUERY, queryFn: () => listProjects({}), refetchInterval: (query) => (query.state.data?.projects.some((project) => project.indexing) ? 3_000 : false) });
+  const projects = useQuery({ queryKey: PROJECTS_QUERY, queryFn: () => listProjects({}), refetchInterval: (query) => (query.state.data?.projects.some((project) => project.indexing || project.generation?.state === "running") ? 3_000 : false) });
   const [repoKey, setRepoKey] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [kinds, setKinds] = useState<KnowledgeKind[]>([]);
@@ -115,7 +121,18 @@ export function KnowledgeScreen({ theme, layout }: PluginScreenProps) {
   const listTasks = useRpc(listTasksRpc);
   const tasks = useQuery({ queryKey: ["contextualise", "knowledge", "tasks", repoKey], queryFn: () => listTasks({ repoKey: repoKey ?? "", limit: 20 }), enabled: repoKey !== null && query.trim() === "" });
   const reindex = useRpc(reindexRpc);
+  const setProjectEnabled = useRpc(setProjectEnabledRpc);
+  const generate = useRpc(generateKnowledgeRpc);
+  const pin = useRpc(pinEntryRpc);
+  const read = useRpc(readKnowledgeRpc);
+  // The brief is read like any entry; a project without one answers with an error, shown as nothing.
+  const brief = useQuery({ queryKey: ["contextualise", "knowledge", "brief", repoKey], queryFn: () => read({ repoKey: repoKey ?? "", id: BRIEF_ID }), enabled: repoKey !== null, retry: false });
   const toast = useToast();
+  // A project change, then fresh project, task, and brief data; failures as readable toasts.
+  const change = (work: Promise<unknown>) =>
+    void work
+      .then(() => Promise.all([projects.refetch(), tasks.refetch(), brief.refetch()]))
+      .catch((error: unknown) => toast.error(errorText(error)));
   const note = projects.data ? memoriseNote(projects.data.memorise) : null;
   const toggleKind = (kind: KnowledgeKind) => setKinds((current) => (current.includes(kind) ? current.filter((entry) => entry !== kind) : [...current, kind]));
 
@@ -125,7 +142,7 @@ export function KnowledgeScreen({ theme, layout }: PluginScreenProps) {
       {projects.data && all.length === 0 ? (
         <View style={styles.card}>
           <Text style={styles.title}>No project knowledge yet</Text>
-          <Text style={styles.muted}>Start an agent in a git repository. Its docs, conventions, ADRs, and code are indexed then, and each task an agent finishes there is logged.</Text>
+          <Text style={styles.muted}>Start an agent in a project folder, in git or not. Its docs, conventions, ADRs, and code are indexed then, and each task an agent finishes there is logged.</Text>
         </View>
       ) : null}
       {all.length > 1 ? (
@@ -147,7 +164,19 @@ export function KnowledgeScreen({ theme, layout }: PluginScreenProps) {
                 {project.indexing ? " · indexing" : project.indexedAt ? ` · indexed ${ago(project.indexedAt)}` : ""}
               </Text>
               {project.problem ? <Text style={styles.danger}>{project.problem}</Text> : null}
+              {project.generation ? (
+                <Text style={project.generation.state === "failed" ? styles.danger : styles.faint} numberOfLines={2}>
+                  {project.generation.state === "running" ? `${project.generation.message}…` : `${project.generation.state === "failed" ? "Failed" : "Done"} ${ago(project.generation.at)}: ${project.generation.message}`}
+                </Text>
+              ) : null}
             </View>
+            <Chip
+              label={project.enabled ? "On" : "Off"}
+              on={project.enabled}
+              onPress={() => change(setProjectEnabled({ repoKey: project.repoKey, enabled: !project.enabled }))}
+              accessibilityLabel={`Project knowledge for ${project.name} is ${project.enabled ? "on; turn it off" : "off; turn it on"}`}
+              styles={styles}
+            />
             <IconButton
               icon={ICONS.refresh}
               label={`Re-index ${project.name}`}
@@ -160,6 +189,18 @@ export function KnowledgeScreen({ theme, layout }: PluginScreenProps) {
               }
             />
           </View>
+          <View style={styles.wrap}>
+            <Button label="Import past sessions" icon={ICONS.fetch} styles={styles} disabled={project.generation?.state === "running"} onPress={() => change(generate({ repoKey: project.repoKey, generate: false }))} />
+            <Button label="Generate summaries and brief" icon={ICONS.knowledge} styles={styles} disabled={project.generation?.state === "running"} onPress={() => change(generate({ repoKey: project.repoKey, generate: true }))} />
+          </View>
+          {brief.data ? (
+            <View style={styles.card}>
+              <SectionTitle label="Project brief" hint={brief.data.needsCheck ? "needs check" : "generated; verify"} styles={styles} />
+              <Text style={styles.text} selectable>
+                {brief.data.body}
+              </Text>
+            </View>
+          ) : null}
           <View style={[styles.inline, styles.input, { borderWidth: 0 }]}>
             <Icon name={ICONS.search} size={15} color={styles.colors.foregroundMuted} />
             <TextInput style={[styles.grow, { color: styles.colors.foreground }]} value={query} onChangeText={setQuery} placeholder="Search docs, ADRs, code, and past tasks" accessibilityLabel="Search project knowledge" />
@@ -175,13 +216,15 @@ export function KnowledgeScreen({ theme, layout }: PluginScreenProps) {
               <SectionTitle label="Results" count={hits.data?.hits.length} styles={styles} />
               {hits.error ? <Text style={styles.danger}>{errorText(hits.error)}</Text> : null}
               {hits.data?.hits.length === 0 ? <Text style={styles.muted}>Nothing matches. Try other words, or fewer.</Text> : null}
-              {hits.data?.hits.map((hit) => <HitRow key={hit.id} hit={hit} repoKey={project.repoKey} styles={styles} />)}
+              {hits.data?.hits.map((hit) => (
+                <HitRow key={hit.id} hit={hit} repoKey={project.repoKey} pinned={project.pins.includes(hit.id)} onPin={(pinned) => change(pin({ repoKey: project.repoKey, id: hit.id, pinned }))} styles={styles} />
+              ))}
             </>
           ) : (
             <>
               <SectionTitle label="Recent tasks" count={tasks.data?.tasks.length} hint="from each finished agent turn" styles={styles} />
               <View style={styles.card}>
-                {tasks.data?.tasks.length === 0 ? <Text style={styles.muted}>No tasks yet. A task is logged when an agent in this repository finishes a turn.</Text> : null}
+                {tasks.data?.tasks.length === 0 ? <Text style={styles.muted}>No tasks yet. A task is logged when an agent in this project finishes a turn, or use Import past sessions.</Text> : null}
                 {tasks.data?.tasks.map((task) => <TaskRow key={task.id} task={task} styles={styles} />)}
               </View>
             </>

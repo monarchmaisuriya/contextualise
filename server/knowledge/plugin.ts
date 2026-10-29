@@ -2,19 +2,23 @@ import { readFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import { dirname, join } from "node:path";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
-import type { SnapshotSettings } from "../../shared/contracts";
-import { KIND_LABELS, listProjectsRpc, listTasksRpc, memoriseStatusRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc } from "../../shared/knowledge";
+import { type SnapshotSettings, splitGlobs } from "../../shared/contracts";
+import { generateKnowledgeRpc, KIND_LABELS, listProjectsRpc, listTasksRpc, memoriseStatusRpc, pinEntryRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc, setProjectEnabledRpc } from "../../shared/knowledge";
 import type { PaseoApi } from "../paseo-types";
 import { capTitle } from "../rows";
 import { loadTokenSecret, TokenAuthority } from "./auth";
 import { KnowledgeBase } from "./base";
-import { trackedBlobs } from "./indexer";
+import { currentBlobs } from "./indexer";
+import { projectRoot } from "./git";
 import { KNOWLEDGE_SERVER, KnowledgeMcp, knowledgeServerEntry } from "./mcp";
+import { Generator } from "./generate";
 import { MemoriseLink, memorySuggestions } from "./memorise";
+import { ProjectPrefsStore } from "./prefs";
 import { buildSection, unavailableSection, withoutSection, withSection } from "./section";
 import { KnowledgeService } from "./service";
 import { SymbolReader } from "./symbols";
 import { buildTask, type TimelineEntry } from "./task-log";
+import { runWorker } from "../workers";
 
 const PLUGIN_ID = "contextualise";
 // Paseo fails agent creation when a hook takes 30 s; indexing past this continues in the background.
@@ -59,7 +63,15 @@ async function readTimeline(paseo: PaseoApi, agentId: string): Promise<TimelineE
 
 // Project knowledge: the index, the agents' read tools and project map, the task log, the screens'
 // RPCs, and the link to Memorise. Returns the cleanup.
-export function contributeKnowledge(server: PluginServerContext, deps: KnowledgeDeps): () => Promise<void> {
+export interface KnowledgeContribution {
+  stop: () => Promise<void>;
+  // Generated session titles by agent id, for picker rows of agents Paseo has no title for.
+  generatedTitles: () => Promise<ReadonlyMap<string, string>>;
+}
+
+const TITLES_CACHE_MS = 30_000;
+
+export function contributeKnowledge(server: PluginServerContext, deps: KnowledgeDeps): KnowledgeContribution {
   // The newest Paseo handle from any hook or RPC: background work (symbol loading, Memorise checks
   // after a re-index) runs between calls and needs one.
   let paseoHandle: PaseoApi | null = null;
@@ -85,7 +97,15 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   const base = new KnowledgeBase({
     root: deps.resolveRoot,
     symbols: new SymbolReader(pluginDir),
-    codeSymbols: async () => (await deps.settings()).knowledgeCodeSymbols,
+    indexOptions: async () => {
+      const values = await deps.settings();
+      return {
+        codeSymbols: values.knowledgeCodeSymbols,
+        classify: { exclude: splitGlobs(values.knowledgeExcludeGlobs), extraDocs: splitGlobs(values.knowledgeExtraDocGlobs), languages: new Set(values.knowledgeLanguages) },
+        maxFileBytes: values.knowledgeMaxFileKb * 1024,
+        maxDocuments: values.knowledgeMaxDocs,
+      };
+    },
     onChanges: async (repo, store, changes) => {
       const values = await deps.settings();
       if (!values.knowledgeEnabled || !values.memoriseSuggestions || !(await memoriseAvailable())) return;
@@ -93,6 +113,8 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       if (sent > 0) console.log(`[contextualise] suggested ${sent} memory change(s) to Memorise for ${repo.key}`);
     },
   });
+  const prefs = new ProjectPrefsStore(async () => join(await deps.resolveRoot(), "knowledge"));
+  const generator = new Generator({ base, prefs, root: deps.resolveRoot, settings: deps.settings, runWorker, readTimeline });
   const service = new KnowledgeService(base, async () => ((await memoriseAvailable()) ? (repoKey, path) => link.related(repoKey, path) : null));
 
   const runtime = (async () => {
@@ -112,6 +134,28 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   })();
   runtime.catch((error: unknown) => console.error(`[contextualise] knowledge failed to start: ${String(error)}`));
 
+  // Paseo projects outside git are project roots: agents in their subfolders share the project, as in
+  // Memorise. Recorded once per plugin start for existing workspaces, then for each new one.
+  let rootsKnown: Promise<void> | null = null;
+  const markRoots = (paseo: PaseoApi) => {
+    rootsKnown ??= (async () => {
+      for (let cursor: string | undefined; ; ) {
+        const page = await paseo.workspaces.list({ page: { limit: 200, ...(cursor ? { cursor } : {}) } });
+        for (const workspace of page.entries) await base.markRoot(workspace.projectRootPath).catch(() => undefined);
+        if (!page.pageInfo.hasMore || !page.pageInfo.nextCursor) break;
+        cursor = page.pageInfo.nextCursor;
+      }
+    })().catch((error: unknown) => {
+      rootsKnown = null;
+      console.error(`[contextualise] could not record project roots: ${String(error)}`);
+    });
+    return rootsKnown;
+  };
+  server.on("workspace.created", async ({ workspace }, { paseo }) => {
+    remember(paseo);
+    await base.markRoot(workspace.cwd).catch((error: unknown) => console.error(`[contextualise] could not record ${workspace.cwd} as a project root: ${String(error)}`));
+  });
+
   // Adds the project map and the read tools to every new agent in a git repository. Knowledge enriches
   // an agent; it must never stop one being created, so every failure becomes one line in the section.
   server.before("agent.create", async ({ request }, { paseo }) => {
@@ -122,12 +166,24 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     try {
       const values = await deps.settings();
       if (!values.knowledgeEnabled) return { ...request, config: stripped };
+      await markRoots(paseo);
       const repo = await base.repoFor(config.cwd);
       if (!repo) return { ...request, config: stripped };
+      const projectPrefs = await prefs.get(repo.key);
+      if (!projectPrefs.enabled) return { ...request, config: stripped };
       const { tokens, port, problem } = await runtime;
       if (problem) return { ...request, config: { ...stripped, systemPrompt: withSection(stripped.systemPrompt, unavailableSection(problem)) } };
       const updating = (await base.refresh(repo, HOOK_WAIT_MS)) === "updating";
-      const section = buildSection({ repoKey: repo.key, store: await base.open(repo), maxLines: values.knowledgeMapLines, memoriseAvailable: await memoriseAvailable(), updating });
+      const section = buildSection({
+        repoKey: repo.key,
+        store: await base.open(repo),
+        maxLines: values.knowledgeMapLines,
+        memoriseAvailable: await memoriseAvailable(),
+        updating,
+        parts: values.knowledgeMapParts,
+        recentTasks: values.knowledgeRecentTasks,
+        pins: projectPrefs.pins,
+      });
       return {
         ...request,
         config: {
@@ -145,7 +201,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   // The knowledge tools only read the agent's own repository's index, so their calls are approved.
   server.on("agent.permission_requested", async ({ agent, request }, { paseo }) => {
     const isKnowledge = request.name.startsWith(`mcp__${KNOWLEDGE_SERVER}__`) || (request.name === "CodexMcpElicitation" && request.metadata?.serverName === KNOWLEDGE_SERVER);
-    if (!isKnowledge) return;
+    if (!isKnowledge || !(await deps.settings()).knowledgeAutoApproveTools) return;
     await remember(paseo).agents.ref(agent.id).respondToPermission({ requestId: request.id, response: { behavior: "allow" } });
   });
 
@@ -155,11 +211,14 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     try {
       if (!(await deps.settings()).knowledgeEnabled) return;
       const repo = await base.repoFor(agent.cwd);
-      if (!repo) return;
+      if (!repo || !(await prefs.get(repo.key)).enabled) return;
       const task = buildTask({ agent, outcome: outcome.kind, entries: await readTimeline(paseo, agent.id), top: repo.top, now: new Date().toISOString() });
       if (!task) return;
-      const blobs = await trackedBlobs(repo.top);
-      await base.recordTask(repo, { ...task, citations: task.files.map((path) => ({ path, blob: blobs.get(path) ?? "missing" })) });
+      const blobs = await currentBlobs(repo);
+      const previous = (await base.open(repo)).task(task.id);
+      // A turn adds to the session; its generated title and summary stay until they are regenerated.
+      await base.recordTask(repo, { ...previous, ...task, citations: task.files.map((path) => ({ path, blob: blobs.get(path) ?? "missing" })) });
+      await generator.schedule(paseo, repo, agent);
     } catch (error) {
       console.error(`[contextualise] could not record the task of agent ${agent.id}: ${String(error)}`);
     }
@@ -171,7 +230,16 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     return found.repo;
   };
 
-  server.handle(listProjectsRpc, async (_input, { paseo }) => ({ projects: await base.projects(), memorise: await link.state(remember(paseo)) }));
+  server.handle(listProjectsRpc, async (_input, { paseo }) => ({
+    projects: await Promise.all((await base.projects()).map(async (project) => ({ ...project, ...(await prefs.get(project.repoKey)), generation: generator.status(project.repoKey) }))),
+    memorise: await link.state(remember(paseo)),
+  }));
+  server.handle(generateKnowledgeRpc, async ({ repoKey, generate }, { paseo }) => {
+    generator.run(remember(paseo), await project(repoKey), generate);
+    return { started: true };
+  });
+  server.handle(setProjectEnabledRpc, async ({ repoKey, enabled }) => ({ enabled: (await prefs.setEnabled((await project(repoKey)).key, enabled)).enabled }));
+  server.handle(pinEntryRpc, async ({ repoKey, id, pinned }) => ({ pins: (await prefs.setPinned((await project(repoKey)).key, id, pinned)).pins }));
   server.handle(memoriseStatusRpc, async (_input, { paseo }) => ({ state: await link.state(remember(paseo)) }));
   server.handle(searchKnowledgeRpc, async ({ repoKey, query, kinds, limit }, { paseo }) => {
     remember(paseo);
@@ -195,7 +263,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     const { pickerTitleMaxChars } = await deps.settings();
     const items = [];
     for (const found of await base.projects()) {
-      const repo = { key: found.repoKey, top: found.top };
+      const repo = projectRoot(found.repoKey, found.top);
       for (const hit of await service.search(repo, query, [], ATTACH_RESULTS)) {
         const entry = await service.read(repo, hit.id);
         items.push({
@@ -213,13 +281,35 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     return { items: items.slice(0, ATTACH_RESULTS) };
   });
 
-  return async () => {
-    base.close();
-    const resolved = await runtime.catch(() => null);
-    const http = resolved?.http;
-    if (!http) return;
-    const closed = new Promise<void>((done) => http.close(() => done()));
-    http.closeAllConnections();
-    await closed;
+  let titles: { at: number; map: Promise<Map<string, string>> } | null = null;
+  const generatedTitles = () => {
+    if (!titles || Date.now() - titles.at > TITLES_CACHE_MS) {
+      titles = {
+        at: Date.now(),
+        map: (async () => {
+          const map = new Map<string, string>();
+          for (const found of await base.projects()) {
+            const store = (await base.byKey(found.repoKey))?.store;
+            for (const task of store?.tasks(1_000) ?? []) if (task.generatedTitle) map.set(task.agentId, task.generatedTitle);
+          }
+          return map;
+        })(),
+      };
+    }
+    return titles.map;
+  };
+
+  return {
+    generatedTitles,
+    stop: async () => {
+      generator.stop();
+      base.close();
+      const resolved = await runtime.catch(() => null);
+      const http = resolved?.http;
+      if (!http) return;
+      const closed = new Promise<void>((done) => http.close(() => done()));
+      http.closeAllConnections();
+      await closed;
+    },
   };
 }
