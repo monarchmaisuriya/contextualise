@@ -2,6 +2,12 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.16.1 - 2026-10-29
+
+### Fixed
+
+- The Project knowledge screen named repositories after whichever Paseo worktree an agent last ran in, a random folder name such as "terrific-eel". Repositories are now named from the repository itself ("orders-api" for github.com/acme/orders-api), and a repository without a remote by its main checkout's folder. Folders outside git keep their own folder name.
+
 ## 0.16.0 - 2026-10-29
 
 ### Changed
