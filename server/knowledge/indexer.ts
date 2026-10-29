@@ -6,7 +6,7 @@ import { git, type ProjectRoot } from "./git";
 import { folderSignatures } from "./walk";
 import { adrInfo, type AdrInfo, chunkMarkdown, classify, type ClassifyOptions } from "./sources";
 import type { KnowledgeStore } from "./store";
-import type { CodeSymbol, SymbolReader } from "./symbols";
+import type { CodeSymbol, ParsedCode, SymbolReader } from "./symbols";
 
 const GIT_LIST_TIMEOUT_MS = 20_000;
 
@@ -92,14 +92,15 @@ export async function indexRepo(repo: ProjectRoot, store: KnowledgeStore, option
     const text = redactSecrets(await readFile(file, "utf8"));
     const before = { symbols: store.symbolsIn(path), adr: kind === "adr" ? store.sourceStatus(path) : null };
     if (kind === "code") {
-      let symbols: CodeSymbol[];
+      let parsed: ParsedCode;
       try {
-        symbols = await options.symbols.read(path, text);
+        parsed = await options.symbols.parse(path, text);
       } catch (error) {
         console.error(`[contextualise] could not list symbols in ${path}: ${String(error)}`);
         continue;
       }
-      store.replaceSource({ path, kind, blob, chunks: [], symbols });
+      const { symbols, imports } = parsed;
+      store.replaceSource({ path, kind, blob, chunks: [], symbols, imports });
       const names = (list: CodeSymbol[]) => new Set(list.map((symbol) => `${symbol.kind}:${symbol.name}`));
       const now = names(symbols);
       const was = names(before.symbols);

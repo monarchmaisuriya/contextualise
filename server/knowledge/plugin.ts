@@ -3,7 +3,7 @@ import type { Server } from "node:http";
 import { dirname, join } from "node:path";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { type SnapshotSettings, splitGlobs } from "../../shared/contracts";
-import { browseKnowledgeRpc, generateKnowledgeRpc, KIND_LABELS, type SearchHit, listProjectsRpc, listTasksRpc, memoriseStatusRpc, pinEntryRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc, setProjectEnabledRpc } from "../../shared/knowledge";
+import { areaRpc, BRIEF_ID, browseKnowledgeRpc, describeProjectRpc, explainAreaRpc, generateKnowledgeRpc, KIND_LABELS, type SearchHit, listProjectsRpc, listTasksRpc, memoriseStatusRpc, pinEntryRpc, projectFactsRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc, setProjectEnabledRpc } from "../../shared/knowledge";
 import type { PaseoApi } from "../paseo-types";
 import { capTitle } from "../rows";
 import { loadTokenSecret, TokenAuthority } from "./auth";
@@ -251,6 +251,19 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     return service.read(await project(repoKey), id);
   });
   server.handle(listTasksRpc, async ({ repoKey, limit, offset }) => service.tasks(await project(repoKey), limit, offset));
+  server.handle(projectFactsRpc, async ({ repoKey }) => service.facts(await project(repoKey)));
+  server.handle(describeProjectRpc, async ({ repoKey }, { paseo }) => {
+    generator.startDescribe(remember(paseo), await project(repoKey));
+    return { started: true };
+  });
+  server.handle(explainAreaRpc, async ({ repoKey, path }, { paseo }) => {
+    const repo = await project(repoKey);
+    // Checked here so an unknown area fails the request instead of a background job.
+    await service.area(repo, path);
+    generator.startExplain(remember(paseo), repo, path);
+    return { started: true };
+  });
+  server.handle(areaRpc, async ({ repoKey, path }) => service.area(await project(repoKey), path));
   server.handle(browseKnowledgeRpc, async ({ repoKey, kind, limit, offset }, { paseo }) => {
     remember(paseo);
     return service.browse(await project(repoKey), kind, limit, offset);
@@ -265,9 +278,12 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   // A project's essentials, newest work last: its description, design docs, team rules, decisions,
   // and recent work.
   const overview = async (repo: ProjectRoot): Promise<SearchHit[]> => {
-    const parts = await Promise.all([service.browse(repo, "brief", 1, 0), service.browse(repo, "architecture", 10, 0), service.browse(repo, "convention", 10, 0), service.browse(repo, "adr", 20, 0)]);
+    const parts = await Promise.all([service.browse(repo, "architecture", 10, 0), service.browse(repo, "convention", 10, 0), service.browse(repo, "adr", 20, 0)]);
+    // The project description by its id: area explanations are descriptions too, and sort before it.
+    const description = await service.read(repo, BRIEF_ID).catch(() => null);
     const { tasks } = await service.tasks(repo, OVERVIEW_TASKS);
     return [
+      ...(description ? [{ ...description, snippet: description.body.replace(/\s+/g, " ").trim().slice(0, 200) }] : []),
       ...parts.flatMap((part) => part.hits),
       ...tasks.map((task) => ({ id: task.id, kind: "task" as const, path: task.files[0] ?? "", line: 0, title: task.generatedTitle ?? task.title, snippet: task.summary ?? task.request, needsCheck: task.needsCheck, relatedMemories: [] })),
     ];

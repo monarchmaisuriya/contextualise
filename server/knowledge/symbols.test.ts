@@ -45,4 +45,54 @@ describe("SymbolReader", () => {
   it("returns nothing for files it has no grammar for", async () => {
     expect(await reader.read("README.md", "# Title")).toEqual([]);
   });
+
+  it("lists TypeScript and JavaScript imports with the names they take", async () => {
+    const text = [
+      'import React from "react";',
+      'import { parseItemRef, type Tag, Store as S } from "../shared/contracts";',
+      'import * as path from "node:path";',
+      'import "./polyfill";',
+      'export { helper } from "./helper.js";',
+      'const fs = require("fs");',
+      "const later = () => import('./lazy');",
+      "console.log(fs);",
+    ].join("\n");
+    expect((await reader.parse("client/a.ts", text)).imports).toEqual([
+      { spec: "react", names: [] },
+      { spec: "../shared/contracts", names: ["parseItemRef", "Tag", "Store"] },
+      { spec: "node:path", names: [] },
+      { spec: "./polyfill", names: [] },
+      { spec: "./helper.js", names: ["helper"] },
+      { spec: "fs", names: [] },
+      { spec: "./lazy", names: [] },
+    ]);
+  });
+
+  it("lists Python imports, including relative ones and ones inside functions", async () => {
+    const text = [
+      "import os, apps.core.models as m",
+      "from apps.orders.models import (Order,",
+      "    OrderLine as Line)",
+      "from . import tasks",
+      "from ..core import *",
+      "def run():",
+      "    from apps.billing.client import charge",
+    ].join("\n");
+    expect((await reader.parse("apps/orders/views.py", text)).imports).toEqual([
+      { spec: "os", names: [] },
+      { spec: "apps.core.models", names: [] },
+      { spec: "apps.orders.models", names: ["Order", "OrderLine"] },
+      { spec: ".", names: ["tasks"] },
+      { spec: "..core", names: [] },
+      { spec: "apps.billing.client", names: ["charge"] },
+    ]);
+  });
+
+  it("lists Go imports", async () => {
+    const text = 'package main\n\nimport (\n  "fmt"\n  db "example.com/m/internal/db"\n)\n';
+    expect((await reader.parse("cmd/api/main.go", text)).imports).toEqual([
+      { spec: "fmt", names: [] },
+      { spec: "example.com/m/internal/db", names: [] },
+    ]);
+  });
 });

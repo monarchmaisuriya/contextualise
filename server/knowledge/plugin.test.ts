@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +7,7 @@ import { snapshotSettingsSchema, type SnapshotSettings } from "../../shared/cont
 import { KNOWLEDGE_SERVER } from "./mcp";
 import { contributeKnowledge } from "./plugin";
 import { SECTION_START } from "./section";
+import { KnowledgeStore } from "./store";
 
 type Handler = (...args: never[]) => unknown;
 
@@ -166,6 +167,30 @@ describe("contributeKnowledge", () => {
       ["Design", "Overview"],
       ["Past work", "Document the queue"],
     ]);
+  });
+
+  it("offers the project description first in Attach, not an area explanation", async () => {
+    await create(top);
+    const dir = join(home, "plugin-data", "contextualise", "knowledge");
+    const store = new KnowledgeStore(join(dir, readdirSync(dir).find((name) => name.endsWith(".sqlite")) as string));
+    store.replaceSource({ path: "(area)/api", kind: "brief", blob: "g", chunks: [{ title: "About api", body: "Serves requests.", line: 1 }] });
+    store.replaceSource({ path: "(brief)", kind: "brief", blob: "g", chunks: [{ title: "About this project", body: "An API.", line: 1 }] });
+    store.close();
+    const { items } = (await (rpcs.get("knowledge.attach-search") as (input: unknown, context: unknown) => Promise<{ items: { identifier: string; title: string }[] }>)({ query: "" }, { paseo }))!;
+    expect(items.map((item) => item.title)).toEqual(["About this project", "Overview"]);
+  });
+
+  it("refuses to explain an unknown area before starting anything, and starts writing a description", async () => {
+    await create(top);
+    const explain = rpcs.get("knowledge.explain-area") as (input: unknown, context: unknown) => Promise<{ started: boolean }>;
+    const describe = rpcs.get("knowledge.describe") as (input: unknown, context: unknown) => Promise<{ started: boolean }>;
+    const projects = rpcs.get("knowledge.projects") as (input: unknown, context: unknown) => Promise<{ projects: { repoKey: string; generation: unknown }[] }>;
+    const [found] = (await projects({}, { paseo })).projects;
+    await expect(explain({ repoKey: found.repoKey, path: "nowhere" }, { paseo })).rejects.toThrow('Unknown area "nowhere"');
+    expect((await projects({}, { paseo })).projects[0].generation).toBeNull();
+    expect(await describe({ repoKey: found.repoKey }, { paseo })).toEqual({ started: true });
+    // Summaries are off in this test, so the job ends at once and says so.
+    await vi.waitFor(async () => expect((await projects({}, { paseo })).projects[0].generation).toMatchObject({ state: "done", message: "summaries are off (Settings > Contextualise > Conversation summaries)" }));
   });
 
   it("records a task when an agent's turn ends, shown to the next agent", async () => {

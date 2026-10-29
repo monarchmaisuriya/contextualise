@@ -63,6 +63,25 @@ describe("knowledge tools", () => {
     expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["knowledge_search", "knowledge_read", "knowledge_outline", "knowledge_history"]);
   });
 
+  it("describes a main area when given its folder", async () => {
+    for (const [path, text] of [
+      ["core/a.ts", "export class Store {}\n"],
+      ["core/b.ts", "export const b = 1;\n"],
+      ["core/c.ts", "export const c = 1;\n"],
+      ["api/x.ts", 'import { Store } from "../core/a";\n'],
+      ["api/y.ts", "export const y = 1;\n"],
+      ["api/z.ts", "export const z = 1;\n"],
+    ]) {
+      mkdirSync(dirname(join(top, path)), { recursive: true });
+      writeFileSync(join(top, path), text);
+    }
+    execFileSync("git", ["-C", top, "add", "-A"]);
+    const client = await connect(tokens.mint({ repoKey: "local/abc", top }));
+    expect(textOf(await client.callTool({ name: "knowledge_outline", arguments: { path: "core/" } }))).toBe(
+      ["Area core: 3 code files, 0 test files", "Used by: api (1 files)", "Key names:", "- Store (class) core/a.ts:1, used in 1 files elsewhere", "Main files:", "- core/a.ts (imported by 1 files)"].join("\n"),
+    );
+  });
+
   it("outlines a file, lists the tasks that changed it, and narrows search to paths", async () => {
     const client = await connect(tokens.mint({ repoKey: "local/abc", top }));
     expect(textOf(await client.callTool({ name: "knowledge_outline", arguments: { path: "shared/contracts.ts" } }))).toBe("1: parseItemRef  [code:shared/contracts.ts:1:parseItemRef]");

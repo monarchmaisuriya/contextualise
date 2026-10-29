@@ -54,18 +54,18 @@ Fetched items can be refreshed automatically (Advanced, off by default): every 1
 Every new agent started in a project, a git repository or a folder outside git, gets two things:
 
 - **A short project map** in its system prompt (40 lines by default). It lists:
-  - the generated project brief, if there is one;
+  - the written project overview, if there is one;
   - the entries you pinned;
   - architecture docs and conventions files by title;
   - ADRs with their status;
-  - top-level folders;
+  - the main areas of code, each with its written line or the names other areas use most;
   - the most recent finished tasks.
 
   The map says it describes the project and is not instructions. Settings choose which parts it lists and how many tasks.
 - **Four read-only tools** over the project's own knowledge:
   - `knowledge_search`: search, optionally limited to files, folders, or globs with `paths`;
   - `knowledge_read`: open one entry;
-  - `knowledge_outline`: a file's sections or functions and classes, with lines;
+  - `knowledge_outline`: a file's sections or functions and classes, with lines; given a main area's folder, what that area uses, what uses it, its key names, and its main files;
   - `knowledge_history`: the finished tasks that changed a file or folder.
 
   Paseo approves their calls automatically, because they only read this project's index (a setting turns that off).
@@ -85,13 +85,23 @@ What is indexed (in git, the files git tracks, so `.gitignore` is honoured):
 | Conventions | `CONTRIBUTING.md`, `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `conventions.md`, `style*.md`, and Markdown under `conventions/` |
 | Decisions (ADRs) | Markdown under `adr/`, `adrs/`, `decisions/`, or `architecture-decisions/`, and `ADR-<n>` files; the status comes from a `Status:` line, front matter, or a Status heading, and "Superseded by" is read too |
 | Docs | Every other Markdown file, up to 2,000 files, plus files matching "Also index as docs" |
-| Code | Functions, classes, methods, interfaces, types, and enums in TypeScript, JavaScript, Python, and Go (each can be switched off), with their signature line (tree-sitter tags queries; definitions inside function bodies are left out) |
-| Project brief | Generated (see below) |
+| Code | Functions, classes, methods, interfaces, types, and enums in TypeScript, JavaScript, Python, and Go (each can be switched off), with their signature line (tree-sitter tags queries; definitions inside function bodies are left out), and each file's imports |
+| Project overview | Written by a background agent (see below) |
 | Tasks | One entry per agent that worked here: its first request, the files it changed, the commands it ran with their exit codes, and how its last turn ended |
 
 Documents are split by heading, so a search hit points at the section that matters. Files over 256 KB (a setting), files matching "Never index", and `node_modules`, `vendor`, `dist`, and `build` folders are skipped. Search matches words (SQLite full-text search ranked by relevance; `parseItemRef` is also found by "item ref"), not meaning.
 
 **Staying current.** Each time an agent starts or searches, Contextualise checks every file against what it indexed: git's hash in a repository, modified time and size outside git. It reads again only the files that changed, including edits not yet committed. A task entry whose changed files have changed since is marked "needs check", and so is a superseded ADR. A large repository finishes indexing in the background; the first agent's map then says the index is updating.
+
+**Understanding a project.** From the index, Contextualise works out the project's structure, with no model:
+
+- **Main areas:** folders of code. A folder holding more than 40% of the code with three or more subfolders of code (`apps/`, `packages/`, `src/`) is split into its subfolders. Test, migration, and fixture folders count toward the folder above them, and areas under three files are listed together as Other.
+- **Links:** which areas import which, counted by files. Imports are resolved for relative TypeScript and JavaScript paths, Python modules (from the root, `src/`, and folders with `manage.py`, `setup.py`, or `pyproject.toml`), and Go packages under `go.mod`'s module. Path aliases and dynamic imports are not followed.
+- **Key names:** the classes and functions other areas import most; **main files:** the files imported by the most files.
+- **Libraries:** the dependencies declared in `package.json`, `requirements*.txt`, `pyproject.toml`, and `go.mod`, ranked by how many files import them.
+- **Busy lately:** the files changed most in the last 90 days, from `git log` (read-only, at most every 10 minutes; projects outside git have none).
+
+These are rebuilt whenever files change. On a 7,000-file Python repository the first full read took about 35 seconds.
 
 **Task log.** A task entry is written from the agent's own timeline each time one of its turns ends. No model reads it and nothing leaves the host; secret-shaped text is removed first.
 
@@ -100,8 +110,10 @@ Documents are split by heading, so a search hit points at the section that matte
 - **Add past conversations** (on the Project knowledge screen) adds a task entry for every existing agent of the project from its timeline. It uses no model.
 - **Generated knowledge** is off until you turn it on in Settings > Contextualise > Conversation summaries, like Memorise's suggestions from sessions. When on:
   - a background agent reads a session once the agent has been quiet for 20 minutes (a setting), and writes a short title and a 2 to 4 sentence summary into its task entry;
-  - after every 5 summaries it writes a project brief: what the project is, its main areas, and recent work.
-  - "Summarise past conversations" does the same for every past conversation on request.
+  - it writes a project overview (what the project does, its main parts, recent work) and one line per main area, from the structure above, the README, document titles, and recent work. It is written when there is none, again when the structure has changed and the overview is a week old, and on "Rewrite". It replaces the project brief of earlier versions.
+  - on an area's page, "Explain this area" writes how that area works, from its facts and files; the explanation is searchable like any entry.
+  - "Summarise past conversations" summarises every past conversation on request and rewrites the overview.
+  - Diagrams and numbers never come from a model: only the overview, the area lines, and explanations are written, and each says so.
 - **Limits:**
   - Each session is read by its own provider when that is Claude or Codex; OpenCode sessions, which cannot be kept read-only, are read by Claude, or you choose one provider for all.
   - Secret-shaped text is removed before anything is sent.
@@ -113,9 +125,12 @@ Documents are split by heading, so a search hit points at the section that matte
 
 **Where to look.** Project knowledge in the sidebar footer (or "Open project knowledge" in the Command Center) shows each project:
 
-- what is indexed, the brief, and recent tasks with their summaries;
-- a search with filters by kind;
-- a switch to turn the project off, pins (pinned entries always appear in the map), Add past conversations, Summarise past conversations, and Re-index.
+- **Overview:** the project description (the written overview, or the README's opening), its size and languages, its most used libraries, a diagram of how the main areas connect, area cards, the files busy lately, design documents, decisions, and team rules by heading, and recent work.
+- **An area's page:** its diagram of the areas it uses and that use it, its key names, main files, busy files, documents, recent work, and its explanation.
+- **Areas, Documents, Code, and Past work** list everything of each, a page at a time; search covers all of it.
+- A switch to turn the project off, pins (pinned entries always appear in the map), Add past conversations, Summarise past conversations, and Re-index.
+
+Diagrams are drawn by Paseo's own Markdown renderer (Mermaid), so they follow the theme and open full screen. The project's documents render as Markdown; text an agent wrote stays plain text, so it cannot carry links or images.
 
 Attach > Project knowledge sends one entry (a document section, a code symbol, or a task) with your prompt.
 
@@ -161,7 +176,7 @@ Attaching copies other agents' conversations and terminal output into the prompt
 
 Tags and pinned agents are stored on the daemon host in `<PASEO_HOME>/plugin-data/contextualise/tags.json` (version 4; older files are read and written back as version 4 on the next change, after which plugin versions before 0.11.0 refuse the file).
 
-Project knowledge is stored in `<PASEO_HOME>/plugin-data/contextualise/knowledge/`: one SQLite index per repository (a cache of its files, rebuilt if deleted), one `.tasks.jsonl` log per repository (the task entries, which cannot be rebuilt), the tools' token secret, and the list of suggestions already sent to Memorise. With Memorise available, Contextualise also writes suggestion files to `<PASEO_HOME>/plugin-data/memorise/interop/v1/inbox/`. The project map, search results, and task entries reach each agent's model provider as part of its prompt and tool results.
+Project knowledge is stored in `<PASEO_HOME>/plugin-data/contextualise/knowledge/`: one SQLite index per repository (a cache of its files, their imports, the project's structure, and recent change counts, rebuilt if deleted), one `.tasks.jsonl` log per repository (the task entries, which cannot be rebuilt), the tools' token secret, and the list of suggestions already sent to Memorise. With Memorise available, Contextualise also writes suggestion files to `<PASEO_HOME>/plugin-data/memorise/interop/v1/inbox/`. The project map, search results, and task entries reach each agent's model provider as part of its prompt and tool results.
 
 ## Settings
 
@@ -174,7 +189,7 @@ Settings > Contextualise:
 | | Suggest memory fixes to Memorise | on (acts only when Memorise 0.10 or later runs) |
 | | Project map length (lines); 0 gives the tools without a map | 40 (0 to 150) |
 | | Knowledge tools port (used after a reload) | 6791 (1024 to 65535, not 6790) |
-| | Map parts: brief, pinned, architecture, conventions, ADRs, folders, tasks; recent tasks | all on; 3 (0 to 10) |
+| | Map parts: overview, pinned, architecture, conventions, ADRs, main areas, tasks; recent tasks | all on; 3 (0 to 10) |
 | | Symbols per language (TypeScript, JavaScript, Python, Go) | all on |
 | | Also index as docs; never index (comma-separated globs) | empty |
 | | Largest file to index (KB); most documents per project | 256 (16 to 2,048); 2,000 (100 to 20,000) |

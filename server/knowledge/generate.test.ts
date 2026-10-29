@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,7 +7,7 @@ import { snapshotSettingsSchema, type SnapshotSettings } from "../../shared/cont
 import type { PaseoApi } from "../paseo-types";
 import type { WorkerJob } from "../workers";
 import { KnowledgeBase } from "./base";
-import { BRIEF_AFTER_SUMMARIES, Generator } from "./generate";
+import { DESCRIBE_AFTER_MS, Generator, LINE_MAX_CHARS } from "./generate";
 import { ProjectPrefsStore } from "./prefs";
 import { BRIEF_ID } from "./store";
 import { SymbolReader } from "./symbols";
@@ -25,12 +25,15 @@ describe("Generator", () => {
   const jobs: WorkerJob[] = [];
   const runWorker = vi.fn(async (_paseo: PaseoApi, _root: string, job: WorkerJob) => {
     jobs.push(job);
-    return job.prompt.includes("<material>") ? '{"brief": "An API for orders.\\nWork is mostly queue fixes."}' : '```json\n{"title": "Fixed the queue retry", "summary": "Asked to fix retries. Changed the worker. Tests pass."}\n```';
+    if (job.title.startsWith("contextualise: describe")) return JSON.stringify({ overview: "An API for orders.\nWork is mostly queue fixes.", areas: [{ path: "core", line: `Holds the user model. ${"x".repeat(200)}` }, { path: "made-up", line: "Not an area." }] });
+    if (job.title.startsWith("contextualise: explain")) return '{"explanation": "core holds User, which api imports."}';
+    return '```json\n{"title": "Fixed the queue retry", "summary": "Asked to fix retries. Changed the worker. Tests pass."}\n```';
   });
   const paseo = {
     agents: { list: async () => ({ entries: agents.map((agent) => ({ agent })), pageInfo: { hasMore: false, nextCursor: null } }) },
   } as unknown as PaseoApi;
   let generator: Generator;
+  let clock: Date;
   const project = async () => (await base.repoFor(top))!;
 
   beforeEach(() => {
@@ -38,10 +41,19 @@ describe("Generator", () => {
     top = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-generate-repo-")));
     execFileSync("git", ["init", "-q", top]);
     writeFileSync(join(top, "README.md"), "# Orders API\nServes orders.\n");
+    mkdirSync(join(top, "core"));
+    mkdirSync(join(top, "api"));
+    // Areas need three files each, or they are listed together as "Other".
+    for (const name of ["__init__.py", "utils.py"]) {
+      writeFileSync(join(top, "core", name), "");
+      writeFileSync(join(top, "api", name), "");
+    }
+    writeFileSync(join(top, "core", "models.py"), "class User:\n    pass\n");
+    writeFileSync(join(top, "api", "views.py"), "from core.models import User\n");
     execFileSync("git", ["-C", top, "add", "-A"]);
     values = snapshotSettingsSchema.parse({ knowledgeGenerate: true });
     const root = join(home, "plugin-data", "contextualise");
-    base = new KnowledgeBase({ root: async () => root, symbols: new SymbolReader(async () => process.cwd()), indexOptions: async () => ({ codeSymbols: false }) });
+    base = new KnowledgeBase({ root: async () => root, symbols: new SymbolReader(async () => process.cwd()), indexOptions: async () => ({ codeSymbols: true }) });
     timelines = {
       a1: [at({ type: "user_message", text: "Fix the queue retry, token ghp_abcdefghijklmnopqrstuvwxyz0123456789" }), at({ type: "assistant_message", text: "Done." })],
       a2: [at({ type: "user_message", text: "Document the API" })],
@@ -52,6 +64,7 @@ describe("Generator", () => {
       { id: "w", provider: "claude", cwd: root, title: "worker", updatedAt: "2026-10-29T12:00:00.000Z" },
     ];
     jobs.length = 0;
+    clock = new Date("2026-10-29T13:00:00.000Z");
     runWorker.mockClear();
     generator = new Generator({
       base,
@@ -60,7 +73,7 @@ describe("Generator", () => {
       settings: async () => values,
       runWorker,
       readTimeline: async (_paseo, agentId) => timelines[agentId] ?? [],
-      now: () => new Date("2026-10-29T13:00:00.000Z"),
+      now: () => clock,
     });
   });
   afterEach(() => {
@@ -121,40 +134,77 @@ describe("Generator", () => {
     expect(runWorker).toHaveBeenCalledTimes(1);
   });
 
-  it("writes a brief from the task log and documents, kept across re-indexing", async () => {
+  it("writes the overview and a line per area from the project's facts, kept across re-indexing", async () => {
     const repo = await project();
     await generator.importPast(paseo, repo);
-    expect(await generator.brief(paseo, repo)).toBe("done");
-    expect(jobs[0].prompt).toContain('doc: README.md "Orders API"');
-    expect(jobs[0].prompt).toContain("Document the API (failed)");
+    expect(await generator.describe(paseo, repo, false)).toBe("done");
+    const prompt = jobs[0].prompt;
+    expect(prompt).toContain('- area "core" (core): 3 code files');
+    expect(prompt).toContain("names: class User: [core/models.py]");
+    expect(prompt).toContain("used by: api (1)");
+    expect(prompt).toContain("Serves orders.");
+    expect(prompt).toContain("Document the API");
     base.invalidate(repo.key);
     await base.refresh(repo, 10_000);
-    expect((await base.open(repo)).read(BRIEF_ID)?.body).toBe("An API for orders.\nWork is mostly queue fixes.");
+    const store = await base.open(repo);
+    expect(store.read(BRIEF_ID)?.body).toBe("An API for orders.\nWork is mostly queue fixes.");
+    // Only areas the facts have keep a line, cut to the line limit.
+    const lines = JSON.parse(store.getMeta("areaLines") ?? "{}") as Record<string, string>;
+    expect(Object.keys(lines)).toEqual(["core"]);
+    expect(lines.core).toHaveLength(LINE_MAX_CHARS);
+  });
+
+  it("writes the overview again only when the structure changed and it is a week old, or when asked", async () => {
+    const repo = await project();
+    expect(await generator.describe(paseo, repo, false)).toBe("done");
+    expect(await generator.describe(paseo, repo, false)).toBe("current");
+    mkdirSync(join(top, "web"));
+    for (const name of ["__init__.py", "urls.py"]) writeFileSync(join(top, "web", name), "");
+    writeFileSync(join(top, "web", "app.py"), "from api.views import User\n");
+    execFileSync("git", ["-C", top, "add", "-A"]);
+    base.invalidate(repo.key);
+    expect(await generator.describe(paseo, repo, false)).toBe("current");
+    clock = new Date(clock.getTime() + DESCRIBE_AFTER_MS + 1);
+    expect(await generator.describe(paseo, repo, false)).toBe("done");
+    expect(await generator.describe(paseo, repo, true)).toBe("done");
+    expect(runWorker).toHaveBeenCalledTimes(3);
+  });
+
+  it("explains one area on request, as an entry search finds, and refuses unknown areas", async () => {
+    const repo = await project();
+    expect(await generator.explainArea(paseo, repo, "core")).toBe("done");
+    expect(jobs[0].prompt).toContain("- core/models.py");
+    expect(jobs[0].prompt).toContain("used by: api (1)");
+    const store = await base.open(repo);
+    expect(store.read("brief:(area)/core:1")).toMatchObject({ title: "About core", body: "core holds User, which api imports." });
+    expect(store.search("imports", { kinds: ["brief"], limit: 5 }).map((hit) => hit.path)).toEqual(["(area)/core"]);
+    await expect(generator.explainArea(paseo, repo, "billing")).rejects.toThrow('Unknown area "billing"');
   });
 
   it("generates nothing for a project switched off", async () => {
     const repo = await project();
     await new ProjectPrefsStore(async () => join(home, "plugin-data", "contextualise", "knowledge")).setEnabled(repo.key, false);
     expect(await generator.summarize(paseo, repo, agents[0])).toBe("skipped");
-    expect(await generator.brief(paseo, repo)).toBe("skipped");
+    expect(await generator.describe(paseo, repo, true)).toBe("skipped");
+    expect(await generator.explainArea(paseo, repo, "core")).toBe("skipped");
   });
 
-  it("summarises after the quiet period, and writes a brief after enough summaries", async () => {
+  it("summarises after the quiet period, then writes the overview once", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       const repo = await project();
       values = { ...values, knowledgeGenerateIdleMinutes: 5 };
-      for (let i = 0; i < BRIEF_AFTER_SUMMARIES; i += 1) {
-        const id = `s${i}`;
-        timelines[id] = [at({ type: "user_message", text: `task ${i}` })];
-        await generator.schedule(paseo, repo, { id, provider: "claude", cwd: top, title: `task ${i}` });
+      for (const id of ["s0", "s1"]) {
+        timelines[id] = [at({ type: "user_message", text: `task ${id}` })];
+        await generator.schedule(paseo, repo, { id, provider: "claude", cwd: top, title: `task ${id}` });
       }
       await vi.advanceTimersByTimeAsync(4 * 60_000);
       expect(runWorker).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(60_000);
       vi.useRealTimers();
-      await vi.waitFor(() => expect(runWorker).toHaveBeenCalledTimes(BRIEF_AFTER_SUMMARIES + 1));
-      expect(jobs.at(-1)?.prompt).toContain("<material>");
+      // Two summaries; the overview is written after the first and is current after the second.
+      await vi.waitFor(() => expect(runWorker).toHaveBeenCalledTimes(3));
+      expect(jobs.filter((job) => job.title.startsWith("contextualise: describe"))).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }

@@ -124,7 +124,35 @@ describe("KnowledgeBase", () => {
     now += FRESH_MS + 1;
     await base.refresh(repo, 10_000);
     expect(reopened.counts().doc).toBe(1);
-    expect(reopened.getMeta("contentVersion")).toBe("2");
+    expect(reopened.getMeta("contentVersion")).toBe("3");
+  });
+
+  it("builds the project's areas after indexing and rebuilds them when code changes", async () => {
+    mkdirSync(join(top, "core"));
+    mkdirSync(join(top, "api"));
+    for (const name of ["__init__.py", "utils.py"]) {
+      writeFileSync(join(top, "core", name), "");
+      writeFileSync(join(top, "api", name), "");
+    }
+    writeFileSync(join(top, "core", "models.py"), "class User:\n    pass\n");
+    writeFileSync(join(top, "api", "views.py"), "from core.models import User\n");
+    execFileSync("git", ["-C", top, "add", "-A"]);
+    const repo = (await base.repoFor(top))!;
+    await base.refresh(repo, 10_000);
+    const facts = async () => JSON.parse((await base.open(repo)).getMeta("facts")!);
+    expect((await facts()).links).toEqual([{ from: "api", to: "core", count: 1 }]);
+    // An explanation of an area that then disappears is dropped with the next rebuild.
+    (await base.open(repo)).replaceSource({ path: "(area)/api", kind: "brief", blob: "g", chunks: [{ title: "About api", body: "Serves requests.", line: 1 }] });
+    writeFileSync(join(top, "api", "views.py"), "print('no imports')\n");
+    now += FRESH_MS + 1;
+    await base.refresh(repo, 10_000);
+    expect((await facts()).links).toEqual([]);
+    expect((await base.open(repo)).read("brief:(area)/api:1")).not.toBeNull();
+    rmSync(join(top, "api"), { recursive: true });
+    execFileSync("git", ["-C", top, "add", "-A"]);
+    now += FRESH_MS + 1;
+    await base.refresh(repo, 10_000);
+    expect((await base.open(repo)).read("brief:(area)/api:1")).toBeNull();
   });
 
   it("never takes the home folder or the filesystem root as a project", async () => {

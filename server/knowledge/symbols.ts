@@ -15,6 +15,18 @@ export interface CodeSymbol {
   shape: string;
 }
 
+// One import statement: what it names (a path, a dotted module, or a package) and the names it takes
+// from there, when it lists them. Resolved to project files by facts.ts.
+export interface CodeImport {
+  spec: string;
+  names: string[];
+}
+
+export interface ParsedCode {
+  symbols: CodeSymbol[];
+  imports: CodeImport[];
+}
+
 type Grammar = (typeof CODE_EXTENSIONS)[keyof typeof CODE_EXTENSIONS];
 
 // web-tree-sitter's own types, kept to what is used, so the module can be loaded from disk at run
@@ -66,6 +78,13 @@ const FUNCTION_BODIES = new Set([
   "func_literal",
 ]);
 const PARAMETER_LISTS = ["formal_parameters", "parameters", "parameter_list"];
+// The syntax nodes that hold imports, per grammar family. Their text is read with the patterns
+// below, which is enough for the forms tree-sitter has already recognised as imports.
+const IMPORT_NODES: Record<"script" | "python" | "go", string[]> = {
+  script: ["import_statement", "export_statement", "call_expression"],
+  python: ["import_statement", "import_from_statement"],
+  go: ["import_spec"],
+};
 const SIGNATURE_MAX_CHARS = 200;
 
 function isNested(definition: TsNode): boolean {
@@ -76,6 +95,43 @@ function isNested(definition: TsNode): boolean {
 // Lists the top-level definitions of a source file with tree-sitter's tags queries. The plugin's
 // server code is bundled into one script with no file location, so web-tree-sitter and the grammar
 // files are loaded from the plugin's install folder on disk, where its own module finds its runtime.
+// The names an import takes ("A", "B as C" gives "B"), without type-only markers.
+function importedNames(list: string): string[] {
+  return list
+    .replace(/[(){}\n\\]/g, " ")
+    .split(",")
+    .map((part) => part.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0].trim())
+    .filter((name) => /^[\p{L}_$][\p{L}\p{N}_$]*$/u.test(name));
+}
+
+function scriptImport(text: string): CodeImport | null {
+  const call = /^(?:require|import)\(\s*["'`]([^"'`]+)["'`]\s*\)/.exec(text);
+  if (call) return { spec: call[1], names: [] };
+  const from = /^(?:import|export)\s+(?:type\s+)?([\s\S]*?)\s*from\s*["']([^"']+)["']/.exec(text);
+  if (from) return { spec: from[2], names: /\{([\s\S]*)\}/.exec(from[1]) ? importedNames(/\{([\s\S]*)\}/.exec(from[1])?.[1] ?? "") : [] };
+  const bare = /^import\s+["']([^"']+)["']/.exec(text);
+  return bare ? { spec: bare[1], names: [] } : null;
+}
+
+function pythonImports(type: string, text: string): CodeImport[] {
+  const flat = text.replace(/\\\n/g, " ").replace(/\s+/g, " ").trim();
+  if (type === "import_from_statement") {
+    const from = /^from\s+(\.*[\w.]*)\s+import\s+(.+)$/.exec(flat);
+    return from ? [{ spec: from[1], names: from[2].trim() === "*" ? [] : importedNames(from[2]) }] : [];
+  }
+  return flat
+    .replace(/^import\s+/, "")
+    .split(",")
+    .map((part) => part.trim().split(/\s+as\s+/)[0])
+    .filter((spec) => /^[\w.]+$/.test(spec))
+    .map((spec) => ({ spec, names: [] }));
+}
+
+function goImport(text: string): CodeImport | null {
+  const path = /"([^"]+)"/.exec(text);
+  return path ? { spec: path[1], names: [] } : null;
+}
+
 export class SymbolReader {
   private loaded: Promise<{ module: TsModule; languages: Map<Grammar, Promise<{ language: unknown; query: TsQuery }>> }> | null = null;
 
@@ -112,8 +168,13 @@ export class SymbolReader {
   }
 
   async read(path: string, text: string): Promise<CodeSymbol[]> {
+    return (await this.parse(path, text)).symbols;
+  }
+
+  // A source file's top-level definitions and its imports, from one parse.
+  async parse(path: string, text: string): Promise<ParsedCode> {
     const grammar = CODE_EXTENSIONS[extname(path).toLowerCase()];
-    if (!grammar) return [];
+    if (!grammar) return { symbols: [], imports: [] };
     const { module } = await this.load();
     const { language, query } = await this.grammar(grammar);
     const parser = new module.Parser();
@@ -141,9 +202,30 @@ export class SymbolReader {
           shape: createHash("sha256").update(source.split(name.node.text).join("")).digest("hex").slice(0, 16),
         });
       }
-      return symbols;
+      return { symbols, imports: SymbolReader.imports(grammar, tree.rootNode) };
     } finally {
       tree.delete();
     }
+  }
+
+  private static imports(grammar: Grammar, root: TsNode): CodeImport[] {
+    const family = grammar === "python" ? "python" : grammar === "go" ? "go" : "script";
+    const found: CodeImport[] = [];
+    for (const node of root.descendantsOfType(IMPORT_NODES[family])) {
+      if (family === "python") found.push(...pythonImports(node.type, node.text));
+      else {
+        // Calls are imports only as require("x") or import("x"); export statements only with "from".
+        if (node.type === "call_expression" && !/^(require|import)\s*\(/.test(node.text)) continue;
+        const one = family === "go" ? goImport(node.text) : scriptImport(node.text);
+        if (one) found.push(one);
+      }
+    }
+    const seen = new Set<string>();
+    return found.filter((entry) => {
+      const key = `${entry.spec}\0${entry.names.join(",")}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }
 }
