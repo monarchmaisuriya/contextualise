@@ -1,7 +1,7 @@
 import { expect, test, vi } from "vitest";
 import { DOCS_URL, snapshotSettingsSchema, type TagSummary } from "../shared/contracts";
 import type { PaseoApi } from "./paseo-types";
-import { timeAgo } from "../shared/time";
+import { shortTimeAgo, timeAgo } from "../shared/time";
 import { tokenEstimate } from "../shared/tokens";
 import { cleanTitle } from "./rows";
 import { agentLink, AgentReadings, includedParts, Memo, readAgent, rowPrefix, searchAgents, searchTags, searchTerminals } from "./sources";
@@ -102,8 +102,8 @@ test("agent search matches every word, puts archived agents last, and links to t
   const items = await searchAgents(paseo, directory, "fix log", withArchived, { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv_1" });
   expect(items.map((item) => item.id)).toEqual(["new", "old"]);
   expect(items[0]).toMatchObject({ identifier: "", title: "Fix logout", url: agentLink("srv_1", "new"), resourceType: "agent" });
-  expect(items[0].subtitle).toMatch(/^\d+ d ago · payments \/ api$/);
-  expect(items[1].subtitle).toMatch(/^\d+ d ago · payments \/ api · archived$/);
+  expect(items[0].subtitle).toMatch(/^\d+d · payments \/ api$/);
+  expect(items[1].subtitle).toMatch(/^\d+d · payments \/ api · archived$/);
   expect(items[0].text).toContain("**User:** hi");
   expect((await searchAgents(paseo, directory, "payments", withArchived, { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv_1" })).map((item) => item.id)).toEqual(["other", "new", "old"]);
 });
@@ -177,6 +177,11 @@ test("times read as short relative phrases", () => {
   expect(timeAgo("not a date", now)).toBe("");
 });
 
+test("picker rows use the sidebar's short times", () => {
+  const now = Date.parse("2026-10-27T12:00:00Z");
+  expect(["2026-10-27T11:59:40Z", "2026-10-27T11:55:00Z", "2026-10-27T09:00:00Z", "2026-10-20T12:00:00Z", "not a date"].map((iso) => shortTimeAgo(iso, now))).toEqual(["now", "5m", "3h", "7d", ""]);
+});
+
 test("agents with a generated session title show it and are found by it", async () => {
   const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
   const titled = new Map([["new", "Fixed the logout redirect"]]);
@@ -190,7 +195,7 @@ test("a running agent says so in its picker row", async () => {
   const running = { workspaces: directory.workspaces, agents: [{ id: "r", title: "**Live** task", provider: "claude", workspaceId: "w1", status: "running", updatedAt: new Date().toISOString() }] };
   const [item] = await searchAgents(paseo, running, "", options, { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv" });
   expect(item.title).toBe("Live task");
-  expect(item.subtitle).toBe("just now · payments / api · running");
+  expect(item.subtitle).toBe("now · payments / api · running");
 });
 
 test("an agent in a titled worktree shows the worktree's title, then time and git, and is found by branch and pull request", async () => {
@@ -202,14 +207,16 @@ test("an agent in a titled worktree shows the worktree's title, then time and gi
   };
   const [item] = await searchAgents(paseo, worktree, "", options, { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv" });
   expect(item.title).toBe("Review PR 5854");
-  expect(item.subtitle).toBe("just now · review-5854 · +12 −3 · PR #5854");
+  expect(item.subtitle).toBe("now · review-5854 · +12 −3 · PR #5854");
   for (const query of ["5854", "review-5854", "refresh tokens", "glorious"]) expect(await searchAgents(paseo, worktree, query, options, { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv" }), query).toHaveLength(1);
   const quiet = await searchAgents(fakePaseo({ t: page() }).paseo, worktree, "", snapshotSettingsSchema.parse({ showTokenEstimates: false, agentShowGit: false }), { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv" });
-  expect(quiet[0].subtitle).toBe("just now");
+  expect(quiet[0].subtitle).toBe("now");
 });
 
 test("long links shrink to host and the last two path parts; short ones only lose the scheme", () => {
-  expect(shortenLink("https://app.notion.com/p/acme/Backend-architecture-review-0123456789abcdef")).toBe("app.notion.com/…/acme/Backend-architecture-review-0123456789abcdef");
+  // "app." goes like "www.", and a page id at the end of a slug goes: the words say what it is.
+  expect(shortenLink("https://app.notion.com/p/acme/Backend-architecture-review-0123456789abcdef0123456789abcdef")).toBe("notion.com/…/acme/Backend-architecture-review");
+  expect(shortenLink("https://www.notion.so/0123456789abcdef0123456789abcdef")).toBe("notion.so/0123456789abcdef0123456789abcdef");
   expect(shortenLink("https://github.com/acme/tasks-service-v2/pull/12?x=1")).toBe("github.com/acme/tasks-service-v2/pull/12");
   expect(shortenLink("https://github.com/acme/tasks-service-v2-service/pull/1234/files")).toBe("github.com/…/1234/files");
   expect(shortenLink("https://www.example.com/a")).toBe("example.com/a");
