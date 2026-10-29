@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
-import { basename } from "node:path";
+import { basename, dirname } from "node:path";
 import { promisify } from "node:util";
 
 // Same as Memorise (memorise/server/git.ts and repo-key.ts); plugins cannot import each other, and
@@ -88,6 +88,17 @@ export interface ProjectRoot {
   key: string;
   top: string;
   git: boolean;
+  // The main checkout's folder name, for a repository without a remote, whose key names nothing.
+  checkoutName?: string;
+}
+
+// A project's name for people. A repository is named from its key, which is the same in every
+// worktree, because a worktree's folder is a random name Paseo made up ("terrific-eel"). A folder
+// outside git has no worktrees, so its own folder name is used, as the user wrote it.
+export function projectName(project: Pick<ProjectRoot, "key" | "top" | "checkoutName">): string {
+  if (project.key.startsWith("folder/")) return basename(project.top);
+  if (project.key.startsWith("local/")) return project.checkoutName || basename(project.top);
+  return project.key.split("/").at(-1) || basename(project.top);
 }
 
 // A project from its stored key and folder: keys under folder/ are folders outside git.
@@ -123,8 +134,10 @@ export async function readGitRepo(cwd: string): Promise<ProjectRoot | null> {
     );
     const fromRemote = remote === "" ? null : repoKeyFromRemote(remote);
     if (fromRemote) return { key: fromRemote, top, git: true };
-    const commonDir = await git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-    return { key: repoKeyFromCommonDir(await realpath(commonDir)), top, git: true };
+    const commonDir = await realpath(await git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]));
+    // The common git folder is <main checkout>/.git, shared by every worktree.
+    const checkoutName = basename(commonDir) === ".git" ? basename(dirname(commonDir)) : basename(commonDir).replace(/\.git$/, "");
+    return { key: repoKeyFromCommonDir(commonDir), top, git: true, checkoutName };
   } catch (error) {
     if (error instanceof GitError && error.stderr.includes("not a git repository")) return null;
     throw error;

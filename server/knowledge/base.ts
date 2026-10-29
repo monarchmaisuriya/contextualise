@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { access, appendFile, mkdir, readdir, readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join, sep } from "node:path";
+import { dirname, join, sep } from "node:path";
 import type { Project } from "../../shared/knowledge";
-import { type ProjectRoot, projectRoot } from "./git";
+import { type ProjectRoot, projectName, projectRoot } from "./git";
 import { type IndexChange, type IndexerOptions, indexRepo } from "./indexer";
 import { ProjectKeys } from "./projects";
 import { KnowledgeStore, type TaskRecord } from "./store";
@@ -98,6 +98,7 @@ export class KnowledgeBase {
     const store = new KnowledgeStore(join(dir, `${name}.sqlite`));
     store.setMeta("repoKey", repo.key);
     store.setMeta("top", repo.top);
+    if (repo.checkoutName) store.setMeta("checkoutName", repo.checkoutName);
     // The index is a cache, but tasks are not: a lost or reset index gets them back from the log.
     if (store.counts().task === 0) {
       const log = await readFile(join(dir, `${name}.tasks.jsonl`), "utf8").catch(() => "");
@@ -175,7 +176,7 @@ export class KnowledgeBase {
     return [...this.opened.values()]
       .map(({ repo, store }) => ({
         repoKey: repo.key,
-        name: basename(repo.top),
+        name: projectName({ ...repo, checkoutName: repo.checkoutName ?? store.getMeta("checkoutName") ?? undefined }),
         top: repo.top,
         counts: store.counts(),
         indexedAt: store.getMeta("indexedAt"),
