@@ -2,6 +2,12 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.17.1 - 2026-10-29
+
+### Fixed
+
+- Paseo 0.14 refused to load the plugin, because it allowed only Paseo below 0.14.0. It now needs Paseo 0.13.0 or later, with no upper limit; 0.14 made no plugin changes it depends on.
+
 ## 0.17.0 - 2026-10-29
 
 ### Added
