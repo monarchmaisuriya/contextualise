@@ -104,7 +104,7 @@ export async function tagAttachment(paseo: PaseoApi, memo: Memo, fullTag: TagSum
 }
 
 export async function searchTags(paseo: PaseoApi, memo: Memo, tags: readonly TagSummary[], query: string, options: SnapshotSettings): Promise<PluginAttachmentItem[]> {
-  return Promise.all(matchTags(tags, query, options.resultsPerSearch).map((tag) => tagAttachment(paseo, memo, tag, options)));
+  return Promise.all(matchTags(tags, query).map((tag) => tagAttachment(paseo, memo, tag, options)));
 }
 
 function words(query: string): string[] {
@@ -133,23 +133,69 @@ function asMember(agent: DirectoryAgent, workspaceName: string | null): AgentMem
   };
 }
 
-// Any agent on this host, matched on title, provider, workspace, and folder. Pinned agents first
-// (kept even when archived agents are hidden), then most recently active, archived ones last.
-// `generatedTitles`: titles written for past sessions (project knowledge), used where Paseo has none.
-export async function searchAgents(
-  paseo: PaseoApi,
-  memo: Memo,
-  directory: Directory,
-  pinned: ReadonlySet<string>,
-  serverId: string | null,
-  query: string,
-  options: SnapshotSettings,
-  generatedTitles: ReadonlyMap<string, string> = new Map(),
-): Promise<PluginAttachmentItem[]> {
+// Conversations already read, kept until the agent changes: an agent's turns can only change when
+// its last update does, so the key holds both. Opening the picker then reads only agents that changed
+// since last time, which is what lets it list every conversation instead of the newest 20.
+export class AgentReadings {
+  private readonly entries = new Map<string, Promise<AgentReading>>();
+
+  constructor(private readonly maxEntries = 2_000) {}
+
+  read(paseo: PaseoApi, agent: Pick<DirectoryAgent, "id" | "updatedAt">, turns: number): Promise<AgentReading> {
+    const key = `${agent.id}:${agent.updatedAt ?? ""}:${turns}`;
+    let reading = this.entries.get(key);
+    if (!reading) {
+      reading = readAgent(paseo, agent.id, turns);
+      this.entries.set(key, reading);
+      // An unreadable agent is tried again next time instead of being remembered.
+      void reading.then((result) => isUnreadable(result) && this.entries.delete(key));
+      while (this.entries.size > this.maxEntries) this.entries.delete(this.entries.keys().next().value as string);
+    }
+    return reading;
+  }
+
+  clear(): void {
+    this.entries.clear();
+  }
+}
+
+const PARALLEL_READS = 6;
+
+// Like Promise.all over `items`, with at most `limit` calls running at once, results in order.
+async function mapLimited<T, R>(items: readonly T[], limit: number, run: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await run(items[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+export interface AgentSearchContext {
+  readings: AgentReadings;
+  pinned: ReadonlySet<string>;
+  serverId: string | null;
+  // Titles written for past sessions (project knowledge), used where Paseo has none.
+  generatedTitles?: ReadonlyMap<string, string>;
+  // Background agents (plugins' workers) are never offered.
+  isBackground?: (agent: DirectoryAgent) => boolean;
+}
+
+// Every agent on this host that matches the search words: title, provider, workspace, branch, and
+// folder. Pinned agents first (shown even when archived ones are hidden), then most recently active,
+// archived ones last. No row limit: Paseo's picker scrolls.
+export async function searchAgents(paseo: PaseoApi, directory: Directory, query: string, options: SnapshotSettings, context: AgentSearchContext): Promise<PluginAttachmentItem[]> {
+  const { pinned, serverId } = context;
+  const generatedTitles = context.generatedTitles ?? new Map<string, string>();
   const workspaces = workspacesById(directory);
   const sharing = new Map<string, number>();
   for (const agent of directory.agents) if (agent.workspaceId) sharing.set(agent.workspaceId, (sharing.get(agent.workspaceId) ?? 0) + 1);
   const found = directory.agents
+    .filter((agent) => !agent.internal && !context.isBackground?.(agent))
     .filter((agent) => options.includeArchivedAgents || !agent.archivedAt || pinned.has(agent.id))
     .filter((agent) => matches([agent.title, generatedTitles.get(agent.id), agent.provider, workspaceSearchText(workspaces.get(agent.workspaceId ?? "")), agent.cwd, agent.id].join(" "), query))
     .sort(
@@ -157,14 +203,12 @@ export async function searchAgents(
         Number(pinned.has(b.id)) - Number(pinned.has(a.id)) ||
         Number(Boolean(a.archivedAt)) - Number(Boolean(b.archivedAt)) ||
         (options.agentSort === "title" ? cleanTitle(a.title ?? a.id, false).localeCompare(cleanTitle(b.title ?? b.id, false)) : (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "")),
-    )
-    .slice(0, options.resultsPerSearch);
-  return Promise.all(
-    found.map(async (agent) => {
+    );
+  return mapLimited(found, PARALLEL_READS, async (agent) => {
       const workspace = workspaces.get(agent.workspaceId ?? "");
       const workspaceName = workspace ? workspaceLabel(workspace) : null;
       const member = asMember(agent, workspaceName);
-      const reading = await memo.get(`agent:${agent.id}:${options.turnsPerAgent}`, () => readAgent(paseo, agent.id, options.turnsPerAgent));
+      const reading = await context.readings.read(paseo, agent, options.turnsPerAgent);
       const state = isUnreadable(reading) ? "unreadable" : agent.archivedAt ? "archived" : agent.status === "running" ? "running" : null;
       const active = agent.updatedAt ? timeAgo(agent.updatedAt) : "";
       const text = renderConversation(member, workspaceName, reading, options.snapshotMaxChars);
@@ -190,15 +234,14 @@ export async function searchAgents(
         text,
         resourceType: "agent",
       };
-    }),
-  );
+    });
 }
 
 // Any terminal on this host, matched on name, workspace, and folder.
 export async function searchTerminals(paseo: PaseoApi, memo: Memo, directory: Directory, query: string, options: SnapshotSettings): Promise<PluginAttachmentItem[]> {
   const workspaces = workspacesById(directory);
   const { entries } = await paseo.terminals.list();
-  const found = entries.filter((terminal) => matches([terminal.name, workspaceSearchText(workspaces.get(terminal.workspaceId)), terminal.cwd].join(" "), query)).slice(0, options.resultsPerSearch);
+  const found = entries.filter((terminal) => matches([terminal.name, workspaceSearchText(workspaces.get(terminal.workspaceId)), terminal.cwd].join(" "), query));
   return Promise.all(
     found.map(async (terminal) => {
       const workspace = workspaces.get(terminal.workspaceId);

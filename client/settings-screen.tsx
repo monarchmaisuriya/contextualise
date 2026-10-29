@@ -16,7 +16,7 @@ type NumberKey =
   | "knowledgeGenerateMaxPerDay"
   | "pickerTitleMaxChars"
   | "knowledgeMapLines"
-  | "knowledgePort" | "snapshotMaxChars" | "turnsPerAgent" | "terminalLines" | "resultsPerSearch" | "pillNameMaxChars" | "fetchTimeoutSeconds" | "maxConcurrentFetches" | "noteMaxChars" | "commentsPerItem" | "autoRefreshHours";
+  | "knowledgePort" | "snapshotMaxChars" | "turnsPerAgent" | "terminalLines" | "pillNameMaxChars" | "fetchTimeoutSeconds" | "maxConcurrentFetches" | "noteMaxChars" | "commentsPerItem" | "autoRefreshHours";
 type TextKey = "claudeFetchModel" | "codexFetchModel" | "extraInstructions" | "customRoutes" | "knowledgeExtraDocGlobs" | "knowledgeExcludeGlobs";
 type DraftKey = NumberKey | TextKey;
 type SwitchKey =
@@ -36,41 +36,41 @@ type SwitchKey =
   | "autoRefreshItems";
 
 const ATTACHMENT_NUMBERS: ReadonlyArray<{ key: NumberKey; label: string; hint: string }> = [
-  { key: "snapshotMaxChars", label: "Longest attachment (characters)", hint: "Default 40,000 (about 10,000 tokens), from 1,000 to 200,000. 0 means the default." },
-  { key: "turnsPerAgent", label: "Recent turns per agent", hint: "Default 6, from 1 to 50. 0 means the default." },
-  { key: "terminalLines", label: "Terminal lines to attach", hint: "Default 200, from 10 to 5,000. The newest lines are kept. 0 means the default." },
+  { key: "snapshotMaxChars", label: "Longest attachment (characters)", hint: "How much text one attachment can add to your message. Default 40,000 (about 25 pages)." },
+  { key: "turnsPerAgent", label: "Messages to include from each conversation", hint: "How many of an agent's latest back-and-forths go into an attachment. Default 6." },
+  { key: "terminalLines", label: "Terminal lines to include", hint: "The newest lines of the terminal are attached. Default 200." },
 ];
 const SECTION_SWITCHES: ReadonlyArray<{ key: SwitchKey; label: string; hint: string }> = [
-  { key: "includeWorkspaces", label: "Include labeled workspaces", hint: "Project, name, and folder of each workspace with the tag's label." },
-  { key: "includeLinks", label: "Include links", hint: "Links added with /tag-link or Add link." },
-  { key: "includeItems", label: "Include fetched items", hint: "Jira, Sentry, Slack, and Notion items fetched into the tag." },
-  { key: "includeAgents", label: "Include agent conversations", hint: "Each tagged agent's recent turns. Off: agents are not read at all." },
+  { key: "includeWorkspaces", label: "Include workspaces", hint: "Lists the workspaces that carry the tag's name as a label." },
+  { key: "includeLinks", label: "Include links", hint: "Web links you added to the tag." },
+  { key: "includeItems", label: "Include saved items", hint: "Jira, Sentry, Slack, and Notion items you saved to the tag." },
+  { key: "includeAgents", label: "Include conversations", hint: "The latest messages of each agent in the tag." },
 ];
 const PICKER_SWITCHES: ReadonlyArray<{ key: SwitchKey; label: string; hint: string }> = [
-  { key: "shortenLinks", label: "Shorten links in agent titles", hint: "github.com/…/pull/12 instead of the whole address, so more of the title fits." },
-  { key: "agentShowWorkspace", label: "Show the workspace", hint: "In each agent row's subtitle, unless the row's title already is the workspace's title." },
-  { key: "agentShowStatus", label: "Show running or archived", hint: "In each agent row's subtitle. An agent that cannot be read always says so." },
-  { key: "agentShowActivity", label: "Show when it was last active", hint: "First in each agent row's subtitle, for example: 5 min ago." },
-  { key: "agentShowGit", label: "Show git details", hint: "After the time in each agent row's subtitle: branch, uncommitted changes (+12 −3), and pull request (PR #42), when Paseo has them." },
-  { key: "includeArchivedAgents", label: "Include archived agents", hint: "Archived agents are listed after the others. Pinned agents are always listed." },
-  { key: "showTokenEstimates", label: "Show token estimates", hint: "At the end of every agent, tag, and terminal row, for example: ~1.2k tokens. An estimate (characters divided by 4); code and non-English text can differ." },
+  { key: "shortenLinks", label: "Shorten links in titles", hint: "Shows github.com/…/pull/12 instead of the whole address, so more of the title fits." },
+  { key: "agentShowWorkspace", label: "Show the workspace", hint: "Shown in grey after the title, unless the title already names it." },
+  { key: "agentShowStatus", label: "Show running or archived", hint: "Shown in grey after the title." },
+  { key: "agentShowActivity", label: "Show when it was last used", hint: "Shown first in grey, for example: 5 min ago." },
+  { key: "agentShowGit", label: "Show branch and pull request", hint: "Shown in grey after the time: the branch, unsaved changes (+12 −3), and the pull request (PR #42), when known." },
+  { key: "includeArchivedAgents", label: "Show archived conversations", hint: "Off by default. On: archived conversations are listed after the others. Pinned ones always show." },
+  { key: "showTokenEstimates", label: "Show the size of each attachment", hint: "Shown at the end of each row, for example: ~1.2k tokens. A rough guide to how much it adds to your message." },
 ];
 const PREFIX_OPTIONS = [
-  { label: "None (rows start with the title)", value: "none" as const },
-  { label: "Words (Claude, Codex, Tag, Terminal)", value: "word" as const },
+  { label: "None", value: "none" as const },
+  { label: "A word (Claude, Codex, Tag, Terminal)", value: "word" as const },
 ];
 const AGENT_SORT_OPTIONS = [
-  { label: "Most recently active", value: "recent" as const },
+  { label: "Most recently used", value: "recent" as const },
   { label: "Title", value: "title" as const },
 ];
 
 const ADVANCED_NUMBERS: ReadonlyArray<{ key: NumberKey; label: string; hint: string }> = [
-  { key: "fetchTimeoutSeconds", label: "Fetch time limit (seconds)", hint: "Default 180, from 30 to 900. A worker still running then is stopped and the item marked failed." },
-  { key: "maxConcurrentFetches", label: "Fetches at once", hint: "Default 2, from 1 to 5. Each running fetch is one agent run." },
-  { key: "noteMaxChars", label: "Stored item size (characters)", hint: "Default 8,000, from 1,000 to 20,000. Longer items are cut." },
-  { key: "commentsPerItem", label: "Comments or replies per item", hint: "Default 10, from 0 to 50. 0 leaves them out." },
+  { key: "fetchTimeoutSeconds", label: "Time limit for saving an item (seconds)", hint: "If saving takes longer, it stops and the item shows as failed. Default 180." },
+  { key: "maxConcurrentFetches", label: "Items saved at the same time", hint: "Each one runs a helper agent. Default 2." },
+  { key: "noteMaxChars", label: "Longest saved item (characters)", hint: "Longer items are cut. Default 8,000." },
+  { key: "commentsPerItem", label: "Comments or replies per item", hint: "Default 10. Set 0 to leave them out." },
 ];
-const REFRESH_HOURS_FIELD = { key: "autoRefreshHours" as const, label: "Refresh items older than (hours)", hint: "Default 24, from 1 to 168. Checked every 15 minutes while automatic refresh is on. 0 means the default." };
+const REFRESH_HOURS_FIELD = { key: "autoRefreshHours" as const, label: "Refresh items older than (hours)", hint: "Used when automatic refresh is on. Default 24." };
 const PROVIDER_OPTIONS: ReadonlyArray<{ label: string; value: FetchPreference }> = [
   { label: "Automatic (Claude, then Codex)", value: "auto" },
   { label: "Claude only", value: "claude" },
@@ -82,36 +82,35 @@ const PILL_LABEL_OPTIONS = [
 ];
 const ROUTES_EXAMPLE = '[{"vendor":"jira","provider":"codex","server":"my-jira","tools":["get_issue","search_issues"]}]';
 
-const MAP_LINES_FIELD = { key: "knowledgeMapLines" as const, label: "Project map length (lines)", hint: "Default 40, up to 150. The map each new agent gets; what it lists is chosen below. 0 gives agents the search tools without a map." };
-const PORT_FIELD = { key: "knowledgePort" as const, label: "Knowledge tools port", hint: "Default 6791, from 1024 to 65535 (not Memorise's 6790). Agents reach the knowledge tools on 127.0.0.1 at this port. Used after the plugin reloads; agents created before keep the old address." };
-const TITLE_LENGTH_FIELD = { key: "pickerTitleMaxChars" as const, label: "Longest title in pickers (characters)", hint: "Default 44, from 20 to 120. Paseo never shortens a picker title, so a long one hides the details beside it; longer titles end in …. 0 means the default." };
-const RESULTS_FIELD = { key: "resultsPerSearch" as const, label: "Results per picker", hint: "Default 20, from 5 to 50. More results scroll; each agent result reads that agent's recent turns. 0 means the default." };
-const PILL_LENGTH_FIELD = { key: "pillNameMaxChars" as const, label: "Longest tag name on the pill", hint: "Default 24, from 10 to 60 characters; longer names end in …. 0 means the default." };
+const MAP_LINES_FIELD = { key: "knowledgeMapLines" as const, label: "Length of the project overview (lines)", hint: "The short overview each new agent starts with. Default 40. Set 0 to skip the overview and keep only search." };
+const PORT_FIELD = { key: "knowledgePort" as const, label: "Connection number for agents (port)", hint: "Only change this if another app already uses 6791. Takes effect after Contextualise restarts." };
+const TITLE_LENGTH_FIELD = { key: "pickerTitleMaxChars" as const, label: "Longest title in lists (characters)", hint: "Longer titles end in … so the grey details beside them stay visible. Default 44." };
+const PILL_LENGTH_FIELD = { key: "pillNameMaxChars" as const, label: "Longest tag name on the button", hint: "Longer names end in …. Default 24." };
 const KNOWLEDGE_NUMBERS: ReadonlyArray<{ key: NumberKey; label: string; hint: string }> = [
-  { key: "knowledgeRecentTasks", label: "Recent tasks in the map", hint: "Default 3, from 0 to 10." },
-  { key: "knowledgeMaxFileKb", label: "Largest file to index (KB)", hint: "Default 256, from 16 to 2,048. Larger files are left out. 0 means the default." },
-  { key: "knowledgeMaxDocs", label: "Most documents per project", hint: "Default 2,000, from 100 to 20,000. Code files are not counted. 0 means the default." },
+  { key: "knowledgeRecentTasks", label: "Recent tasks in the overview", hint: "Default 3. Set 0 to leave them out." },
+  { key: "knowledgeMaxFileKb", label: "Largest file to read (KB)", hint: "Bigger files are skipped. Default 256." },
+  { key: "knowledgeMaxDocs", label: "Most documents per project", hint: "Code files do not count. Default 2,000." },
 ];
 const GENERATE_NUMBERS: ReadonlyArray<{ key: NumberKey; label: string; hint: string }> = [
-  { key: "knowledgeGenerateIdleMinutes", label: "Summarise after a quiet period of (minutes)", hint: "Default 20, from 5 to 240. A new turn restarts the wait. 0 means the default." },
-  { key: "knowledgeGenerateMaxPerDay", label: "Background runs per day", hint: "Default 20, from 1 to 200. Each summary and each brief is one run of one agent. 0 means the default." },
+  { key: "knowledgeGenerateIdleMinutes", label: "Write a summary after this many quiet minutes", hint: "Waits until the conversation has been idle this long. A new message restarts the wait. Default 20." },
+  { key: "knowledgeGenerateMaxPerDay", label: "Most summaries per day", hint: "Each summary and each project description counts once. Default 20." },
 ];
 const MAP_PART_LABELS: Record<KnowledgeMapPart, string> = {
-  brief: "Project brief (generated)",
-  pinned: "Pinned entries",
-  architecture: "Architecture docs",
-  conventions: "Conventions",
-  adrs: "Decisions (ADRs) with status",
-  folders: "Top-level folders",
-  tasks: "Recent tasks",
+  brief: "a written description of the project",
+  pinned: "items you pinned",
+  architecture: "design documents",
+  conventions: "team rules and guides",
+  adrs: "decision records",
+  folders: "main folders",
+  tasks: "recent work",
 };
 const LANGUAGE_LABELS: Record<SymbolLanguage, string> = { typescript: "TypeScript and TSX", javascript: "JavaScript", python: "Python", go: "Go" };
 const GENERATE_PROVIDER_OPTIONS = [
-  { label: "The session's own (Claude or Codex; OpenCode sessions use Claude)", value: "same" as const },
-  { label: "Claude for every session", value: "claude" as const },
-  { label: "Codex for every session", value: "codex" as const },
+  { label: "Same as the conversation (OpenCode conversations use Claude)", value: "same" as const },
+  { label: "Always Claude", value: "claude" as const },
+  { label: "Always Codex", value: "codex" as const },
 ];
-const NUMBER_LABELS = new Map([...KNOWLEDGE_NUMBERS, ...GENERATE_NUMBERS, ...ATTACHMENT_NUMBERS, ...ADVANCED_NUMBERS, RESULTS_FIELD, TITLE_LENGTH_FIELD, PILL_LENGTH_FIELD, REFRESH_HOURS_FIELD, MAP_LINES_FIELD, PORT_FIELD].map(({ key, label }) => [key, label]));
+const NUMBER_LABELS = new Map([...KNOWLEDGE_NUMBERS, ...GENERATE_NUMBERS, ...ATTACHMENT_NUMBERS, ...ADVANCED_NUMBERS, TITLE_LENGTH_FIELD, PILL_LENGTH_FIELD, REFRESH_HOURS_FIELD, MAP_LINES_FIELD, PORT_FIELD].map(({ key, label }) => [key, label]));
 
 function draftValue(values: SnapshotSettings, key: DraftKey): string {
   if (key === "customRoutes") return values.customRoutes.length === 0 ? "" : JSON.stringify(values.customRoutes);
@@ -131,8 +130,8 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
       <SettingsSection title="Contextualise">
         <SettingsCard>
           <SettingsAction
-            label="These settings are invalid"
-            hint="Attachments and fetches fail until they are fixed. Resetting restores every default."
+            label="These settings could not be read"
+            hint="Attachments and saved items stop working until this is fixed. Reset restores every setting to its default."
             error={settings.error}
             actionLabel="Reset to defaults"
             disabled={settings.saving}
@@ -201,22 +200,22 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
         ) : null}
         <SettingsCard>
           <SettingsSwitch
-            label="Project knowledge for new agents"
-            hint="Each new agent in a git repository gets a short project map and two read-only tools, knowledge_search and knowledge_read, over the repository's docs, conventions, ADRs, code symbols, and finished tasks. Off: nothing is added, no tasks are logged, and indexes stay on disk."
+            label="Give new agents knowledge of the project"
+            hint="Each new agent gets a short overview of its project and can search the project's documents, code, and past work. Works in any project folder, with or without git. Off: agents start without it."
             value={values.knowledgeEnabled}
             disabled={settings.saving}
             onValueChange={(value) => persist({ ...values, knowledgeEnabled: value })}
           />
           <SettingsSwitch
-            label="Index code symbols"
-            hint="Functions, classes, methods, and types in TypeScript, JavaScript, Python, and Go. Off: documents only, and no memory checks when code changes."
+            label="Include code"
+            hint="Lets agents find functions and classes by name. Choose languages below. Off: documents only."
             value={values.knowledgeCodeSymbols}
             disabled={settings.saving || !values.knowledgeEnabled}
             onValueChange={(value) => persist({ ...values, knowledgeCodeSymbols: value })}
           />
           <SettingsSwitch
-            label="Suggest memory fixes to Memorise"
-            hint="When a function or class a Memorise memory is about is renamed or removed, or an ADR it cites is superseded, a suggestion waits in Memorise's Suggestions for you. Nothing changes until you approve it there. Needs Memorise 0.10 or later."
+            label="Suggest Memorise updates when code changes"
+            hint="If code a memory talks about is renamed or removed, Memorise gets a suggestion to update it. Nothing changes until you approve it in Memorise."
             value={values.memoriseSuggestions}
             disabled={settings.saving || !values.knowledgeEnabled}
             onValueChange={(value) => persist({ ...values, memoriseSuggestions: value })}
@@ -229,7 +228,7 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
           {KNOWLEDGE_MAP_PARTS.map((part) => (
             <SettingsSwitch
               key={part}
-              label={`Map: ${MAP_PART_LABELS[part]}`}
+              label={`Overview shows: ${MAP_PART_LABELS[part]}`}
               value={values.knowledgeMapParts.includes(part)}
               disabled={settings.saving || !values.knowledgeEnabled}
               onValueChange={(on) => persist({ ...values, knowledgeMapParts: KNOWLEDGE_MAP_PARTS.filter((entry) => (entry === part ? on : values.knowledgeMapParts.includes(entry))) })}
@@ -242,18 +241,18 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
           {SYMBOL_LANGUAGES.map((language) => (
             <SettingsSwitch
               key={language}
-              label={`Symbols: ${LANGUAGE_LABELS[language]}`}
+              label={`Code in ${LANGUAGE_LABELS[language]}`}
               value={values.knowledgeLanguages.includes(language)}
               disabled={settings.saving || !values.knowledgeEnabled || !values.knowledgeCodeSymbols}
               onValueChange={(on) => persist({ ...values, knowledgeLanguages: SYMBOL_LANGUAGES.filter((entry) => (entry === language ? on : values.knowledgeLanguages.includes(entry))) })}
             />
           ))}
-          {draftInput("knowledgeExtraDocGlobs", "Also index as docs", "Comma-separated file globs from the project root, such as notes/**/*.txt, docs/*.rst. Markdown is always indexed.", "notes/**/*.txt")}
-          {draftInput("knowledgeExcludeGlobs", "Never index", "Comma-separated file globs from the project root, such as docs/private/**, *.generated.ts.", "docs/private/**")}
+          {draftInput("knowledgeExtraDocGlobs", "Also read these files", "Markdown files are always read. Add other files with patterns, separated by commas, such as notes/**/*.txt.", "notes/**/*.txt")}
+          {draftInput("knowledgeExcludeGlobs", "Never read these files", "Patterns separated by commas, such as docs/private/**.", "docs/private/**")}
           {KNOWLEDGE_NUMBERS.slice(1).map(({ key, label, hint }) => draftInput(key, label, hint))}
           <SettingsSwitch
-            label="Approve the knowledge tools automatically"
-            hint="They only read this project's index. Off: each call asks you, like any other tool."
+            label="Let agents search without asking"
+            hint="Searching only reads this project. Off: you approve each search."
             value={values.knowledgeAutoApproveTools}
             disabled={settings.saving || !values.knowledgeEnabled}
             onValueChange={(value) => persist({ ...values, knowledgeAutoApproveTools: value })}
@@ -261,18 +260,18 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
           {saveRow}
         </SettingsCard>
       </SettingsSection>
-      <SettingsSection title="Generated knowledge">
+      <SettingsSection title="Conversation summaries">
         <SettingsCard>
           <SettingsSwitch
-            label="Generate session summaries and project briefs"
-            hint="Off by default. On: when an agent has been quiet for the minutes below, a background agent reads its session (your messages, its replies, commands, and files touched; secrets removed first) and writes a short title and summary into the task log; after every 5 summaries it writes a project brief. Each run is one agent run and uses tokens, and the session text is sent to the chosen provider. Background agents have no tools and are archived when done. Decisions and pitfalls are never written here; that is Memorise's job. Import past sessions (on the Project knowledge screen) needs no model and works either way."
+            label="Write summaries of finished conversations"
+            hint="Off by default. On: when a conversation has been idle for a while, a helper agent reads it and writes a short title and summary, and now and then a short description of the project. Your messages are sent to Claude or Codex for this (passwords and keys are removed first), and each summary uses some of your plan. It never records your preferences or lessons learned; Memorise keeps those."
             value={values.knowledgeGenerate}
             disabled={settings.saving || !values.knowledgeEnabled}
             onValueChange={(value) => persist({ ...values, knowledgeGenerate: value })}
           />
           <SettingsSelect
-            label="Read sessions with"
-            hint="Uses the Claude and Codex models set under Fetching."
+            label="Write summaries with"
+            hint="Uses the models chosen under Saving items."
             value={values.knowledgeGenerateProvider}
             options={GENERATE_PROVIDER_OPTIONS}
             disabled={settings.saving || !values.knowledgeGenerate}
@@ -293,40 +292,39 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
           ))}
         </SettingsCard>
       </SettingsSection>
-      <SettingsSection title="Tags pill">
+      <SettingsSection title="Tags button">
         <SettingsCard>
-          <SettingsSwitch label="Show the Tags pill" hint="The pill next to Tasks and Subagents in every agent's message box." value={values.showPill} disabled={settings.saving} onValueChange={(value) => persist({ ...values, showPill: value })} />
-          <SettingsSelect label="Pill label" value={values.pillLabel} options={PILL_LABEL_OPTIONS} disabled={settings.saving || !values.showPill} onValueChange={(value) => persist({ ...values, pillLabel: value })} />
+          <SettingsSwitch label="Show the Tags button" hint="The Tags button in every message box." value={values.showPill} disabled={settings.saving} onValueChange={(value) => persist({ ...values, showPill: value })} />
+          <SettingsSelect label="Tags button shows" value={values.pillLabel} options={PILL_LABEL_OPTIONS} disabled={settings.saving || !values.showPill} onValueChange={(value) => persist({ ...values, pillLabel: value })} />
           {draftInput(PILL_LENGTH_FIELD.key, PILL_LENGTH_FIELD.label, PILL_LENGTH_FIELD.hint)}
           {saveRow}
         </SettingsCard>
       </SettingsSection>
-      <SettingsSection title="Pickers">
+      <SettingsSection title="Attach lists">
         <SettingsCard>
           <SettingsSelect
-            label="Row prefix"
-            hint="What comes before each title in Attach > Tag, Agent conversation, and Terminal output. Paseo draws plugin picker rows as text only, so there is no icon option."
+            label="Label before each title"
+            hint="A word before each title in the Attach lists, such as Claude or Tag."
             value={values.pickerPrefix}
             options={PREFIX_OPTIONS}
             disabled={settings.saving}
             onValueChange={(value) => persist({ ...values, pickerPrefix: value })}
           />
-          {draftInput(RESULTS_FIELD.key, RESULTS_FIELD.label, RESULTS_FIELD.hint)}
           {draftInput(TITLE_LENGTH_FIELD.key, TITLE_LENGTH_FIELD.label, TITLE_LENGTH_FIELD.hint)}
           {saveRow}
         </SettingsCard>
         <SettingsCard>
-          <SettingsSelect label="Sort agents by" value={values.agentSort} options={AGENT_SORT_OPTIONS} disabled={settings.saving} onValueChange={(value) => persist({ ...values, agentSort: value })} />
+          <SettingsSelect label="Sort conversations by" value={values.agentSort} options={AGENT_SORT_OPTIONS} disabled={settings.saving} onValueChange={(value) => persist({ ...values, agentSort: value })} />
           {PICKER_SWITCHES.map(({ key, label, hint }) => (
             <SettingsSwitch key={key} label={label} hint={hint} value={values[key]} disabled={settings.saving} onValueChange={(value) => persist({ ...values, [key]: value })} />
           ))}
         </SettingsCard>
       </SettingsSection>
-      <SettingsSection title="Fetching">
+      <SettingsSection title="Saving items">
         <SettingsCard>
           <SettingsSelect
-            label="Fetch with"
-            hint="Which agent reads Jira, Sentry, Slack, and Notion items. Automatic uses Claude when it has the connector, else Codex. OpenCode cannot be kept read-only, so it is not offered."
+            label="Save items with"
+            hint="Which assistant reads Jira, Sentry, Slack, and Notion items for you. Automatic picks Claude when it can reach the app, else Codex."
             value={values.fetchProvider}
             options={PROVIDER_OPTIONS}
             disabled={settings.saving}
@@ -338,8 +336,8 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
         </SettingsCard>
         <SettingsCard>
           <SettingsSwitch
-            label="Show fetch results in the agent"
-            hint="A fetch started from an agent (/tag-fetch or the Tags pill) adds one row to that agent's conversation when it ends, with Read and Open tags. A refresh replaces the row."
+            label="Tell the conversation when an item is saved"
+            hint="Adds a short note with Read and Open tags to the conversation that asked for it."
             value={values.notifyFetchResults}
             disabled={settings.saving}
             onValueChange={(value) => persist({ ...values, notifyFetchResults: value })}
@@ -350,8 +348,8 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
         <SettingsCard>
           {ADVANCED_NUMBERS.map(({ key, label, hint }) => draftInput(key, label, hint))}
           <SettingsSwitch
-            label="Refresh fetched items automatically"
-            hint="Off by default. On: items older than the hours below are fetched again in the background. Each refresh is one agent run and uses tokens. Automatic refreshes never add rows to agents."
+            label="Keep saved items up to date"
+            hint="Off by default. On: items older than the hours below are saved again in the background. Each refresh runs a helper agent and uses some of your plan."
             value={values.autoRefreshItems}
             disabled={settings.saving}
             onValueChange={(value) => persist({ ...values, autoRefreshItems: value })}
@@ -377,7 +375,7 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
             />
           </SettingsRow>
           {saveRow}
-          <SettingsAction label="Reset everything" hint="Restores every Contextualise setting to its default." actionLabel="Reset" disabled={settings.saving} onPress={() => void settings.reset().then(tagsChanged)} />
+          <SettingsAction label="Reset everything" hint="Puts every Contextualise setting back to its default." actionLabel="Reset" disabled={settings.saving} onPress={() => void settings.reset().then(tagsChanged)} />
         </SettingsCard>
       </SettingsSection>
     </>

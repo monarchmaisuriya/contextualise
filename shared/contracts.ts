@@ -376,9 +376,6 @@ export const snapshotSettingsSchema = z.object({
   snapshotMaxChars: boundedCount(1_000, 200_000, SNAPSHOT_MAX_CHARS_DEFAULT),
   turnsPerAgent: boundedCount(1, 50, TURNS_PER_AGENT_DEFAULT),
   terminalLines: boundedCount(10, 5_000, TERMINAL_LINES_DEFAULT),
-  // How many tags, agents, or terminals one search returns; the picker scrolls through them, and
-  // each agent result reads that agent's recent turns.
-  resultsPerSearch: boundedCount(5, 50, 20),
   // Pickers. A row reads "<prefix> <title>": nothing (rows start with the title) or the provider or
   // source word. Paseo draws plugin picker rows as text only, so there is no icon option.
   pickerPrefix: z.enum(["none", "word"]).default("none"),
@@ -389,7 +386,7 @@ export const snapshotSettingsSchema = z.object({
   agentShowGit: z.boolean().default(true),
   // Paseo never shrinks a picker title, so a long one hides the muted details beside it.
   pickerTitleMaxChars: boundedCount(20, 120, 44),
-  includeArchivedAgents: z.boolean().default(true),
+  includeArchivedAgents: z.boolean().default(false),
   agentSort: z.enum(["recent", "title"]).default("recent"),
   showTokenEstimates: z.boolean().default(true),
   includeWorkspaces: z.boolean().default(true),

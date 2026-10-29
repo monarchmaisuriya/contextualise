@@ -31,6 +31,8 @@ export interface DirectoryAgent {
   cwd?: string;
   updatedAt?: string;
   status?: string;
+  // Paseo's own background agents.
+  internal?: boolean;
 }
 
 export interface Directory {

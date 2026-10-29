@@ -190,12 +190,12 @@ export function KnowledgeScreen({ theme, layout }: PluginScreenProps) {
             />
           </View>
           <View style={styles.wrap}>
-            <Button label="Import past sessions" icon={ICONS.fetch} styles={styles} disabled={project.generation?.state === "running"} onPress={() => change(generate({ repoKey: project.repoKey, generate: false }))} />
-            <Button label="Generate summaries and brief" icon={ICONS.knowledge} styles={styles} disabled={project.generation?.state === "running"} onPress={() => change(generate({ repoKey: project.repoKey, generate: true }))} />
+            <Button label="Add past conversations" icon={ICONS.fetch} styles={styles} disabled={project.generation?.state === "running"} onPress={() => change(generate({ repoKey: project.repoKey, generate: false }))} />
+            <Button label="Summarise past conversations" icon={ICONS.knowledge} styles={styles} disabled={project.generation?.state === "running"} onPress={() => change(generate({ repoKey: project.repoKey, generate: true }))} />
           </View>
           {brief.data ? (
             <View style={styles.card}>
-              <SectionTitle label="Project brief" hint={brief.data.needsCheck ? "needs check" : "generated; verify"} styles={styles} />
+              <SectionTitle label="About this project" hint={brief.data.needsCheck ? "may be out of date" : "written automatically; may contain mistakes"} styles={styles} />
               <Text style={styles.text} selectable>
                 {brief.data.body}
               </Text>
@@ -203,7 +203,7 @@ export function KnowledgeScreen({ theme, layout }: PluginScreenProps) {
           ) : null}
           <View style={[styles.inline, styles.input, { borderWidth: 0 }]}>
             <Icon name={ICONS.search} size={15} color={styles.colors.foregroundMuted} />
-            <TextInput style={[styles.grow, { color: styles.colors.foreground }]} value={query} onChangeText={setQuery} placeholder="Search docs, ADRs, code, and past tasks" accessibilityLabel="Search project knowledge" />
+            <TextInput style={[styles.grow, { color: styles.colors.foreground }]} value={query} onChangeText={setQuery} placeholder="Search documents, code, and past work" accessibilityLabel="Search project knowledge" />
             {query !== "" ? <IconButton icon={ICONS.close} label="Clear search" onPress={() => setQuery("")} styles={styles} /> : null}
           </View>
           <View style={styles.wrap}>
@@ -222,9 +222,9 @@ export function KnowledgeScreen({ theme, layout }: PluginScreenProps) {
             </>
           ) : (
             <>
-              <SectionTitle label="Recent tasks" count={tasks.data?.tasks.length} hint="from each finished agent turn" styles={styles} />
+              <SectionTitle label="Recent work" count={tasks.data?.tasks.length} styles={styles} />
               <View style={styles.card}>
-                {tasks.data?.tasks.length === 0 ? <Text style={styles.muted}>No tasks yet. A task is logged when an agent in this project finishes a turn, or use Import past sessions.</Text> : null}
+                {tasks.data?.tasks.length === 0 ? <Text style={styles.muted}>No work recorded yet. Each conversation in this project is recorded as it goes, or use Add past conversations.</Text> : null}
                 {tasks.data?.tasks.map((task) => <TaskRow key={task.id} task={task} styles={styles} />)}
               </View>
             </>

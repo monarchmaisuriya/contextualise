@@ -7,13 +7,13 @@ describe("memoriseNote", () => {
   });
 
   it.each([
-    ["not-installed", /^Install Memorise to add /, MEMORISE_INSTALL_COMMAND],
+    ["not-installed", /^Install Memorise to let agents remember /, MEMORISE_INSTALL_COMMAND],
     ["disabled", /^Turn on Memorise/, null],
     ["needs-update", /^Update Memorise to 0\.10 or later/, "paseo plugin update memorise"],
   ] as const)("asks to act when Memorise is %s", (state, text, command) => {
     const note = memoriseNote(state);
     expect(note?.text).toMatch(text);
-    expect(note?.text).toContain("related memories in search");
+    expect(note?.text).toContain("remember decisions and lessons");
     expect(note?.command).toBe(command);
   });
 });

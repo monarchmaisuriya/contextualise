@@ -9,7 +9,7 @@ Requires Paseo 0.13.
 ## Install
 
 ```bash
-paseo plugin install git:monarchmaisuriya/contextualise --ref v0.15.0
+paseo plugin install git:monarchmaisuriya/contextualise --ref v0.16.0
 ```
 
 ## Tags
@@ -97,11 +97,11 @@ Documents are split by heading, so a search hit points at the section that matte
 
 **Knowledge from existing sessions:**
 
-- **Import past sessions** (on the Project knowledge screen) adds a task entry for every existing agent of the project from its timeline. It uses no model.
-- **Generated knowledge** is off until you turn it on in Settings > Contextualise > Generated knowledge, like Memorise's suggestions from sessions. When on:
+- **Add past conversations** (on the Project knowledge screen) adds a task entry for every existing agent of the project from its timeline. It uses no model.
+- **Generated knowledge** is off until you turn it on in Settings > Contextualise > Conversation summaries, like Memorise's suggestions from sessions. When on:
   - a background agent reads a session once the agent has been quiet for 20 minutes (a setting), and writes a short title and a 2 to 4 sentence summary into its task entry;
   - after every 5 summaries it writes a project brief: what the project is, its main areas, and recent work.
-  - "Generate summaries and brief" does the same for every past session on request.
+  - "Summarise past conversations" does the same for every past conversation on request.
 - **Limits:**
   - Each session is read by its own provider when that is Claude or Codex; OpenCode sessions, which cannot be kept read-only, are read by Claude, or you choose one provider for all.
   - Secret-shaped text is removed before anything is sent.
@@ -115,7 +115,7 @@ Documents are split by heading, so a search hit points at the section that matte
 
 - what is indexed, the brief, and recent tasks with their summaries;
 - a search with filters by kind;
-- a switch to turn the project off, pins (pinned entries always appear in the map), Import past sessions, Generate summaries and brief, and Re-index.
+- a switch to turn the project off, pins (pinned entries always appear in the map), Add past conversations, Summarise past conversations, and Re-index.
 
 Attach > Project knowledge sends one entry (a document section, a code symbol, or a task) with your prompt.
 
@@ -147,7 +147,7 @@ Agent rows are titled the way Paseo's sidebar titles the work:
 - **In a worktree:** an agent is titled with the worktree's title ("Review PR 5854"). When several agents share the worktree, each title also carries the agent's first request.
 - **Elsewhere:** in a plain folder, which collects unrelated work, an agent keeps its first request as its title, since Paseo has no other title for an agent.
 
-The muted text after the title starts with what tells agents apart: how long ago it was active, then git details from Paseo (branch, uncommitted changes such as `+12 −3`, and the pull request such as `PR #42`), then the workspace when the title does not already name it, then running or archived. Searching also matches the workspace title, branch, and pull request number or title.
+The muted text after the title starts with what tells agents apart: how long ago it was active, then git details from Paseo (branch, uncommitted changes such as `+12 −3`, and the pull request such as `PR #42`), then the workspace when the title does not already name it, then running or archived. Searching also matches the workspace title, branch, and pull request number or title. Every matching conversation is listed (the list scrolls); archived ones only when "Show archived conversations" is on, and background helper agents never. Each conversation is read once and again only after it changes, so the list stays quick. Paseo chats are not listed: plugins cannot read them.
 
 Paseo draws each picker row on one line and never shortens the title, so a long title hides the muted text; titles are cut at 44 characters by default (a setting). Paseo decides the picker's width, which a plugin cannot change. Clicking an attached agent opens that agent; clicking a tag or terminal opens this page.
 
@@ -169,7 +169,7 @@ Settings > Contextualise:
 
 | Section | Setting | Default |
 | --- | --- | --- |
-| Project knowledge | Project knowledge for new agents | on |
+| Project knowledge | Give new agents knowledge of the project | on |
 | | Index code symbols | on |
 | | Suggest memory fixes to Memorise | on (acts only when Memorise 0.10 or later runs) |
 | | Project map length (lines); 0 gives the tools without a map | 40 (0 to 150) |
@@ -179,23 +179,22 @@ Settings > Contextualise:
 | | Also index as docs; never index (comma-separated globs) | empty |
 | | Largest file to index (KB); most documents per project | 256 (16 to 2,048); 2,000 (100 to 20,000) |
 | | Approve the knowledge tools automatically | on |
-| Generated knowledge | Generate session summaries and project briefs | off |
+| Conversation summaries | Write summaries of finished conversations | off |
 | | Read sessions with: the session's own provider, Claude, or Codex | the session's own |
 | | Summarise after a quiet period of (minutes); background runs per day | 20 (5 to 240); 20 (1 to 200) |
 | Attachments | Longest attachment (characters) | 40,000 (1,000 to 200,000) |
 | | Recent turns per agent | 6 (1 to 50) |
 | | Terminal lines to attach | 200 (10 to 5,000) |
 | | Include labeled workspaces, links, fetched items, agent conversations | all on |
-| Tags pill | Show the pill; label as tag names or a count | on; names |
+| Tags button | Show the Tags button; show tag names or a count | on; names |
 | | Longest tag name on the pill | 24 (10 to 60) |
-| Pickers | Row prefix: none (rows start with the title) or words (Claude, Tag, Terminal) | none |
-| | Results per picker | 20 (5 to 50) |
+| Attach lists | Label before each title: none, or a word (Claude, Tag, Terminal) | none |
 | | Shorten links in agent titles | on |
 | | Agent subtitles: last active, git details, workspace, running or archived | all on |
 | | Longest title in pickers | 44 (20 to 120) |
-| | Include archived agents (pinned ones always show); sort agents by recent activity or title | on; recent |
+| | Show archived conversations (pinned ones always show); sort conversations by most recently used or title | off; most recently used |
 | | Show token estimates | on |
-| Fetching | Fetch with: automatic, Claude only, Codex only | automatic |
+| Saving items | Save items with: automatic, Claude only, Codex only | automatic |
 | | Claude model; Codex model (empty means the agent's default) | claude-sonnet-5-5; default |
 | | Show fetch results in the agent | on |
 | Advanced | Fetch time limit (seconds) | 180 (30 to 900) |

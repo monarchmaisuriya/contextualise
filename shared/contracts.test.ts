@@ -24,11 +24,11 @@ test("/tag-link takes the URL first and the rest as the tag", () => {
 test("settings: 0 means the default, out-of-range values are invalid", () => {
   expect(snapshotSettingsSchema.parse({ terminalLines: 0 })).toMatchObject({ snapshotMaxChars: 40_000, turnsPerAgent: 6, terminalLines: 200, fetchProvider: "auto", maxConcurrentFetches: 2, commentsPerItem: 10, customRoutes: [] });
   expect(snapshotSettingsSchema.parse({ commentsPerItem: 0 }).commentsPerItem).toBe(0);
-  expect(snapshotSettingsSchema.parse({}).resultsPerSearch).toBe(20);
-  expect(snapshotSettingsSchema.parse({})).toMatchObject({ pickerPrefix: "none", shortenLinks: true, agentShowWorkspace: true, agentShowStatus: true, agentShowActivity: true, includeArchivedAgents: true, agentSort: "recent", pillNameMaxChars: 24 });
+  // A setting removed in 0.16.0 is dropped from stored values instead of making them invalid.
+  expect(snapshotSettingsSchema.parse({ resultsPerSearch: 20 })).not.toHaveProperty("resultsPerSearch");
+  expect(snapshotSettingsSchema.parse({})).toMatchObject({ pickerPrefix: "none", shortenLinks: true, agentShowWorkspace: true, agentShowStatus: true, agentShowActivity: true, includeArchivedAgents: false, agentSort: "recent", pillNameMaxChars: 24 });
   expect(snapshotSettingsSchema.safeParse({ pillNameMaxChars: 9 }).success).toBe(false);
   expect(snapshotSettingsSchema.safeParse({ pickerPrefix: "icon" }).success).toBe(false);
-  expect(snapshotSettingsSchema.safeParse({ resultsPerSearch: 51 }).success).toBe(false);
   expect(snapshotSettingsSchema.safeParse({ fetchTimeoutSeconds: 5 }).success).toBe(false);
   expect(snapshotSettingsSchema.safeParse({ fetchProvider: "opencode" }).success).toBe(false);
   expect(snapshotSettingsSchema.safeParse({ customRoutes: [{ vendor: "jira", provider: "codex", server: "my-jira", tools: ["get_issue"] }] }).success).toBe(true);

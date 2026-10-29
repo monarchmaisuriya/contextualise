@@ -1,3 +1,4 @@
+import { dirname, resolve, sep } from "node:path";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import {
   addLinkRpc,
@@ -26,7 +27,7 @@ import { contributeKnowledge } from "./knowledge/plugin";
 import { Fetcher } from "./fetches";
 import { configuredServers } from "./provider-config";
 import type { PaseoApi } from "./paseo-types";
-import { Memo, searchAgents, searchTags, searchTerminals, tagAttachment } from "./sources";
+import { AgentReadings, Memo, searchAgents, searchTags, searchTerminals, tagAttachment } from "./sources";
 import { TagStore } from "./tag-store";
 import { describeAgent, type Directory, mergePins, mergeTags, readDirectory } from "./tags";
 
@@ -39,6 +40,7 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
   const store = new TagStore(resolveRoot);
   const settings = server.registerSettings(snapshotSettings);
   const readings = new Memo(READINGS_CACHE_MS);
+  const agentReadings = new AgentReadings();
   const directories = new Memo(DIRECTORY_CACHE_MS);
   let serverId: Promise<string> | null = null;
   const fetcher = new Fetcher({ store, resolveRoot, settings: () => currentSettings(), configuredServers: () => configuredServers() });
@@ -119,7 +121,10 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
     const options = await currentSettings();
     serverId ??= paseo.hosts.list().then((hosts) => hosts.self.serverId);
     const pinned = new Set((await store.pinnedAgents()).map((pin) => pin.agentId));
-    return { items: await searchAgents(paseo, readings, await directory(paseo), pinned, await serverId, query, options, await knowledge.generatedTitles()) };
+    // Both plugins' background agents run under the Paseo home's plugin-data folder.
+    const pluginData = dirname(await resolveRoot());
+    const isBackground = (agent: { cwd?: string }) => Boolean(agent.cwd) && (resolve(agent.cwd as string) === pluginData || resolve(agent.cwd as string).startsWith(`${pluginData}${sep}`));
+    return { items: await searchAgents(paseo, await directory(paseo), query, options, { readings: agentReadings, pinned, serverId: await serverId, generatedTitles: await knowledge.generatedTitles(), isBackground }) };
   });
 
   server.handle(searchTerminalsRpc, async ({ query }, { paseo }) => {
@@ -133,6 +138,7 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
     autoRefresh.stop();
     void stopFollowingSetting();
     readings.clear();
+    agentReadings.clear();
     directories.clear();
     await knowledge.stop();
   };
