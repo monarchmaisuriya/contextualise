@@ -12,13 +12,13 @@ export type KnowledgeKind = z.infer<typeof knowledgeKindSchema>;
 export const BRIEF_ID = "brief:(brief):1";
 
 export const KIND_LABELS: Record<KnowledgeKind, string> = {
-  brief: "Project brief",
-  architecture: "Architecture",
-  convention: "Conventions",
-  adr: "Decisions (ADRs)",
-  doc: "Docs",
+  brief: "About the project",
+  architecture: "Design",
+  convention: "Team rules",
+  adr: "Decisions",
+  doc: "Documents",
   code: "Code",
-  task: "Tasks",
+  task: "Past work",
 };
 
 export const relatedMemorySchema = z.object({ id: z.string(), subject: z.string() });

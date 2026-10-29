@@ -270,17 +270,17 @@ export class Generator {
   // "Import past sessions" (always) and, when generated knowledge is on, a summary for every session
   // without a current one and a new brief. Runs in the background; its outcome is the project's status.
   run(paseo: PaseoApi, project: ProjectRoot, generate: boolean): void {
-    this.statuses.set(project.key, { state: "running", message: "Reading past sessions", at: this.now().toISOString() });
+    this.statuses.set(project.key, { state: "running", message: "Reading past conversations", at: this.now().toISOString() });
     void this.serialize(async () => {
       const imported = await this.importPast(paseo, project);
-      const parts = [`${imported} past session${imported === 1 ? "" : "s"} imported`];
+      const parts = [`${imported} past conversation${imported === 1 ? "" : "s"} added`];
       if (generate) {
-        if (!(await this.deps.settings()).knowledgeGenerate) parts.push("generated knowledge is off in Settings > Contextualise");
+        if (!(await this.deps.settings()).knowledgeGenerate) parts.push("summaries are off (Settings > Contextualise > Conversation summaries)");
         else {
           let summarised = 0;
           let capped = false;
           for (const agent of await this.projectAgents(paseo, project)) {
-            this.statuses.set(project.key, { state: "running", message: `Summarising sessions (${summarised} so far)`, at: this.now().toISOString() });
+            this.statuses.set(project.key, { state: "running", message: `Summarising conversations (${summarised} so far)`, at: this.now().toISOString() });
             const outcome = await this.summarize(paseo, project, agent).catch((error: unknown) => {
               console.error(`[contextualise] could not summarise agent ${agent.id}: ${String(error)}`);
               return "skipped" as const;
@@ -293,7 +293,7 @@ export class Generator {
           }
           parts.push(`${summarised} summarised`);
           const brief = capped ? "capped" : await this.brief(paseo, project);
-          parts.push(brief === "done" ? "brief updated" : brief === "capped" ? "stopped at today's limit" : "no brief (nothing to write it from)");
+          parts.push(brief === "done" ? "project description updated" : brief === "capped" ? "stopped at today's limit" : "no project description yet");
         }
       }
       this.statuses.set(project.key, { state: "done", message: parts.join("; "), at: this.now().toISOString() });

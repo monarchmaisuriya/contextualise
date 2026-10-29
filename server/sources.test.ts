@@ -4,7 +4,7 @@ import type { PaseoApi } from "./paseo-types";
 import { timeAgo } from "../shared/time";
 import { tokenEstimate } from "../shared/tokens";
 import { cleanTitle } from "./rows";
-import { agentLink, includedParts, Memo, readAgent, rowPrefix, searchAgents, searchTags, searchTerminals } from "./sources";
+import { agentLink, AgentReadings, includedParts, Memo, readAgent, rowPrefix, searchAgents, searchTags, searchTerminals } from "./sources";
 import { shortenLink } from "../shared/links";
 import type { Directory } from "./tags";
 
@@ -98,13 +98,14 @@ test("a broken agent does not stop the other tags or its own tag from attaching"
 test("agent search matches every word, puts archived agents last, and links to the agent", async () => {
   const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
   const { paseo } = fakePaseo({ old: page(), new: page(), other: page() });
-  const items = await searchAgents(paseo, new Memo(30_000), directory, NO_PINS, "srv_1", "fix log", options);
+  const withArchived = { ...options, includeArchivedAgents: true };
+  const items = await searchAgents(paseo, directory, "fix log", withArchived, { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv_1" });
   expect(items.map((item) => item.id)).toEqual(["new", "old"]);
   expect(items[0]).toMatchObject({ identifier: "", title: "Fix logout", url: agentLink("srv_1", "new"), resourceType: "agent" });
   expect(items[0].subtitle).toMatch(/^\d+ d ago · payments \/ api$/);
   expect(items[1].subtitle).toMatch(/^\d+ d ago · payments \/ api · archived$/);
   expect(items[0].text).toContain("**User:** hi");
-  expect((await searchAgents(paseo, new Memo(30_000), directory, NO_PINS, "srv_1", "payments", options)).map((item) => item.id)).toEqual(["other", "new", "old"]);
+  expect((await searchAgents(paseo, directory, "payments", withArchived, { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv_1" })).map((item) => item.id)).toEqual(["other", "new", "old"]);
 });
 
 test("agent links use Paseo's own agent link shape", () => {
@@ -150,15 +151,13 @@ test("switched-off parts of a tag are left out of both the subtitle and the text
   expect(noLinks.text).not.toContain("## Links");
 });
 
-test("each source returns as many results as the setting allows, so the picker can scroll", async () => {
+test("every matching agent and tag is listed, with no row limit, so the picker can scroll", async () => {
   const many = { workspaces: directory.workspaces, agents: Array.from({ length: 30 }, (_, i) => ({ id: `a${i}`, title: `Agent ${i}`, provider: "claude", workspaceId: "w1", updatedAt: `2026-10-${String(i + 1).padStart(2, "0")}` })) };
   const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
   const { paseo } = fakePaseo(Object.fromEntries(many.agents.map((agent) => [agent.id, page()])));
-  expect(await searchAgents(paseo, new Memo(30_000), many, NO_PINS, "srv", "", options)).toHaveLength(20);
-  expect(await searchAgents(paseo, new Memo(30_000), many, NO_PINS, "srv", "", snapshotSettingsSchema.parse({ resultsPerSearch: 25 }))).toHaveLength(25);
+  expect(await searchAgents(paseo, many, "", options, { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv" })).toHaveLength(30);
   const tags = Array.from({ length: 12 }, (_, i) => tag(`t${i}`, []));
   expect(await searchTags(paseo, new Memo(30_000), tags, "", options)).toHaveLength(12);
-  expect(await searchTags(paseo, new Memo(30_000), tags, "", snapshotSettingsSchema.parse({ resultsPerSearch: 5 }))).toHaveLength(5);
 });
 
 test("agent titles lose Markdown marks and extra spaces, so the picker shows more of them", () => {
@@ -181,7 +180,7 @@ test("times read as short relative phrases", () => {
 test("agents with a generated session title show it and are found by it", async () => {
   const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
   const titled = new Map([["new", "Fixed the logout redirect"]]);
-  const items = await searchAgents(fakePaseo({ new: page() }).paseo, new Memo(30_000), directory, NO_PINS, "srv", "redirect", options, titled);
+  const items = await searchAgents(fakePaseo({ new: page() }).paseo, directory, "redirect", options, { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv", generatedTitles: titled });
   expect(items.map((item) => [item.id, item.title])).toEqual([["new", "Fixed the logout redirect"]]);
 });
 
@@ -189,7 +188,7 @@ test("a running agent says so in its picker row", async () => {
   const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
   const { paseo } = fakePaseo({ r: page() });
   const running = { workspaces: directory.workspaces, agents: [{ id: "r", title: "**Live** task", provider: "claude", workspaceId: "w1", status: "running", updatedAt: new Date().toISOString() }] };
-  const [item] = await searchAgents(paseo, new Memo(30_000), running, NO_PINS, "srv", "", options);
+  const [item] = await searchAgents(paseo, running, "", options, { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv" });
   expect(item.title).toBe("Live task");
   expect(item.subtitle).toBe("just now · payments / api · running");
 });
@@ -201,11 +200,11 @@ test("an agent in a titled worktree shows the worktree's title, then time and gi
     workspaces: [{ id: "w2", name: "glorious-tiger", title: "Review PR 5854", projectDisplayName: "payments", projectRootPath: "/src/payments", workspaceKind: "worktree", worktreeSlug: "glorious-tiger", gitRuntime: { currentBranch: "review-5854", isDirty: true }, diffStat: { additions: 12, deletions: 3 }, githubRuntime: { pullRequest: { number: 5854, state: "open", isDraft: false, title: "Fix refresh tokens" } } }],
     agents: [{ id: "t", title: "scan https://github.com/acme/api/pull/5854 and review it", provider: "claude", workspaceId: "w2", updatedAt: new Date().toISOString() }],
   };
-  const [item] = await searchAgents(paseo, new Memo(30_000), worktree, NO_PINS, "srv", "", options);
+  const [item] = await searchAgents(paseo, worktree, "", options, { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv" });
   expect(item.title).toBe("Review PR 5854");
   expect(item.subtitle).toBe("just now · review-5854 · +12 −3 · PR #5854");
-  for (const query of ["5854", "review-5854", "refresh tokens", "glorious"]) expect(await searchAgents(paseo, new Memo(30_000), worktree, NO_PINS, "srv", query, options), query).toHaveLength(1);
-  const quiet = await searchAgents(fakePaseo({ t: page() }).paseo, new Memo(30_000), worktree, NO_PINS, "srv", "", snapshotSettingsSchema.parse({ showTokenEstimates: false, agentShowGit: false }));
+  for (const query of ["5854", "review-5854", "refresh tokens", "glorious"]) expect(await searchAgents(paseo, worktree, query, options, { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv" }), query).toHaveLength(1);
+  const quiet = await searchAgents(fakePaseo({ t: page() }).paseo, worktree, "", snapshotSettingsSchema.parse({ showTokenEstimates: false, agentShowGit: false }), { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv" });
   expect(quiet[0].subtitle).toBe("just now");
 });
 
@@ -230,8 +229,11 @@ test("row prefixes: none by default (rows start with the title), or words", () =
 test("agent rows follow the settings: subtitle parts, archived agents, and sort", async () => {
   const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
   // A fresh fake per search: each fake timeline page is used up once read.
-  const run = (settings: Record<string, unknown>) => searchAgents(fakePaseo({ old: page(), new: page(), other: page() }).paseo, new Memo(30_000), directory, NO_PINS, "srv", "", snapshotSettingsSchema.parse({ showTokenEstimates: false, ...settings }));
+  const run = (settings: Record<string, unknown>) =>
+    searchAgents(fakePaseo({ old: page(), new: page(), other: page() }).paseo, directory, "", snapshotSettingsSchema.parse({ showTokenEstimates: false, includeArchivedAgents: true, ...settings }), { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv" });
+  // Archived agents are hidden unless the setting is turned on.
   expect((await run({ includeArchivedAgents: false })).map((item) => item.id)).toEqual(["other", "new"]);
+  expect(snapshotSettingsSchema.parse({}).includeArchivedAgents).toBe(false);
   // Archived agents stay last whatever the sort.
   expect((await run({ agentSort: "title" })).map((item) => item.title)).toEqual(["Billing", "Fix logout", "Fix login"]);
   expect((await run({ agentShowWorkspace: false, agentShowActivity: false })).map((item) => item.subtitle)).toEqual(["", "", "archived"]);
@@ -241,7 +243,8 @@ test("agent rows follow the settings: subtitle parts, archived agents, and sort"
 
 test("pinned agents come first, say so, and stay listed when archived", async () => {
   const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
-  const run = (pins: string[], settings: Record<string, unknown> = {}) => searchAgents(fakePaseo({ old: page(), new: page(), other: page() }).paseo, new Memo(30_000), directory, new Set(pins), "srv", "", snapshotSettingsSchema.parse({ showTokenEstimates: false, agentShowActivity: false, ...settings }));
+  const run = (pins: string[], settings: Record<string, unknown> = {}) =>
+    searchAgents(fakePaseo({ old: page(), new: page(), other: page() }).paseo, directory, "", snapshotSettingsSchema.parse({ showTokenEstimates: false, agentShowActivity: false, includeArchivedAgents: true, ...settings }), { readings: new AgentReadings(), pinned: new Set(pins), serverId: "srv" });
   const pinned = await run(["new"]);
   expect(pinned.map((item) => item.id)).toEqual(["new", "other", "old"]);
   expect(pinned[0].subtitle).toBe("pinned · payments / api");
@@ -252,10 +255,40 @@ test("pinned agents come first, say so, and stay listed when archived", async ()
   expect((await run(["gone"])).map((item) => item.id)).toEqual(["other", "new", "old"]);
 });
 
+test("background agents are never offered, and readings are kept until an agent changes", async () => {
+  const reads: string[] = [];
+  const agents = [
+    { id: "real", title: "Real work", provider: "claude", workspaceId: "w1", updatedAt: "2026-10-29T10:00:00.000Z" },
+    { id: "internal", title: "Paseo's own", provider: "claude", workspaceId: "w1", internal: true },
+    { id: "worker", title: "contextualise: summarise", provider: "claude", cwd: "/home/.paseo/plugin-data/contextualise/workers" },
+  ];
+  const paseo = {
+    agents: {
+      ref: (agentId: string) => ({
+        timeline: {
+          refetch: async () => {
+            reads.push(agentId);
+            return { entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null };
+          },
+        },
+      }),
+    },
+  } as never;
+  const readings = new AgentReadings();
+  const context = { readings, pinned: NO_PINS, serverId: "srv", isBackground: (agent: { cwd?: string }) => Boolean(agent.cwd?.includes("/plugin-data/")) };
+  const listed = await searchAgents(paseo, { workspaces: directory.workspaces, agents }, "", options, context);
+  expect(listed.map((item) => item.id)).toEqual(["real"]);
+  await searchAgents(paseo, { workspaces: directory.workspaces, agents }, "", options, context);
+  expect(reads).toEqual(["real"]);
+  agents[0].updatedAt = "2026-10-29T11:00:00.000Z";
+  await searchAgents(paseo, { workspaces: directory.workspaces, agents }, "", options, context);
+  expect(reads).toEqual(["real", "real"]);
+});
+
 test("rows end with a token estimate while the setting is on", async () => {
   const page = () => [{ entries: [entry("user_message", "x".repeat(4_000))], hasOlder: false, startCursor: null, error: null }];
   const on = snapshotSettingsSchema.parse({ agentShowActivity: false });
-  const [agent] = await searchAgents(fakePaseo({ other: page() }).paseo, new Memo(30_000), { workspaces: directory.workspaces, agents: [directory.agents[2]] }, NO_PINS, "srv", "", on);
+  const [agent] = await searchAgents(fakePaseo({ other: page() }).paseo, { workspaces: directory.workspaces, agents: [directory.agents[2]] }, "", on, { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv" });
   expect(agent.subtitle).toBe(`payments / api · ${tokenEstimate(agent.text.length)}`);
   expect(agent.subtitle).toMatch(/~1k tokens$/);
   const [tagItem] = await searchTags(fakePaseo({ good: page() }).paseo, new Memo(30_000), [tag("auth", ["good"])], "", on);
@@ -276,6 +309,6 @@ test("token estimates read as short approximate counts", () => {
 test("a workspace whose name is its project's name is shown once", async () => {
   const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
   const folder = { workspaces: [{ id: "w1", name: "checkout-web", projectDisplayName: "checkout-web", projectRootPath: "/src/checkout-web" }], agents: [{ id: "a", title: "Fix", provider: "claude", workspaceId: "w1" }] };
-  const [item] = await searchAgents(fakePaseo({ a: page() }).paseo, new Memo(30_000), folder, NO_PINS, "srv", "", snapshotSettingsSchema.parse({ showTokenEstimates: false, agentShowActivity: false }));
+  const [item] = await searchAgents(fakePaseo({ a: page() }).paseo, folder, "", snapshotSettingsSchema.parse({ showTokenEstimates: false, agentShowActivity: false }), { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv" });
   expect(item.subtitle).toBe("checkout-web");
 });

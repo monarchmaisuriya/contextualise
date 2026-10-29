@@ -153,7 +153,7 @@ describe("contributeKnowledge", () => {
     await create(top);
     const { items } = (await (rpcs.get("knowledge.attach-search") as (input: unknown, context: unknown) => Promise<{ items: { title: string; subtitle: string; text: string; identifier: string }[] }>)({ query: "daemon" }, { paseo })) ?? { items: [] };
     expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ identifier: "Architecture", title: "Overview" });
+    expect(items[0]).toMatchObject({ identifier: "Design", title: "Overview" });
     expect(items[0].subtitle).toMatch(/· ARCHITECTURE\.md:1 · One daemon\.$/);
     expect(items[0].text).toContain("quoted from the repository:\n\nOne daemon.");
   });

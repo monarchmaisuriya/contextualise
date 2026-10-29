@@ -175,9 +175,9 @@ export function describeMembers(tag: TagSummary, unreadable = 0): string {
 
 // Tags whose name starts with the query, then tags that contain it, keeping the caller's order
 // inside each group. An empty query matches every tag.
-export function matchTags(tags: readonly TagSummary[], query: string, limit: number): TagSummary[] {
+export function matchTags(tags: readonly TagSummary[], query: string): TagSummary[] {
   const wanted = tagKey(query);
   const prefix = tags.filter((tag) => tag.key.startsWith(wanted));
   const inside = tags.filter((tag) => !tag.key.startsWith(wanted) && tag.key.includes(wanted));
-  return [...prefix, ...inside].slice(0, limit);
+  return [...prefix, ...inside];
 }

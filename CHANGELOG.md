@@ -2,6 +2,15 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.16.0 - 2026-10-29
+
+### Changed
+
+- Attach > Agent conversation lists every matching conversation instead of the newest 20, and the tag and terminal lists list every match too. Each conversation is read once and again only after it changes (up to 2,000 kept), at most 6 at a time, so the list stays quick. The "Results per picker" setting is gone; a stored value is ignored.
+- Archived conversations are hidden by default. "Show archived conversations" turns them on; pinned ones always show.
+- Background helper agents (Contextualise's and Memorise's, and Paseo's own) are never listed.
+- Settings text rewritten in plain words: sections are now Project knowledge, Conversation summaries, Attachments, Tags button, Attach lists, Saving items, and Advanced. The Project knowledge screen's buttons are "Add past conversations" and "Summarise past conversations", and entry kinds read Design, Team rules, Decisions, Documents, Code, Past work, and About the project.
+
 ## 0.15.0 - 2026-10-29
 
 ### Added

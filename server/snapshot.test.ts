@@ -99,10 +99,10 @@ test("the picker subtitle counts members and names providers", () => {
   expect(describeMembers(tag({ agents: [agent({ state: "missing", provider: null })] }))).toBe("1 agent: unknown provider");
 });
 
-test("matchTags ranks prefix matches before substring matches and caps the count", () => {
+test("matchTags ranks prefix matches before substring matches and lists every match", () => {
   const tags = ["billing auth", "auth rewrite", "auth", "a", "b", "c", "d", "e"].map((name) => tag({ key: name, name }));
-  expect(matchTags(tags, "AUTH", 5).map((t) => t.key)).toEqual(["auth rewrite", "auth", "billing auth"]);
-  expect(matchTags(tags, "  ", 5)).toHaveLength(5);
+  expect(matchTags(tags, "AUTH").map((t) => t.key)).toEqual(["auth rewrite", "auth", "billing auth"]);
+  expect(matchTags(tags, "  ")).toHaveLength(8);
 });
 
 test("secrets in conversations are replaced before the budget is applied", () => {
