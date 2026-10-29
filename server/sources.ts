@@ -1,5 +1,5 @@
 import type { PluginAttachmentItem } from "@getpaseo/plugin";
-import { timeAgo } from "../shared/time";
+import { shortTimeAgo } from "../shared/time";
 import { tokenEstimate } from "../shared/tokens";
 import { DOCS_URL, type AgentMember, type SnapshotSettings, type TagSummary } from "../shared/contracts";
 import type { AgentTimelineItem, PaseoApi } from "./paseo-types";
@@ -210,7 +210,7 @@ export async function searchAgents(paseo: PaseoApi, directory: Directory, query:
       const member = asMember(agent, workspaceName);
       const reading = await context.readings.read(paseo, agent, options.turnsPerAgent);
       const state = isUnreadable(reading) ? "unreadable" : agent.archivedAt ? "archived" : agent.status === "running" ? "running" : null;
-      const active = agent.updatedAt ? timeAgo(agent.updatedAt) : "";
+      const active = agent.updatedAt ? shortTimeAgo(agent.updatedAt) : "";
       const text = renderConversation(member, workspaceName, reading, options.snapshotMaxChars);
       const { title, includesWorkspace } = agentTitle(agent, workspace, sharing.get(agent.workspaceId ?? "") ?? 1, { maxChars: options.pickerTitleMaxChars, shortenLinks: options.shortenLinks, generated: generatedTitles.get(agent.id) });
       return {

@@ -2,6 +2,12 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.17.2 - 2026-10-29
+
+### Changed
+
+- Attach > Agent conversation rows fit more before Paseo cuts them: times read like the sidebar's ("12m", "3h", "2d" instead of "12 min ago"), and links in titles drop "app." and the page id after a page's name ("notion.com/…/team/Design-review" instead of "app.notion.com/…/team/Design-review-0123…"). Paseo draws these rows on one line in a popup plugins cannot widen; a proposal to Paseo would let rows show their full text on hover.
+
 ## 0.17.1 - 2026-10-29
 
 ### Fixed
