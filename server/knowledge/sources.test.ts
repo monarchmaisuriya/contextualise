@@ -61,3 +61,16 @@ describe("adrInfo", () => {
     expect(adrInfo(text)).toEqual({ status, supersededBy });
   });
 });
+
+describe("classify with settings", () => {
+  it("leaves out excluded globs, adds extra doc globs, and indexes only the chosen languages", () => {
+    expect(classify("docs/private/plan.md", { exclude: ["docs/private/**"] })).toBeNull();
+    expect(classify("notes/ideas.txt", { extraDocs: ["notes/**/*.txt"] })).toBe("doc");
+    expect(classify("notes/ideas.txt")).toBeNull();
+    const pythonOnly = { languages: new Set(["python"] as const) };
+    expect(classify("tools/run.py", pythonOnly)).toBe("code");
+    expect(classify("server/plugin.ts", pythonOnly)).toBeNull();
+    expect(classify("client/a.tsx", { languages: new Set(["typescript"] as const) })).toBe("code");
+    expect(classify("README.md", { exclude: ["*.txt"], extraDocs: ["*.md"] })).toBe("doc");
+  });
+});

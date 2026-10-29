@@ -2,13 +2,12 @@ import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { KnowledgeKind } from "../../shared/knowledge";
 import { redactSecrets } from "../secrets";
-import { git, type GitRepo } from "./git";
-import { adrInfo, type AdrInfo, chunkMarkdown, classify } from "./sources";
+import { git, type ProjectRoot } from "./git";
+import { folderSignatures } from "./walk";
+import { adrInfo, type AdrInfo, chunkMarkdown, classify, type ClassifyOptions } from "./sources";
 import type { KnowledgeStore } from "./store";
 import type { CodeSymbol, SymbolReader } from "./symbols";
 
-export const MAX_DOCUMENTS = 2_000;
-export const MAX_FILE_BYTES = 256 * 1024;
 const GIT_LIST_TIMEOUT_MS = 20_000;
 
 // What one re-index changed, for checks that compare before and after (Memorise suggestions).
@@ -47,28 +46,40 @@ export async function trackedBlobs(top: string): Promise<Map<string, string>> {
   return blobs;
 }
 
+// What each file is now: git's blob ids in a repository, change signatures in a folder outside git.
+export function currentBlobs(project: ProjectRoot): Promise<Map<string, string>> {
+  return project.git ? trackedBlobs(project.top) : folderSignatures(project.top);
+}
+
 export interface IndexerOptions {
   symbols: SymbolReader;
   codeSymbols: boolean;
+  classify?: ClassifyOptions;
+  maxFileBytes?: number;
+  maxDocuments?: number;
 }
+
+export const DEFAULT_MAX_DOCUMENTS = 2_000;
+export const DEFAULT_MAX_FILE_BYTES = 256 * 1024;
 
 // Brings a repository's store up to date with its tracked files. Only files whose blob changed are
 // read again; files that left the repository or stopped being indexed are removed.
-export async function indexRepo(repo: GitRepo, store: KnowledgeStore, options: IndexerOptions): Promise<IndexChange[]> {
-  const blobs = await trackedBlobs(repo.top);
+export async function indexRepo(repo: ProjectRoot, store: KnowledgeStore, options: IndexerOptions): Promise<IndexChange[]> {
+  const blobs = await currentBlobs(repo);
   store.setFileBlobs(blobs);
   const wanted = new Map<string, KnowledgeKind>();
   let documents = 0;
   for (const path of [...blobs.keys()].sort()) {
-    const kind = classify(path);
+    const kind = classify(path, options.classify);
     if (!kind || (kind === "code" && !options.codeSymbols)) continue;
-    if (kind !== "code" && (documents += 1) > MAX_DOCUMENTS) continue;
+    if (kind !== "code" && (documents += 1) > (options.maxDocuments ?? DEFAULT_MAX_DOCUMENTS)) continue;
     wanted.set(path, kind);
   }
   const changes: IndexChange[] = [];
   const indexed = store.indexedSources();
   for (const [path, previous] of indexed) {
-    if (wanted.get(path) === previous.kind) continue;
+    // Generated entries such as the project brief, at "(brief)", have no file and are kept.
+    if (path.startsWith("(") || wanted.get(path) === previous.kind) continue;
     changes.push({ path, kind: previous.kind, deleted: true, removedSymbols: store.symbolsIn(path), addedSymbols: [], adrBefore: store.sourceStatus(path), adrAfter: null });
     store.removeSource(path);
   }
@@ -77,7 +88,7 @@ export async function indexRepo(repo: GitRepo, store: KnowledgeStore, options: I
     if (indexed.get(path)?.blob === blob && indexed.get(path)?.kind === kind) continue;
     const file = join(repo.top, path);
     const size = await stat(file).then((info) => info.size, () => -1);
-    if (size < 0 || size > MAX_FILE_BYTES) continue;
+    if (size < 0 || size > (options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES)) continue;
     const text = redactSecrets(await readFile(file, "utf8"));
     const before = { symbols: store.symbolsIn(path), adr: kind === "adr" ? store.sourceStatus(path) : null };
     if (kind === "code") {

@@ -4,6 +4,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import { KNOWLEDGE_KINDS, type KnowledgeEntry, type SearchHit } from "../../shared/knowledge";
 import type { AgentScope, TokenAuthority } from "./auth";
+import { projectRoot } from "./git";
 import type { KnowledgeService } from "./service";
 
 // A distinctive name: permission requests are recognised by it, so a user's own server must not share it.
@@ -43,7 +44,7 @@ export class KnowledgeMcp {
   ) {}
 
   private build(scope: AgentScope): McpServer {
-    const repo = { key: scope.repoKey, top: scope.top };
+    const repo = projectRoot(scope.repoKey, scope.top);
     const mcp = new McpServer({ name: KNOWLEDGE_SERVER, version: "1.0.0" });
     const text = (value: string) => ({ content: [{ type: "text" as const, text: value }] });
     const failure = (error: unknown) => ({ content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }], isError: true });
@@ -55,12 +56,13 @@ export class KnowledgeMcp {
         inputSchema: {
           query: z.string().min(1).max(200),
           kinds: z.array(z.enum(KNOWLEDGE_KINDS)).max(KNOWLEDGE_KINDS.length).optional().describe("Limit to these kinds; all kinds when left out"),
+          paths: z.array(z.string().min(1).max(300)).max(20).optional().describe("Limit to these files, folders, or globs (src/api/**), relative to the project root"),
           limit: z.number().int().min(1).max(20).optional(),
         },
       },
-      async ({ query, kinds, limit }) => {
+      async ({ query, kinds, paths, limit }) => {
         try {
-          const hits = await this.service.search(repo, query, kinds ?? [], limit ?? 8);
+          const hits = await this.service.search(repo, query, kinds ?? [], limit ?? 8, paths ?? []);
           return text(hits.length > 0 ? hits.map(describeHit).join("\n") : `Nothing in ${scope.repoKey} matches "${query}". Try other words, or fewer.`);
         } catch (error) {
           return failure(error);
@@ -76,6 +78,40 @@ export class KnowledgeMcp {
       async ({ id }) => {
         try {
           return text(describeEntry(await this.service.read(repo, id)));
+        } catch (error) {
+          return failure(error);
+        }
+      },
+    );
+    mcp.registerTool(
+      "knowledge_outline",
+      {
+        description: "List one file's sections (documents) or functions, classes, methods, and types (code), with line numbers, to see what it holds before reading it.",
+        inputSchema: { path: z.string().min(1).max(300).describe("A file path relative to the project root") },
+      },
+      async ({ path }) => {
+        try {
+          const outline = await this.service.outline(repo, path);
+          return text(outline.length > 0 ? outline.map((entry) => `${entry.line}: ${entry.kind === "code" ? "" : "§ "}${entry.title}  [${entry.id}]`).join("\n") : `Nothing indexed for ${path}. It may be outside the index, too large, or not a document or code file.`);
+        } catch (error) {
+          return failure(error);
+        }
+      },
+    );
+    mcp.registerTool(
+      "knowledge_history",
+      {
+        description: "List the finished tasks that changed a file or any file in a folder, newest first: what was asked, the outcome, and when.",
+        inputSchema: { path: z.string().min(1).max(300).describe("A file or folder relative to the project root"), limit: z.number().int().min(1).max(20).optional() },
+      },
+      async ({ path, limit }) => {
+        try {
+          const tasks = await this.service.history(repo, path, limit ?? 8);
+          return text(
+            tasks.length > 0
+              ? tasks.map((task) => `[${task.id}] ${task.endedAt.slice(0, 10)} ${task.title} (${task.outcome})${task.needsCheck ? " [needs check: its files changed since]" : ""}${task.summary ? `\n  ${task.summary}` : ""}`).join("\n")
+              : `No finished task changed ${path}.`,
+          );
         } catch (error) {
           return failure(error);
         }

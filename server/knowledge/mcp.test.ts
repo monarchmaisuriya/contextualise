@@ -9,6 +9,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadTokenSecret, TokenAuthority } from "./auth";
 import { KnowledgeBase } from "./base";
+import { projectRoot } from "./git";
 import { KNOWLEDGE_SERVER, KnowledgeMcp, knowledgeServerEntry } from "./mcp";
 import { KnowledgeService } from "./service";
 import { SymbolReader } from "./symbols";
@@ -43,7 +44,7 @@ describe("knowledge tools", () => {
       writeFileSync(join(top, path), text);
     }
     execFileSync("git", ["-C", top, "add", "-A"]);
-    base = new KnowledgeBase({ root: async () => root, symbols: new SymbolReader(async () => process.cwd()), codeSymbols: async () => true });
+    base = new KnowledgeBase({ root: async () => root, symbols: new SymbolReader(async () => process.cwd()), indexOptions: async () => ({ codeSymbols: true }) });
     related = null;
     tokens = new TokenAuthority(await loadTokenSecret(root));
     http = await new KnowledgeMcp(tokens, new KnowledgeService(base, async () => related)).listen(0);
@@ -59,7 +60,19 @@ describe("knowledge tools", () => {
 
   it("offers only read tools", async () => {
     const client = await connect(tokens.mint({ repoKey: "local/abc", top }));
-    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["knowledge_search", "knowledge_read"]);
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["knowledge_search", "knowledge_read", "knowledge_outline", "knowledge_history"]);
+  });
+
+  it("outlines a file, lists the tasks that changed it, and narrows search to paths", async () => {
+    const client = await connect(tokens.mint({ repoKey: "local/abc", top }));
+    expect(textOf(await client.callTool({ name: "knowledge_outline", arguments: { path: "shared/contracts.ts" } }))).toBe("1: parseItemRef  [code:shared/contracts.ts:1:parseItemRef]");
+    expect(textOf(await client.callTool({ name: "knowledge_outline", arguments: { path: "docs/adr/0001-use-sqlite.md" } }))).toBe("1: § Use SQLite  [adr:docs/adr/0001-use-sqlite.md:1]");
+    await base.recordTask(projectRoot("local/abc", top), { id: "task:a1", agentId: "a1", provider: "claude", title: "Trim refs", request: "Trim item refs", outcome: "completed", files: ["shared/contracts.ts"], commands: [], startedAt: "2026-10-29T10:00:00.000Z", endedAt: "2026-10-29T11:00:00.000Z", citations: [{ path: "shared/contracts.ts", blob: "old" }], summary: "Made parseItemRef trim spaces." });
+    expect(textOf(await client.callTool({ name: "knowledge_history", arguments: { path: "shared" } }))).toBe("[task:a1] 2026-10-29 Trim refs (completed) [needs check: its files changed since]\n  Made parseItemRef trim spaces.");
+    expect(textOf(await client.callTool({ name: "knowledge_history", arguments: { path: "docs" } }))).toBe("No finished task changed docs.");
+    const narrowed = textOf(await client.callTool({ name: "knowledge_search", arguments: { query: "sqlite parse", paths: ["docs/**"] } }));
+    expect(narrowed).toContain("adr:docs/adr/0001-use-sqlite.md:1");
+    expect(narrowed).not.toContain("shared/contracts.ts");
   });
 
   it("finds an ADR and a code symbol, and reads them quoted", async () => {

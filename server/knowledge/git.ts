@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
+import { basename } from "node:path";
 import { promisify } from "node:util";
 
 // Same as Memorise (memorise/server/git.ts and repo-key.ts); plugins cannot import each other, and
@@ -81,14 +82,32 @@ export function repoKeyFromCommonDir(commonDir: string): string {
   return `local/${createHash("sha256").update(commonDir).digest("hex").slice(0, 16)}`;
 }
 
-export interface GitRepo {
+// A project's key and the folder its paths are relative to: a repository's top level, or a folder
+// outside git. `git` says which, since files are listed and hashed differently.
+export interface ProjectRoot {
   key: string;
   top: string;
+  git: boolean;
 }
 
-// The repository `cwd` is in, or null outside git. Project knowledge is built from tracked files, so
-// a folder outside git has none. Any other git failure is thrown.
-export async function readGitRepo(cwd: string): Promise<GitRepo | null> {
+// A project from its stored key and folder: keys under folder/ are folders outside git.
+export function projectRoot(key: string, top: string): ProjectRoot {
+  return { key, top, git: !key.startsWith("folder/") };
+}
+
+const FOLDER_NAME_MAX = 40;
+
+// The key a folder outside git gets when it is first seen: from its real path at that time, with the
+// folder's name, as Memorise names it (memorise/server/repo-key.ts). ProjectKeys keeps the key when
+// the folder is later renamed or moved.
+export function folderKey(realPath: string): string {
+  const name = basename(realPath).toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-.]+|-+$/g, "").slice(0, FOLDER_NAME_MAX);
+  return `folder/${name || (realPath === "/" ? "root" : "folder")}-${createHash("sha256").update(realPath).digest("hex").slice(0, 12)}`;
+}
+
+// The repository `cwd` is in, or null outside git. Any other git failure is thrown, so a folder in a
+// repository is never taken for a folder outside git.
+export async function readGitRepo(cwd: string): Promise<ProjectRoot | null> {
   try {
     const remote = await git(cwd, ["config", "--get", "remote.origin.url"]).catch((error: unknown) => {
       // `git config --get` exits 1 when the key is absent: a repo without an origin.
@@ -103,9 +122,9 @@ export async function readGitRepo(cwd: string): Promise<GitRepo | null> {
       }),
     );
     const fromRemote = remote === "" ? null : repoKeyFromRemote(remote);
-    if (fromRemote) return { key: fromRemote, top };
+    if (fromRemote) return { key: fromRemote, top, git: true };
     const commonDir = await git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-    return { key: repoKeyFromCommonDir(await realpath(commonDir)), top };
+    return { key: repoKeyFromCommonDir(await realpath(commonDir)), top, git: true };
   } catch (error) {
     if (error instanceof GitError && error.stderr.includes("not a git repository")) return null;
     throw error;

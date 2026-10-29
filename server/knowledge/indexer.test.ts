@@ -20,7 +20,7 @@ describe("indexRepo", () => {
     execFileSync("git", ["-C", top, "add", "-A"]);
     execFileSync("git", ["-C", top, "-c", "user.email=a@example.com", "-c", "user.name=a", "commit", "-q", "-m", "change"]);
   };
-  const index = () => indexRepo({ key: "github.com/acme/api", top }, store, { symbols, codeSymbols: true });
+  const index = () => indexRepo({ key: "github.com/acme/api", top, git: true }, store, { symbols, codeSymbols: true });
 
   beforeEach(() => {
     top = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-index-")));
@@ -75,7 +75,7 @@ describe("indexRepo", () => {
   });
 
   it("indexes no code when code symbols are off", async () => {
-    await indexRepo({ key: "k/a", top }, store, { symbols, codeSymbols: false });
+    await indexRepo({ key: "k/a", top, git: true }, store, { symbols, codeSymbols: false });
     expect(store.counts().code).toBe(0);
   });
 

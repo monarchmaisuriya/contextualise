@@ -4,11 +4,15 @@ import { z } from "zod";
 // Project knowledge: what a repository already says (docs, conventions, ADRs, code symbols) and the
 // tasks agents finished in it. Learned facts (decisions made while working, pitfalls, preferences)
 // belong to Memorise; nothing here stores or serves them.
-export const KNOWLEDGE_KINDS = ["architecture", "convention", "adr", "doc", "code", "task"] as const;
+export const KNOWLEDGE_KINDS = ["brief", "architecture", "convention", "adr", "doc", "code", "task"] as const;
 export const knowledgeKindSchema = z.enum(KNOWLEDGE_KINDS);
 export type KnowledgeKind = z.infer<typeof knowledgeKindSchema>;
 
+// The generated project brief is one entry with this id (kind "brief", path "(brief)").
+export const BRIEF_ID = "brief:(brief):1";
+
 export const KIND_LABELS: Record<KnowledgeKind, string> = {
+  brief: "Project brief",
   architecture: "Architecture",
   convention: "Conventions",
   adr: "Decisions (ADRs)",
@@ -48,6 +52,12 @@ export const taskSummarySchema = z.object({
   startedAt: z.string(),
   endedAt: z.string(),
   needsCheck: z.boolean(),
+  // Written by a background agent when generated knowledge is on: a short title and what was done.
+  generatedTitle: z.string().optional(),
+  summary: z.string().optional(),
+  generatedAt: z.string().optional(),
+  // How many of the agent's turns the summary covers, so it is not generated again without new turns.
+  summarizedTurns: z.number().int().optional(),
 });
 export type TaskSummary = z.infer<typeof taskSummarySchema>;
 
@@ -63,6 +73,12 @@ export const projectSchema = z.object({
   indexedAt: z.string().nullable(),
   indexing: z.boolean(),
   problem: z.string().nullable(),
+  // A folder outside git, and the user's choices for this project.
+  git: z.boolean(),
+  enabled: z.boolean(),
+  pins: z.array(z.string()),
+  // The last "Import past sessions" or "Generate" run since the plugin started.
+  generation: z.object({ state: z.enum(["running", "done", "failed"]), message: z.string(), at: z.string() }).nullable(),
 });
 export type Project = z.infer<typeof projectSchema>;
 
@@ -95,6 +111,25 @@ export const listTasksRpc = defineRpc({
 export const reindexRpc = defineRpc({
   name: "knowledge.reindex",
   input: projectInput,
+  output: z.object({ started: z.boolean() }),
+});
+
+export const setProjectEnabledRpc = defineRpc({
+  name: "knowledge.project-enabled",
+  input: projectInput.extend({ enabled: z.boolean() }),
+  output: z.object({ enabled: z.boolean() }),
+});
+
+export const pinEntryRpc = defineRpc({
+  name: "knowledge.pin",
+  input: projectInput.extend({ id: z.string().min(1).max(600), pinned: z.boolean() }),
+  output: z.object({ pins: z.array(z.string()) }),
+});
+
+export const generateKnowledgeRpc = defineRpc({
+  name: "knowledge.generate",
+  // false: import past sessions only (no model); true: also summaries and a brief when generation is on.
+  input: projectInput.extend({ generate: z.boolean() }),
   output: z.object({ started: z.boolean() }),
 });
 

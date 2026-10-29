@@ -354,6 +354,23 @@ function boundedCount(min: number, max: number, fallback: number) {
   return z.preprocess((value) => (value === 0 ? undefined : value), z.number().int().min(min).max(max).default(fallback));
 }
 
+export const KNOWLEDGE_MAP_PARTS = ["brief", "pinned", "architecture", "conventions", "adrs", "folders", "tasks"] as const;
+export type KnowledgeMapPart = (typeof KNOWLEDGE_MAP_PARTS)[number];
+export const SYMBOL_LANGUAGES = ["typescript", "javascript", "python", "go"] as const;
+export type SymbolLanguage = (typeof SYMBOL_LANGUAGES)[number];
+
+const GLOB = /^[A-Za-z0-9_.\-/*?{},[\]]+$/;
+// The globs in a comma-separated list; empty entries are ignored.
+export function splitGlobs(text: string): string[] {
+  return text.split(",").map((part) => part.trim()).filter(Boolean);
+}
+const globList = z
+  .string()
+  .trim()
+  .max(500)
+  .refine((text) => splitGlobs(text).every((glob) => GLOB.test(glob) && !glob.startsWith("/") && !glob.split("/").includes("..")), "Expected comma-separated file globs relative to the project, such as notes/**/*.txt, docs/*.rst")
+  .default("");
+
 export const snapshotSettingsSchema = z.object({
   // Attachments
   snapshotMaxChars: boundedCount(1_000, 200_000, SNAPSHOT_MAX_CHARS_DEFAULT),
@@ -408,6 +425,21 @@ export const snapshotSettingsSchema = z.object({
   knowledgePort: z.number().int().min(1024).max(65535).refine((port) => port !== 6790, "Port 6790 is Memorise's; choose another").default(6791),
   knowledgeCodeSymbols: z.boolean().default(true),
   memoriseSuggestions: z.boolean().default(true),
+  // What the project map lists, in this order, and how many finished tasks.
+  knowledgeMapParts: z.array(z.enum(KNOWLEDGE_MAP_PARTS)).max(KNOWLEDGE_MAP_PARTS.length).default([...KNOWLEDGE_MAP_PARTS]),
+  knowledgeRecentTasks: z.number().int().min(0).max(10).default(3),
+  knowledgeLanguages: z.array(z.enum(SYMBOL_LANGUAGES)).max(SYMBOL_LANGUAGES.length).default([...SYMBOL_LANGUAGES]),
+  // Comma-separated file globs relative to the project root, such as notes/**/*.txt.
+  knowledgeExtraDocGlobs: globList,
+  knowledgeExcludeGlobs: globList,
+  knowledgeMaxFileKb: boundedCount(16, 2_048, 256),
+  knowledgeMaxDocs: boundedCount(100, 20_000, 2_000),
+  knowledgeAutoApproveTools: z.boolean().default(true),
+  // Generated knowledge: off until turned on, like Memorise's suggestions from sessions.
+  knowledgeGenerate: z.boolean().default(false),
+  knowledgeGenerateIdleMinutes: boundedCount(5, 240, 20),
+  knowledgeGenerateMaxPerDay: boundedCount(1, 200, 20),
+  knowledgeGenerateProvider: z.enum(["same", "claude", "codex"]).default("same"),
 });
 export type SnapshotSettings = z.infer<typeof snapshotSettingsSchema>;
 

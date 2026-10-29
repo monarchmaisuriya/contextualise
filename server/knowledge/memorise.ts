@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { MemoriseState, RelatedMemory } from "../../shared/knowledge";
 import type { PaseoApi } from "../paseo-types";
 import type { IndexChange } from "./indexer";
+import { globMatches } from "./globs";
 import type { CodeSymbol } from "./symbols";
 
 // Memorise's interop contract, version 1 (memorise/INTEROP.md): a heartbeat, each project's memory
@@ -34,24 +35,6 @@ export interface Suggestion {
   reason: string;
   // Identifies the evidence, so the same suggestion is never sent twice.
   key: string;
-}
-
-// A Memorise path glob (src/api/**/*.ts, one {a,b} group at most) as a regular expression.
-export function globMatches(glob: string, path: string): boolean {
-  let pattern = "";
-  for (let i = 0; i < glob.length; i += 1) {
-    const char = glob[i];
-    if (char === "*" && glob[i + 1] === "*") {
-      pattern += glob[i + 2] === "/" ? "(?:.*/)?" : ".*";
-      i += glob[i + 2] === "/" ? 2 : 1;
-    } else if (char === "*") pattern += "[^/]*";
-    else if (char === "?") pattern += "[^/]";
-    else if (char === "{") pattern += "(?:";
-    else if (char === "}") pattern += ")";
-    else if (char === "," && glob.lastIndexOf("{", i) > glob.lastIndexOf("}", i)) pattern += "|";
-    else pattern += char.replace(/[.+^$()|[\]\\]/g, "\\$&");
-  }
-  return new RegExp(`^${pattern}$`).test(path);
 }
 
 function aboutPath(memory: ExportedMemory, path: string): boolean {

@@ -2,6 +2,35 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.15.0 - 2026-10-29
+
+### Added
+
+- Project knowledge for folders outside git, keyed the way Memorise keys them: by the folder's name and real path, kept through renames and moves, and shared by the subfolders of a Paseo project. Files are found by a bounded walk and read again when their modified time or size changes. The home folder, the filesystem root, and plugin data folders are never projects.
+- Import past sessions: every existing agent of a project gets its task entry from its timeline, with no model.
+- Generated knowledge, off by default, with Memorise's safeguards:
+  - A session summary (title and 2 to 4 sentences) is written after the agent has been quiet for a set time.
+  - A project brief is written after every 5 summaries.
+  - "Generate summaries and brief" covers past sessions on request.
+  - Background agents are locked down, have no tools, and are archived.
+  - Sessions are redacted first and read by their own provider by default.
+  - Runs are capped per day.
+  - Decisions and pitfalls are never generated (Memorise's job).
+- Generated titles name agents in plain folders in Attach > Agent conversation.
+- Agent tools: `knowledge_outline` (a file's sections or symbols with lines) and `knowledge_history` (the tasks that changed a file or folder); `knowledge_search` takes `paths`.
+- Settings:
+  - which parts the map lists and how many recent tasks;
+  - symbol languages;
+  - extra doc globs and excluded globs;
+  - largest file and most documents;
+  - automatic tool approval;
+  - the generation switch, provider, quiet minutes, and daily runs.
+- Per project, on the Project knowledge screen: a switch to turn knowledge off, pins that always appear in the map, the brief, and summaries in the task list.
+
+### Changed
+
+- The map and tools say "project" instead of "repository". Fetch and summary agents share one locked-down background agent runner.
+
 ## 0.14.0 - 2026-10-29
 
 ### Changed

@@ -45,15 +45,16 @@ function taskTitle(workspace: DirectoryWorkspace | undefined): string | null {
 }
 
 // An agent's row title: its worktree's title when the worktree is its task ("title · prompt" when
-// several agents share it), else its own cleaned prompt. `includesWorkspace` keeps the subtitle
+// several agents share it), else its generated session title or its own cleaned prompt. `includesWorkspace` keeps the subtitle
 // from naming the workspace twice.
 export function agentTitle(
   agent: { title: string | null; id: string },
   workspace: DirectoryWorkspace | undefined,
   sharing: number,
-  options: { maxChars: number; shortenLinks: boolean },
+  options: { maxChars: number; shortenLinks: boolean; generated?: string },
 ): { title: string; includesWorkspace: boolean } {
-  const prompt = cleanTitle(agent.title ?? "", options.shortenLinks);
+  // A title written for the session (project knowledge) reads better than its first request.
+  const prompt = options.generated?.trim() || cleanTitle(agent.title ?? "", options.shortenLinks);
   const task = taskTitle(workspace);
   if (task) return { title: capTitle(sharing > 1 && prompt ? `${task} · ${prompt}` : task, options.maxChars), includesWorkspace: true };
   return { title: capTitle(prompt || agent.id, options.maxChars), includesWorkspace: false };

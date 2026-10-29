@@ -27,6 +27,7 @@ describe("contributeKnowledge", () => {
   ];
   const paseo = {
     config: { get: async () => ({ requestId: "r", config: { plugins } }) },
+    workspaces: { list: async () => ({ entries: [], pageInfo: { hasMore: false, nextCursor: null } }) },
     agents: { ref: () => ({ respondToPermission, timeline: { refetch: async () => ({ entries: timeline, hasOlder: false, startCursor: null }) } }) },
   };
   const create = (cwd: string, config: Record<string, unknown> = {}) =>
@@ -59,11 +60,13 @@ describe("contributeKnowledge", () => {
       on: (name: string, handler: Handler) => on.set(name, [...(on.get(name) ?? []), handler]),
       handle: (contract: { name: string }, handler: Handler) => rpcs.set(contract.name, handler),
     };
-    stop = contributeKnowledge(server as never, { resolveRoot: async () => join(home, "plugin-data", "contextualise"), settings: async () => {
+    stop = contributeKnowledge(server as never, {
+      resolveRoot: async () => join(home, "plugin-data", "contextualise"),
+      settings: async () => {
         if (settingsProblem) throw settingsProblem;
         return values;
       },
-    });
+    }).stop;
   });
   afterEach(async () => {
     await stop();
@@ -84,8 +87,14 @@ describe("contributeKnowledge", () => {
     expect(child.config.systemPrompt?.split(SECTION_START)).toHaveLength(2);
   });
 
-  it("leaves agents outside git, and every agent when knowledge is off, without knowledge", async () => {
-    expect((await create(home, { systemPrompt: "x" })).config).toMatchObject({ systemPrompt: "x", mcpServers: {} });
+  it("gives a folder outside git knowledge too, but never plugin data, and nothing when knowledge is off", async () => {
+    const folder = join(home, "notes");
+    mkdirSync(folder);
+    writeFileSync(join(folder, "ARCHITECTURE.md"), "# Notes layout\nOne file per topic.\n");
+    expect((await create(folder)).config.systemPrompt).toContain('- ARCHITECTURE.md "Notes layout"');
+    const worker = join(home, "plugin-data", "contextualise", "workers");
+    mkdirSync(worker, { recursive: true });
+    expect((await create(worker, { systemPrompt: "x" })).config).toMatchObject({ systemPrompt: "x", mcpServers: {} });
     values = { ...values, knowledgeEnabled: false };
     expect((await create(top, { systemPrompt: "x" })).config).toMatchObject({ systemPrompt: "x", mcpServers: {} });
   });
@@ -111,6 +120,26 @@ describe("contributeKnowledge", () => {
   it("still maps documents when code symbols cannot be read", async () => {
     plugins = {};
     expect((await create(top)).config.systemPrompt).toContain('- ARCHITECTURE.md "Overview"');
+  });
+
+  it("gives a switched-off project nothing, and puts pinned entries in the map", async () => {
+    await create(top);
+    const call = (name: string, input: unknown) => (rpcs.get(name) as (input: unknown, context: unknown) => Promise<unknown>)(input, { paseo });
+    const { projects } = (await call("knowledge.projects", {})) as { projects: { repoKey: string; enabled: boolean }[] };
+    const repoKey = projects[0].repoKey;
+    await call("knowledge.pin", { repoKey, id: "architecture:ARCHITECTURE.md:1", pinned: true });
+    expect((await create(top)).config.systemPrompt).toContain('Pinned:\n- ARCHITECTURE.md:1 "Overview"');
+    await call("knowledge.project-enabled", { repoKey, enabled: false });
+    expect((await create(top, { systemPrompt: "x" })).config).toMatchObject({ systemPrompt: "x", mcpServers: {} });
+    await emit("agent.turn_ended", { agent: { id: "a2", provider: "codex", cwd: top, title: null }, outcome: { kind: "completed" } });
+    await call("knowledge.project-enabled", { repoKey, enabled: true });
+    expect((await create(top)).config.systemPrompt).not.toContain("Document the queue");
+  });
+
+  it("leaves knowledge tool requests to the user when automatic approval is off", async () => {
+    values = { ...values, knowledgeAutoApproveTools: false };
+    await emit("agent.permission_requested", { agent: { id: "a1", cwd: top }, request: { id: "p1", name: `mcp__${KNOWLEDGE_SERVER}__knowledge_search` } });
+    expect(respondToPermission).not.toHaveBeenCalled();
   });
 
   it("approves the knowledge tools and nothing else", async () => {

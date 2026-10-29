@@ -1,7 +1,8 @@
 import type { KnowledgeEntry, KnowledgeKind, RelatedMemory, SearchHit } from "../../shared/knowledge";
 import type { KnowledgeBase } from "./base";
-import type { GitRepo } from "./git";
+import type { ProjectRoot } from "./git";
 import type { KnowledgeStore, TaskRecord } from "./store";
+import { anyGlob } from "./globs";
 import { taskNeedsCheck } from "./task-log";
 
 // How long a search waits for a re-index before answering from the index as it is.
@@ -27,7 +28,7 @@ export class KnowledgeService {
     private readonly related: () => Promise<RelatedLookup | null>,
   ) {}
 
-  private async current(repo: GitRepo): Promise<KnowledgeStore> {
+  private async current(repo: ProjectRoot): Promise<KnowledgeStore> {
     await this.base.refresh(repo, SEARCH_WAIT_MS);
     return this.base.open(repo);
   }
@@ -37,12 +38,20 @@ export class KnowledgeService {
     return Promise.all(hits.map(async (hit) => ({ ...hit, relatedMemories: lookup && hit.kind !== "task" ? await lookup(repoKey, hit.path).catch(() => []) : [] })));
   }
 
-  async search(repo: GitRepo, query: string, kinds: readonly KnowledgeKind[], limit: number): Promise<SearchHit[]> {
+  // `paths` narrows results to files matching any of them: a glob (src/api/**), a file, or a folder.
+  async search(repo: ProjectRoot, query: string, kinds: readonly KnowledgeKind[], limit: number, paths: readonly string[] = []): Promise<SearchHit[]> {
     const store = await this.current(repo);
     const wantsTasks = kinds.length === 0 || kinds.includes("task");
     const blobs = wantsTasks ? store.fileBlobs() : new Map<string, string>();
+    const within = (path: string) => paths.length === 0 || paths.some((wanted) => path === wanted || path.startsWith(`${wanted.replace(/\/+$/, "")}/`)) || anyGlob(paths, path);
+    // With a path filter, more candidates are read so enough survive it.
+    const fetch = paths.length > 0 ? limit * 5 : limit;
     const tasks = wantsTasks
-      ? store.searchTasks(query, Math.min(MAX_TASK_HITS, limit)).map(({ task, snippet }) => ({
+      ? store
+          .searchTasks(query, Math.min(MAX_TASK_HITS, fetch))
+          .filter(({ task }) => paths.length === 0 || task.files.some(within))
+          .slice(0, Math.min(MAX_TASK_HITS, limit))
+          .map(({ task, snippet }) => ({
           id: task.id,
           kind: "task" as const,
           path: task.files[0] ?? "",
@@ -52,11 +61,15 @@ export class KnowledgeService {
           needsCheck: taskNeedsCheck(task, blobs),
         }))
       : [];
-    const sources = store.search(query, { kinds, limit: limit - tasks.length }).map((hit) => ({ ...hit, needsCheck: hit.kind === "adr" && store.sourceStatus(hit.path)?.status === "superseded" }));
+    const sources = store
+      .search(query, { kinds, limit: fetch })
+      .filter((hit) => within(hit.path))
+      .slice(0, limit - tasks.length)
+      .map((hit) => ({ ...hit, needsCheck: hit.kind === "adr" && store.sourceStatus(hit.path)?.status === "superseded" }));
     return this.withRelated(repo.key, [...sources, ...tasks]);
   }
 
-  async read(repo: GitRepo, id: string): Promise<KnowledgeEntry> {
+  async read(repo: ProjectRoot, id: string): Promise<KnowledgeEntry> {
     const store = await this.current(repo);
     if (id.startsWith("task:")) {
       const task = store.task(id);
@@ -71,7 +84,23 @@ export class KnowledgeService {
     return { ...rest, body: entry.body };
   }
 
-  async tasks(repo: GitRepo, limit: number) {
+  async outline(repo: ProjectRoot, path: string) {
+    return (await this.current(repo)).outline(path.replace(/^\.?\//, ""));
+  }
+
+  // Tasks that changed a file, or any file in a folder, newest first.
+  async history(repo: ProjectRoot, path: string, limit: number) {
+    const wanted = path.replace(/^\.?\//, "").replace(/\/+$/, "");
+    const store = await this.current(repo);
+    const blobs = store.fileBlobs();
+    return store
+      .tasks(500)
+      .filter((task) => task.files.some((file) => file === wanted || file.startsWith(`${wanted}/`)))
+      .slice(0, limit)
+      .map(({ citations, ...task }) => ({ ...task, needsCheck: taskNeedsCheck({ citations }, blobs) }));
+  }
+
+  async tasks(repo: ProjectRoot, limit: number) {
     const store = await this.base.open(repo);
     const blobs = store.fileBlobs();
     return store.tasks(limit).map(({ citations, ...task }) => ({ ...task, needsCheck: taskNeedsCheck({ citations }, blobs) }));

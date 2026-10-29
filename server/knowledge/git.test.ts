@@ -37,7 +37,7 @@ describe("readGitRepo", () => {
     execFileSync("git", ["init", "-q", repo]);
     execFileSync("git", ["-C", repo, "remote", "add", "origin", "git@github.com:acme/api.git"]);
     mkdirSync(join(repo, "src"));
-    expect(await readGitRepo(join(repo, "src"))).toEqual({ key: "github.com/acme/api", top: repo });
+    expect(await readGitRepo(join(repo, "src"))).toEqual({ key: "github.com/acme/api", top: repo, git: true });
     expect((await readGitRepo(join(repo, ".git")))?.key).toBe("github.com/acme/api");
     expect(await readGitRepo(temp())).toBeNull();
   });

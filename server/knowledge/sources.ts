@@ -1,5 +1,7 @@
 import { basename, extname } from "node:path";
+import type { SymbolLanguage } from "../../shared/contracts";
 import type { KnowledgeKind } from "../../shared/knowledge";
+import { anyGlob } from "./globs";
 
 const MARKDOWN = new Set([".md", ".mdx", ".markdown"]);
 export const CODE_EXTENSIONS: Readonly<Record<string, "javascript" | "typescript" | "tsx" | "python" | "go">> = {
@@ -15,13 +17,29 @@ export const CODE_EXTENSIONS: Readonly<Record<string, "javascript" | "typescript
   ".go": "go",
 };
 // Tracked but not the project's own words or code.
-const SKIPPED_FOLDERS = new Set(["node_modules", "vendor", "third_party", "dist", "build", "out", ".git"]);
+export const SKIPPED_FOLDERS = new Set(["node_modules", "vendor", "third_party", "dist", "build", "out", ".git"]);
 const ADR_FOLDERS = new Set(["adr", "adrs", "decisions", "architecture-decisions"]);
 const CONVENTION_FILES = new Set(["contributing.md", "claude.md", "agents.md", ".cursorrules", "conventions.md", "style.md", "styleguide.md", "style-guide.md"]);
 
-// What a tracked file is to project knowledge, or null when it is not indexed. Paths are relative to
-// the repository root, with forward slashes, as git lists them.
-export function classify(path: string): KnowledgeKind | null {
+const LANGUAGE_OF: Readonly<Record<(typeof CODE_EXTENSIONS)[string], SymbolLanguage>> = { javascript: "javascript", typescript: "typescript", tsx: "typescript", python: "python", go: "go" };
+
+export interface ClassifyOptions {
+  // Globs that are never indexed, and globs indexed as docs whatever their extension.
+  exclude?: readonly string[];
+  extraDocs?: readonly string[];
+  languages?: ReadonlySet<SymbolLanguage>;
+}
+
+// What a project file is to project knowledge, or null when it is not indexed. Paths are relative to
+// the project root, with forward slashes, as git lists them.
+export function classify(path: string, options: ClassifyOptions = {}): KnowledgeKind | null {
+  if (options.exclude && anyGlob(options.exclude, path)) return null;
+  const kind = builtInKind(path);
+  if (kind === "code" && options.languages && !options.languages.has(LANGUAGE_OF[CODE_EXTENSIONS[extname(path).toLowerCase()]])) return null;
+  return kind ?? (options.extraDocs && anyGlob(options.extraDocs, path) ? "doc" : null);
+}
+
+function builtInKind(path: string): KnowledgeKind | null {
   const segments = path.toLowerCase().split("/");
   const name = segments[segments.length - 1];
   const folders = segments.slice(0, -1);

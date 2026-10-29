@@ -43,6 +43,11 @@ describe("agentTitle", () => {
     }
   });
 
+  it("uses a generated session title instead of the first request outside titled worktrees", () => {
+    expect(agentTitle(agent, worktree({ workspaceKind: "directory" }), 1, { maxChars: 44, shortenLinks: true, generated: "Reviewed the auth change" })).toEqual({ title: "Reviewed the auth change", includesWorkspace: false });
+    expect(agentTitle(agent, worktree(), 2, { maxChars: 60, shortenLinks: true, generated: "Reviewed auth" }).title).toBe("Review PR 5854 · Reviewed auth");
+  });
+
   it("falls back to the agent id when there is no title at all", () => {
     expect(agentTitle({ title: null, id: "a1" }, undefined, 1, { maxChars: 44, shortenLinks: true }).title).toBe("a1");
   });

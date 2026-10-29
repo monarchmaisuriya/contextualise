@@ -119,7 +119,7 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
     const options = await currentSettings();
     serverId ??= paseo.hosts.list().then((hosts) => hosts.self.serverId);
     const pinned = new Set((await store.pinnedAgents()).map((pin) => pin.agentId));
-    return { items: await searchAgents(paseo, readings, await directory(paseo), pinned, await serverId, query, options) };
+    return { items: await searchAgents(paseo, readings, await directory(paseo), pinned, await serverId, query, options, await knowledge.generatedTitles()) };
   });
 
   server.handle(searchTerminalsRpc, async ({ query }, { paseo }) => {
@@ -127,13 +127,13 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
     return { items: await searchTerminals(paseo, readings, await directory(paseo), query, options) };
   });
 
-  const stopKnowledge = contributeKnowledge(server, { resolveRoot, settings: currentSettings });
+  const knowledge = contributeKnowledge(server, { resolveRoot, settings: currentSettings });
 
   return async () => {
     autoRefresh.stop();
     void stopFollowingSetting();
     readings.clear();
     directories.clear();
-    await stopKnowledge();
+    await knowledge.stop();
   };
 }

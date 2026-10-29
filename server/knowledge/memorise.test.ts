@@ -4,7 +4,8 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { PaseoApi } from "../paseo-types";
 import type { IndexChange } from "./indexer";
-import { type ExportedMemory, globMatches, MemoriseLink, memorySuggestions, SUGGESTIONS_PER_RUN } from "./memorise";
+import { globMatches } from "./globs";
+import { type ExportedMemory, MemoriseLink, memorySuggestions, SUGGESTIONS_PER_RUN } from "./memorise";
 import type { CodeSymbol } from "./symbols";
 
 const REPO = "github.com/acme/api";
