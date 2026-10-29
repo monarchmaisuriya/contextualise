@@ -56,6 +56,11 @@ describe("buildTask", () => {
     expect(task?.commands[0].command).toBe("export [removed: password or key assignment]");
   });
 
+  it("gives tasks plain titles, without the request's Markdown", () => {
+    const task = buildTask({ ...base, agent: { ...base.agent, title: "**Handoff: Security status** (session of `2026-10-29`)" }, entries: [at({ type: "user_message", text: "x" })] });
+    expect(task?.title).toBe("Handoff: Security status (session of 2026-10-29)");
+  });
+
   it("records nothing for an agent that was never asked anything", () => {
     expect(buildTask({ ...base, entries: [at({ type: "assistant_message", text: "Hi" })] })).toBeNull();
   });

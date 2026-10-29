@@ -2,6 +2,18 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.16.2 - 2026-10-29
+
+### Fixed
+
+- The Project knowledge screen showed nothing until you searched, and its kind buttons did nothing without a search. It now opens on an overview: the project description, then design docs, team rules, decisions, documents, and code, each with its first entries and "Show all", then recent work. The kind buttons are tabs that list everything of that kind, 50 at a time with "Show more", and narrow a search when you type.
+- Recent work stopped at 20 with no way to see more; "Show all" lists every recorded conversation, 50 at a time.
+- When few conversations are recorded, the screen offers to add the earlier ones.
+- Attach > Project knowledge showed nothing until you typed; it now offers each project's description, design docs, team rules, decisions, and recent work. With several projects, only the first 20 results across all of them were listed; every project's results are kept now.
+- Task titles kept the first request's Markdown ("**Handoff: …**"), and document section titles kept their headings' Markdown; both are plain text now. Indexes made by earlier versions are read again once, and recorded conversations get plain titles; nothing recorded is lost.
+- Search results and the agents' history tool showed the first request even when a written title existed.
+- The count line under each project uses the same plain words as the tabs.
+
 ## 0.16.1 - 2026-10-29
 
 ### Fixed

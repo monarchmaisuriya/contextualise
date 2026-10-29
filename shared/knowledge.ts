@@ -104,8 +104,15 @@ export const readKnowledgeRpc = defineRpc({
 
 export const listTasksRpc = defineRpc({
   name: "knowledge.tasks",
-  input: projectInput.extend({ limit: z.number().int().min(1).max(200).default(50) }),
-  output: z.object({ tasks: z.array(taskSummarySchema) }),
+  input: projectInput.extend({ limit: z.number().int().min(1).max(200).default(50), offset: z.number().int().min(0).default(0) }),
+  output: z.object({ tasks: z.array(taskSummarySchema), total: z.number().int() }),
+});
+
+// One kind's entries without a search, a page at a time; the snippet is the start of the entry.
+export const browseKnowledgeRpc = defineRpc({
+  name: "knowledge.browse",
+  input: projectInput.extend({ kind: knowledgeKindSchema.exclude(["task"]), limit: z.number().int().min(1).max(200).default(50), offset: z.number().int().min(0).default(0) }),
+  output: z.object({ hits: z.array(searchHitSchema), total: z.number().int() }),
 });
 
 export const reindexRpc = defineRpc({

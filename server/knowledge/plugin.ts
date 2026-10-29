@@ -3,13 +3,13 @@ import type { Server } from "node:http";
 import { dirname, join } from "node:path";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { type SnapshotSettings, splitGlobs } from "../../shared/contracts";
-import { generateKnowledgeRpc, KIND_LABELS, listProjectsRpc, listTasksRpc, memoriseStatusRpc, pinEntryRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc, setProjectEnabledRpc } from "../../shared/knowledge";
+import { browseKnowledgeRpc, generateKnowledgeRpc, KIND_LABELS, type SearchHit, listProjectsRpc, listTasksRpc, memoriseStatusRpc, pinEntryRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc, setProjectEnabledRpc } from "../../shared/knowledge";
 import type { PaseoApi } from "../paseo-types";
 import { capTitle } from "../rows";
 import { loadTokenSecret, TokenAuthority } from "./auth";
 import { KnowledgeBase } from "./base";
 import { currentBlobs } from "./indexer";
-import { projectRoot } from "./git";
+import { type ProjectRoot, projectRoot } from "./git";
 import { KNOWLEDGE_SERVER, KnowledgeMcp, knowledgeServerEntry } from "./mcp";
 import { Generator } from "./generate";
 import { MemoriseLink, memorySuggestions } from "./memorise";
@@ -27,6 +27,7 @@ const TIMELINE_PAGE = 200;
 const MAX_TIMELINE_PAGES = 10;
 const DOCS_URL = "https://github.com/monarchmaisuriya/contextualise#project-knowledge";
 const ATTACH_RESULTS = 20;
+const OVERVIEW_TASKS = 10;
 
 interface KnowledgeDeps {
   resolveRoot: () => Promise<string>;
@@ -249,7 +250,11 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     remember(paseo);
     return service.read(await project(repoKey), id);
   });
-  server.handle(listTasksRpc, async ({ repoKey, limit }) => ({ tasks: await service.tasks(await project(repoKey), limit) }));
+  server.handle(listTasksRpc, async ({ repoKey, limit, offset }) => service.tasks(await project(repoKey), limit, offset));
+  server.handle(browseKnowledgeRpc, async ({ repoKey, kind, limit, offset }, { paseo }) => {
+    remember(paseo);
+    return service.browse(await project(repoKey), kind, limit, offset);
+  });
   server.handle(reindexRpc, async ({ repoKey }, { paseo }) => {
     remember(paseo);
     const repo = await project(repoKey);
@@ -257,14 +262,26 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     void base.refresh(repo, 0);
     return { started: true };
   });
+  // A project's essentials, newest work last: its description, design docs, team rules, decisions,
+  // and recent work.
+  const overview = async (repo: ProjectRoot): Promise<SearchHit[]> => {
+    const parts = await Promise.all([service.browse(repo, "brief", 1, 0), service.browse(repo, "architecture", 10, 0), service.browse(repo, "convention", 10, 0), service.browse(repo, "adr", 20, 0)]);
+    const { tasks } = await service.tasks(repo, OVERVIEW_TASKS);
+    return [
+      ...parts.flatMap((part) => part.hits),
+      ...tasks.map((task) => ({ id: task.id, kind: "task" as const, path: task.files[0] ?? "", line: 0, title: task.generatedTitle ?? task.title, snippet: task.summary ?? task.request, needsCheck: task.needsCheck, relatedMemories: [] })),
+    ];
+  };
+
   server.handle(searchKnowledgeAttachmentsRpc, async ({ query }, { paseo }) => {
     remember(paseo);
-    if (!query.trim()) return { items: [] };
     const { pickerTitleMaxChars } = await deps.settings();
     const items = [];
     for (const found of await base.projects()) {
       const repo = projectRoot(found.repoKey, found.top);
-      for (const hit of await service.search(repo, query, [], ATTACH_RESULTS)) {
+      // With no search words, each project's essentials are offered instead of nothing.
+      const hits = query.trim() ? await service.search(repo, query, [], ATTACH_RESULTS) : await overview(repo);
+      for (const hit of hits) {
         const entry = await service.read(repo, hit.id);
         items.push({
           id: `${found.repoKey}|${hit.id}`,
@@ -278,7 +295,8 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
         });
       }
     }
-    return { items: items.slice(0, ATTACH_RESULTS) };
+    // Every project's results are kept; Paseo's picker scrolls.
+    return { items };
   });
 
   let titles: { at: number; map: Promise<Map<string, string>> } | null = null;
