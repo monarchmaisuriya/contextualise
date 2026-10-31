@@ -155,3 +155,13 @@ test("a version 3 file is read with no pins and its notes gain the asking-agent 
   expect(saved.version).toBe(4);
   expect(saved.tags.x.notes[0].id).toBe("n1");
 });
+
+test("a tag may be named like a built-in object property, and __proto__ is refused with a reason", async () => {
+  const member = { agentId: "a1", workspaceId: "w1" };
+  expect(await store.add(["constructor"], member)).toEqual([{ tag: "constructor", name: "constructor", changed: true }]);
+  const stored = Object.entries(await store.read()).find(([key]) => key === "constructor")?.[1];
+  expect(stored?.agents.map((agent) => agent.agentId)).toEqual(["a1"]);
+  expect(await store.remove(["Constructor"], "a1")).toEqual([{ tag: "constructor", name: "constructor", changed: true }]);
+  await expect(store.add(["__proto__"], member)).rejects.toThrow("reserved");
+});
+

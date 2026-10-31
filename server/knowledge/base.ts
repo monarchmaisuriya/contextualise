@@ -8,7 +8,7 @@ import { storedFacts, updateFacts } from "./facts";
 import { type IndexChange, type IndexerOptions, indexRepo } from "./indexer";
 import { cleanTitle } from "../rows";
 import { ProjectKeys } from "./projects";
-import { KnowledgeStore, type TaskRecord } from "./store";
+import { KnowledgeStore, type TaskRecord, taskRecordSchema } from "./store";
 import type { SymbolReader } from "./symbols";
 
 // How long an index counts as current before the next use compares blobs again, so a burst of
@@ -16,7 +16,7 @@ import type { SymbolReader } from "./symbols";
 export const FRESH_MS = 30_000;
 const REPO_CACHE_MS = 60_000;
 // Raised when what is stored from files changes shape, so old indexes are rebuilt once.
-const CONTENT_VERSION = "3";
+const CONTENT_VERSION = "4";
 
 export interface KnowledgeBaseDeps {
   root: () => Promise<string>;
@@ -68,7 +68,8 @@ export class KnowledgeBase {
     return dir;
   }
 
-  private static fileName(repoKey: string): string {
+  // The file name every per-project file shares: the index, its task log, its usage counts.
+  static fileName(repoKey: string): string {
     return createHash("sha256").update(repoKey).digest("hex").slice(0, 32);
   }
 
@@ -108,7 +109,7 @@ export class KnowledgeBase {
       const log = await readFile(join(dir, `${name}.tasks.jsonl`), "utf8").catch(() => "");
       for (const line of log.split("\n").filter(Boolean)) {
         try {
-          store.upsertTask(JSON.parse(line) as TaskRecord);
+          store.upsertTask(taskRecordSchema.parse(JSON.parse(line)));
         } catch (error) {
           console.error(`[contextualise] skipped an unreadable task log line for ${repo.key}: ${String(error)}`);
         }
@@ -119,9 +120,10 @@ export class KnowledgeBase {
     return store;
   }
 
-  // Indexes made before titles were cleaned (0.16.1 and older), or before imports were kept (0.16.2
-  // and older), are read again from the files, and recorded tasks get plain titles. The index is a
-  // cache; tasks are kept. Runs once per index.
+  // Indexes made before titles were cleaned (0.16.1 and older), before imports were kept (0.16.2 and
+  // older), or when they could hold linked files and parts sharing one id (0.17.2 and older), are read
+  // again from the files, and recorded tasks get plain titles. The index is a cache; tasks are kept.
+  // Runs once per index.
   private static upgrade(store: KnowledgeStore): void {
     if (store.getMeta("contentVersion") === CONTENT_VERSION) return;
     store.resetSources();

@@ -3,17 +3,19 @@ import type { Server } from "node:http";
 import { dirname, join } from "node:path";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { type SnapshotSettings, splitGlobs } from "../../shared/contracts";
-import { areaRpc, BRIEF_ID, browseKnowledgeRpc, describeProjectRpc, explainAreaRpc, generateKnowledgeRpc, KIND_LABELS, type SearchHit, listProjectsRpc, listTasksRpc, memoriseStatusRpc, pinEntryRpc, projectFactsRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc, setProjectEnabledRpc } from "../../shared/knowledge";
+import { areaRpc, BRIEF_ID, browseKnowledgeRpc, describeProjectRpc, explainAreaRpc, generateKnowledgeRpc, KIND_LABELS, knowledgeUsageRpc, projectForWorkspaceRpc, type SearchHit, listProjectsRpc, listTasksRpc, memoriseStatusRpc, pinEntryRpc, projectFactsRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc, setProjectEnabledRpc } from "../../shared/knowledge";
 import type { PaseoApi } from "../paseo-types";
 import { capTitle } from "../rows";
+import { requestedTool } from "../vendor-fetch";
 import { loadTokenSecret, TokenAuthority } from "./auth";
 import { KnowledgeBase } from "./base";
 import { currentBlobs } from "./indexer";
 import { type ProjectRoot, projectRoot } from "./git";
-import { KNOWLEDGE_SERVER, KnowledgeMcp, knowledgeServerEntry } from "./mcp";
+import { KNOWLEDGE_SERVER, KNOWLEDGE_TOOLS, KnowledgeMcp, knowledgeServerEntry } from "./mcp";
 import { Generator } from "./generate";
 import { MemoriseLink, memorySuggestions } from "./memorise";
 import { ProjectPrefsStore } from "./prefs";
+import { UsageLog } from "./usage";
 import { buildSection, unavailableSection, withoutSection, withSection } from "./section";
 import { KnowledgeService } from "./service";
 import { SymbolReader } from "./symbols";
@@ -115,6 +117,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     },
   });
   const prefs = new ProjectPrefsStore(async () => join(await deps.resolveRoot(), "knowledge"));
+  const usage = new UsageLog(async () => join(await deps.resolveRoot(), "knowledge"));
   const generator = new Generator({ base, prefs, root: deps.resolveRoot, settings: deps.settings, runWorker, readTimeline });
   const service = new KnowledgeService(base, async () => ((await memoriseAvailable()) ? (repoKey, path) => link.related(repoKey, path) : null));
 
@@ -123,7 +126,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     const tokens = new TokenAuthority(await loadTokenSecret(join(root, "knowledge")));
     const { knowledgePort } = await deps.settings();
     try {
-      const http: Server | null = await new KnowledgeMcp(tokens, service).listen(knowledgePort);
+      const http: Server | null = await new KnowledgeMcp(tokens, service, usage).listen(knowledgePort);
       console.log(`[contextualise] knowledge tools on 127.0.0.1:${knowledgePort}`);
       return { tokens, port: knowledgePort, http, problem: null };
     } catch (error) {
@@ -175,6 +178,8 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       const { tokens, port, problem } = await runtime;
       if (problem) return { ...request, config: { ...stripped, systemPrompt: withSection(stripped.systemPrompt, unavailableSection(problem)) } };
       const updating = (await base.refresh(repo, HOOK_WAIT_MS)) === "updating";
+      // Counting is advisory: a failed count is logged and never stops the agent.
+      await usage.recordGiven(repo.key).catch((error: unknown) => console.error(`[contextualise] could not count an agent given knowledge in ${repo.key}: ${String(error)}`));
       const section = buildSection({
         repoKey: repo.key,
         store: await base.open(repo),
@@ -199,9 +204,12 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     }
   });
 
-  // The knowledge tools only read the agent's own repository's index, so their calls are approved.
+  // The knowledge tools only read the agent's own repository's index, so their calls are approved:
+  // each one by its exact server and tool name. Another server whose name starts the same way, or a
+  // tool the knowledge server does not offer, is left to the user.
   server.on("agent.permission_requested", async ({ agent, request }, { paseo }) => {
-    const isKnowledge = request.name.startsWith(`mcp__${KNOWLEDGE_SERVER}__`) || (request.name === "CodexMcpElicitation" && request.metadata?.serverName === KNOWLEDGE_SERVER);
+    const asked = requestedTool(request.name === "CodexMcpElicitation" ? "codex" : "claude", request);
+    const isKnowledge = typeof asked === "object" && asked !== null && asked.server === KNOWLEDGE_SERVER && (KNOWLEDGE_TOOLS as readonly string[]).includes(asked.tool);
     if (!isKnowledge || !(await deps.settings()).knowledgeAutoApproveTools) return;
     await remember(paseo).agents.ref(agent.id).respondToPermission({ requestId: request.id, response: { behavior: "allow" } });
   });
@@ -252,6 +260,19 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   });
   server.handle(listTasksRpc, async ({ repoKey, limit, offset }) => service.tasks(await project(repoKey), limit, offset));
   server.handle(projectFactsRpc, async ({ repoKey }) => service.facts(await project(repoKey)));
+  // Paseo's panel state hooks throw in screens and this plugin shares components between both, so the
+  // client sends the workspace id and the folder is looked up here.
+  server.handle(projectForWorkspaceRpc, async ({ workspaceId }, { paseo }) => {
+    for (let cursor: string | undefined; ; ) {
+      const page = await remember(paseo).workspaces.list({ page: { limit: 200, ...(cursor ? { cursor } : {}) } });
+      const found = page.entries.find((entry) => entry.id === workspaceId);
+      if (found) return { repoKey: (await base.repoFor(found.workspaceDirectory ?? found.projectRootPath))?.key ?? null };
+      if (!page.pageInfo.hasMore || !page.pageInfo.nextCursor) throw new Error(`Paseo has no workspace ${workspaceId}`);
+      if (page.pageInfo.nextCursor === cursor) throw new Error(`Paseo's workspace list repeated a page while looking for ${workspaceId}`);
+      cursor = page.pageInfo.nextCursor;
+    }
+  });
+  server.handle(knowledgeUsageRpc, async ({ repoKey }) => usage.lastDays((await project(repoKey)).key));
   server.handle(describeProjectRpc, async ({ repoKey }, { paseo }) => {
     generator.startDescribe(remember(paseo), await project(repoKey));
     return { started: true };

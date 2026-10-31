@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { identifierWords, KnowledgeStore, type TaskRecord } from "./store";
+import { identifierWords, KnowledgeStore, SEARCH_KIND_WEIGHTS, type TaskRecord } from "./store";
 
 const task = (overrides: Partial<TaskRecord> = {}): TaskRecord => ({
   id: "task:agent-1",
@@ -39,6 +39,16 @@ describe("KnowledgeStore", () => {
     expect(store.search("item ref", { kinds: [], limit: 10 })).toMatchObject([{ id: "code:shared/contracts.ts:40:parseItemRef", kind: "code", path: "shared/contracts.ts", line: 40, title: "parseItemRef" }]);
     expect(store.search("sqlite", { kinds: ["doc"], limit: 10 }).map((hit) => hit.kind)).toEqual(["doc"]);
     expect(store.read("code:shared/contracts.ts:40:parseItemRef")?.body).toContain("function parseItemRef(ref: string) {");
+  });
+
+  it("ranks the project's documents above code symbols that match the same words", () => {
+    store.replaceSource({ path: "docs/retries.md", kind: "doc", blob: "b1", chunks: [{ title: "Retry", body: "How a failed job is retried: once, after a minute.", line: 1 }] });
+    store.replaceSource({ path: "jobs/retry.ts", kind: "code", blob: "b2", chunks: [], symbols: [{ name: "retry", kind: "function", line: 3, signature: "function retry(job: Job) {", params: 1, shape: "s" }] });
+    expect(store.search("retry", { kinds: [], limit: 5 }).map((hit) => hit.kind)).toEqual(["doc", "code"]);
+  });
+
+  it("weighs every kind above zero, so no kind can drop out of search", () => {
+    expect(Object.values(SEARCH_KIND_WEIGHTS).every((weight) => weight > 0)).toBe(true);
   });
 
   it("falls back to any word when no entry has them all, and reads search syntax as words", () => {
@@ -100,4 +110,14 @@ describe("KnowledgeStore", () => {
     expect(identifierWords("parseItemRef")).toBe("parse item ref");
     expect(identifierWords("HTTP_server-name")).toBe("http server name");
   });
+
+  it("gives each part of a long section its own id, so a hit in a later part reads that part", () => {
+    store.replaceSource({ path: "docs/big.md", kind: "doc", blob: "b", chunks: [{ title: "Big", body: "alpha words", line: 1 }, { title: "Big", body: "beta words", line: 1 }, { title: "Big", body: "gamma uniqueterm", line: 1 }] });
+    const [hit] = store.search("uniqueterm", { kinds: ["doc"], limit: 5 });
+    expect(hit.id).toBe("doc:docs/big.md:1#3");
+    expect(store.read(hit.id)?.body).toBe("gamma uniqueterm");
+    expect(store.read("doc:docs/big.md:1")?.body).toBe("alpha words");
+    expect(new Set(store.browse("doc", 10, 0).entries.map((entry) => entry.id)).size).toBe(3);
+  });
 });
+

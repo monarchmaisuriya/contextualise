@@ -22,13 +22,14 @@ describe("contributeKnowledge", () => {
   const rpcs = new Map<string, Handler>();
   const on = new Map<string, Handler[]>();
   const respondToPermission = vi.fn(async () => {});
+  const workspaceEntries: { id: string; workspaceDirectory: string }[] = [];
   const timeline = [
     { item: { type: "user_message", text: "Document the queue" }, timestamp: "2026-10-29T10:00:00.000Z" },
     { item: { type: "tool_call", name: "edit", status: "completed", detail: { type: "edit", filePath: "README.md" } }, timestamp: "2026-10-29T10:01:00.000Z" },
   ];
   const paseo = {
     config: { get: async () => ({ requestId: "r", config: { plugins } }) },
-    workspaces: { list: async () => ({ entries: [], pageInfo: { hasMore: false, nextCursor: null } }) },
+    workspaces: { list: async () => ({ entries: workspaceEntries, pageInfo: { hasMore: false, nextCursor: null } }) },
     agents: { ref: () => ({ respondToPermission, timeline: { refetch: async () => ({ entries: timeline, hasOlder: false, startCursor: null }) } }) },
   };
   const create = (cwd: string, config: Record<string, unknown> = {}) =>
@@ -80,6 +81,28 @@ describe("contributeKnowledge", () => {
     expect(config.systemPrompt).toMatch(/^Be brief\.\n\n<!-- contextualise:knowledge -->/);
     expect(config.systemPrompt).toContain('- ARCHITECTURE.md "Overview"');
     expect(Object.keys(config.mcpServers).sort()).toEqual([KNOWLEDGE_SERVER, "paseo-memorise"]);
+  });
+
+  it("counts each agent given the knowledge tools, and answers the project's use over the last 7 days", async () => {
+    await create(top);
+    await create(top);
+    const call = (name: string, input: unknown) => (rpcs.get(name) as (input: unknown, context: unknown) => Promise<unknown>)(input, { paseo });
+    const { projects } = (await call("knowledge.projects", {})) as { projects: { repoKey: string }[] };
+    expect(await call("knowledge.usage", { repoKey: projects[0].repoKey })).toMatchObject({ days: 7, agentsGiven: 2, agentsUsed: 0 });
+  });
+
+  it("names the project a workspace's folder belongs to, and says when Paseo has no such workspace", async () => {
+    await create(top);
+    workspaceEntries.splice(0, workspaceEntries.length, { id: "w1", workspaceDirectory: top });
+    const call = (name: string, input: unknown) => (rpcs.get(name) as (input: unknown, context: unknown) => Promise<unknown>)(input, { paseo });
+    const { projects } = (await call("knowledge.projects", {})) as { projects: { repoKey: string }[] };
+    expect(await call("knowledge.project-for", { workspaceId: "w1" })).toEqual({ repoKey: projects[0].repoKey });
+    await expect(call("knowledge.project-for", { workspaceId: "gone" })).rejects.toThrow(/no workspace gone/);
+  });
+
+  it("asks for the knowledge tools to load upfront, so agents need no tool search before the first call", async () => {
+    const { config } = await create(top);
+    expect(config.mcpServers[KNOWLEDGE_SERVER]).toMatchObject({ type: "http", alwaysLoad: true });
   });
 
   it("replaces what a parent agent passed down instead of adding a second copy", async () => {
@@ -148,6 +171,16 @@ describe("contributeKnowledge", () => {
     await emit("agent.permission_requested", { agent: { id: "a1", cwd: top }, request: { id: "p2", name: "Bash" } });
     expect(respondToPermission).toHaveBeenCalledTimes(1);
     expect(respondToPermission).toHaveBeenCalledWith({ requestId: "p1", response: { behavior: "allow" } });
+  });
+
+  it("approves only the four knowledge tools by exact name, not other tools on a server with a similar name", async () => {
+    const ask = (id: string, request: Record<string, unknown>) => emit("agent.permission_requested", { agent: { id: "a1", cwd: top }, request: { id, ...request } });
+    await ask("p1", { name: `mcp__${KNOWLEDGE_SERVER}__x__write_file` });
+    await ask("p2", { name: `mcp__${KNOWLEDGE_SERVER}__delete_everything` });
+    await ask("p3", { name: "CodexMcpElicitation", metadata: { serverName: KNOWLEDGE_SERVER }, description: 'Allow the paseo-contextualise MCP server to run tool "drop_table"?' });
+    await ask("p4", { name: "CodexMcpElicitation", metadata: { serverName: KNOWLEDGE_SERVER }, description: 'Allow the paseo-contextualise MCP server to run tool "knowledge_read"?' });
+    await ask("p5", { name: `mcp__${KNOWLEDGE_SERVER}__knowledge_history` });
+    expect(respondToPermission.mock.calls.map((call) => (call as unknown as [{ requestId: string }])[0].requestId)).toEqual(["p4", "p5"]);
   });
 
   it("offers matching entries to Attach, with the snippet that matched and the full text", async () => {

@@ -3,18 +3,33 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { areaLabel } from "../../shared/diagram";
-import { KNOWLEDGE_KINDS, type KnowledgeEntry, type SearchHit } from "../../shared/knowledge";
+import { KNOWLEDGE_KINDS, KNOWLEDGE_TOOLS, type KnowledgeEntry, type KnowledgeTool, type SearchHit } from "../../shared/knowledge";
 import type { AgentScope, TokenAuthority } from "./auth";
 import { projectRoot } from "./git";
 import type { KnowledgeService } from "./service";
+import type { UsageLog } from "./usage";
 
 // A distinctive name: permission requests are recognised by it, so a user's own server must not share it.
 export const KNOWLEDGE_SERVER = "paseo-contextualise";
+// Every tool the server offers. All of them only read the agent's own project, which is why the
+// permission hook may approve them, and only them, by exact name.
+export { KNOWLEDGE_TOOLS };
+
+// Shown to the agent while the tools are still deferred behind tool search, so it knows when to load
+// them. Kept short: Claude Code cuts server instructions at 4,096 characters.
+// When to use the tools, said the same way in the project map and in the server's instructions.
+export function whenToUseKnowledge(server: string): string {
+  return `At the start of a task, search with knowledge_search (MCP server ${server}) for docs, decisions, and earlier work on the same area. Do this before reading docs or changing code. Open hits with knowledge_read; knowledge_outline and knowledge_history show a file's parts and past changes. Use grep for exact code.`;
+}
+const INSTRUCTIONS = `This server holds this repository's own knowledge: architecture docs, conventions, ADRs (decisions, with status), other docs, code symbols, and what agents did here before (request, files, outcome). ${whenToUseKnowledge(KNOWLEDGE_SERVER)}`;
+const tool = (name: KnowledgeTool) => name;
 const PATH = "/mcp/knowledge";
 const MAX_REQUEST_BYTES = 64 * 1024;
 
+// `alwaysLoad` keeps Claude Code from deferring these tools behind tool search, so an agent can call
+// them on its first turn. Paseo passes it to Claude only; its other providers drop the field.
 export function knowledgeServerEntry(port: number, token: string) {
-  return { [KNOWLEDGE_SERVER]: { type: "http" as const, url: `http://127.0.0.1:${port}${PATH}`, headers: { Authorization: `Bearer ${token}` } } };
+  return { [KNOWLEDGE_SERVER]: { type: "http" as const, url: `http://127.0.0.1:${port}${PATH}`, headers: { Authorization: `Bearer ${token}` }, alwaysLoad: true } };
 }
 
 function describeHit(hit: SearchHit): string {
@@ -55,26 +70,31 @@ export class KnowledgeMcp {
   constructor(
     private readonly tokens: TokenAuthority,
     private readonly service: KnowledgeService,
+    private readonly usage: Pick<UsageLog, "recordCall">,
   ) {}
 
-  private build(scope: AgentScope): McpServer {
+  private build(scope: AgentScope, agent: string): McpServer {
     const repo = projectRoot(scope.repoKey, scope.top);
-    const mcp = new McpServer({ name: KNOWLEDGE_SERVER, version: "1.0.0" });
+    // Counting is advisory: it never delays or fails the call, and a failed count is logged.
+    const count = (name: KnowledgeTool) =>
+      this.usage.recordCall(scope.repoKey, name, agent).catch((error: unknown) => console.error(`[contextualise] could not count a ${name} call for ${scope.repoKey}: ${String(error)}`));
+    const mcp = new McpServer({ name: KNOWLEDGE_SERVER, version: "1.0.0" }, { instructions: INSTRUCTIONS });
     const text = (value: string) => ({ content: [{ type: "text" as const, text: value }] });
     const failure = (error: unknown) => ({ content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }], isError: true });
     mcp.registerTool(
-      "knowledge_search",
+      tool("knowledge_search"),
       {
         description:
-          "Search this repository's own knowledge: architecture docs, conventions, ADRs (decision records), other docs, code symbols (functions, classes, methods, types), and summaries of tasks agents finished here. Ranked by relevance. Returns ids for knowledge_read.",
+          "Search what this repository knows about itself: why things were decided (ADRs, with status), its conventions and architecture docs, other docs, and what agents did here before (request, files, outcome). Code symbols (functions, classes, types) are included but rank below the project's own writing; symbols in test files appear only when you ask for kinds [\"code\"] or pass paths. Use grep for exact code text. Returns ids for knowledge_read.",
         inputSchema: {
           query: z.string().min(1).max(200),
-          kinds: z.array(z.enum(KNOWLEDGE_KINDS)).max(KNOWLEDGE_KINDS.length).optional().describe("Limit to these kinds; all kinds when left out"),
+          kinds: z.array(z.enum(KNOWLEDGE_KINDS)).max(KNOWLEDGE_KINDS.length).optional().describe("Limit to these kinds; all kinds when left out (test-file symbols only with code)"),
           paths: z.array(z.string().min(1).max(300)).max(20).optional().describe("Limit to these files, folders, or globs (src/api/**), relative to the project root"),
           limit: z.number().int().min(1).max(20).optional(),
         },
       },
       async ({ query, kinds, paths, limit }) => {
+        void count("knowledge_search");
         try {
           const hits = await this.service.search(repo, query, kinds ?? [], limit ?? 8, paths ?? []);
           return text(hits.length > 0 ? hits.map(describeHit).join("\n") : `Nothing in ${scope.repoKey} matches "${query}". Try other words, or fewer.`);
@@ -84,12 +104,13 @@ export class KnowledgeMcp {
       },
     );
     mcp.registerTool(
-      "knowledge_read",
+      tool("knowledge_read"),
       {
         description: "Read one entry found by knowledge_search: a document section, a code symbol's signature, or a finished task's request, files, commands, and outcome.",
         inputSchema: { id: z.string().min(1).max(600) },
       },
       async ({ id }) => {
+        void count("knowledge_read");
         try {
           return text(describeEntry(await this.service.read(repo, id)));
         } catch (error) {
@@ -98,12 +119,13 @@ export class KnowledgeMcp {
       },
     );
     mcp.registerTool(
-      "knowledge_outline",
+      tool("knowledge_outline"),
       {
         description: "List one file's sections (documents) or functions, classes, methods, and types (code), with line numbers, to see what it holds before reading it. Given a main area's folder (from the project map), describe that area instead: what it uses, what uses it, its key names, and its main files.",
         inputSchema: { path: z.string().min(1).max(300).describe("A file path, or a main area's folder, relative to the project root") },
       },
       async ({ path }) => {
+        void count("knowledge_outline");
         try {
           const folder = path.replace(/^\.?\//, "").replace(/\/+$/, "");
           const facts = await this.service.structure(repo);
@@ -116,12 +138,13 @@ export class KnowledgeMcp {
       },
     );
     mcp.registerTool(
-      "knowledge_history",
+      tool("knowledge_history"),
       {
         description: "List the finished tasks that changed a file or any file in a folder, newest first: what was asked, the outcome, and when.",
         inputSchema: { path: z.string().min(1).max(300).describe("A file or folder relative to the project root"), limit: z.number().int().min(1).max(20).optional() },
       },
       async ({ path, limit }) => {
+        void count("knowledge_history");
         try {
           const tasks = await this.service.history(repo, path, limit ?? 8);
           return text(
@@ -186,7 +209,8 @@ export class KnowledgeMcp {
       res.writeHead(400).end("Expected a JSON-RPC request body");
       return;
     }
-    const mcp = this.build(scope);
+    // Counted per agent: by the token's own agent id, or by the whole token for one minted before ids.
+    const mcp = this.build(scope, scope.agent ?? req.headers.authorization ?? "");
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => {
       void transport.close();

@@ -3,12 +3,7 @@ import { plural } from "./plural";
 
 export type Sort = "recent" | "name" | "size";
 export const SORT_LABELS: Record<Sort, string> = { recent: "Recent", name: "Name", size: "Size" };
-const SORTS: readonly Sort[] = ["recent", "name", "size"];
-
-// One sort control: each tap moves to the next order.
-export function nextSort(sort: Sort): Sort {
-  return SORTS[(SORTS.indexOf(sort) + 1) % SORTS.length];
-}
+export const SORTS: readonly Sort[] = ["recent", "name", "size"];
 
 const size = (tag: TagSummary) => tag.agents.length + tag.workspaces.length + tag.links.length + tag.notes.length;
 

@@ -21,6 +21,10 @@ export class GitError extends Error {
 
 // A git blocked on a hung mount can ignore the kill from execFile's own timeout, and Paseo fails
 // agent creation when a hook takes 30 s, so every call also races a deadline of its own.
+// Every call also refuses what a repository's own config could make git do on the daemon: run an
+// fsmonitor command, or take optional locks that rewrite another repository's index through a link.
+// (Content filters are refused where content is hashed: `hash-object --no-filters`.)
+const SAFE_GIT_OPTIONS = ["--no-optional-locks", "-c", "core.fsmonitor=false"] as const;
 export async function git(cwd: string, args: readonly string[], timeoutMs = GIT_TIMEOUT_MS): Promise<string> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_resolve, reject) => {
@@ -28,7 +32,7 @@ export async function git(cwd: string, args: readonly string[], timeoutMs = GIT_
   });
   try {
     const { stdout } = await Promise.race([
-      runFile("git", ["-C", cwd, ...args], { timeout: timeoutMs, env: { ...process.env, LC_ALL: "C" }, maxBuffer: 64 * 1024 * 1024 }),
+      runFile("git", [...SAFE_GIT_OPTIONS, "-C", cwd, ...args], { timeout: timeoutMs, env: { ...process.env, LC_ALL: "C" }, maxBuffer: 64 * 1024 * 1024 }),
       deadline,
     ]);
     return stdout.trimEnd();

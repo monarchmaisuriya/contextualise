@@ -26,6 +26,8 @@ export function parseTagName(raw: string): string {
   const name = normalizeTagName(raw);
   if (name === "") throw new Error("A tag needs a name, for example: auth-rewrite");
   if (name.length > TAG_NAME_MAX_CHARS) throw new Error(`Expected a tag name of at most ${TAG_NAME_MAX_CHARS} characters, got ${name.length}`);
+  // Tags are kept in a JSON object, whose loader drops this one key, so such a tag would vanish.
+  if (tagKey(name) === "__proto__") throw new Error('"__proto__" is reserved and cannot be a tag name');
   return name;
 }
 
@@ -47,7 +49,12 @@ export function parseLinkUrl(raw: string): string {
   // A pattern, not the URL class: this also runs in the app, where React Native's URL is partial.
   const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(text)?.[1]?.toLowerCase();
   if (scheme && scheme !== "https" && scheme !== "http") throw new Error(`Expected an https:// or http:// link, got ${scheme}:`);
-  if (!/^https?:\/\/[^\s/?#]+\.[^\s/?#]+(?::\d+)?(?:[/?#]\S*)?$/i.test(text) && !/^https?:\/\/(?:localhost|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:[/?#]\S*)?$/i.test(text)) {
+  // Host names are dot-separated labels of letters, digits, and hyphens, and a port is 1 to 65535, so
+  // every link accepted here is one the URL class (used by the daemon) can also parse.
+  const web = /^https?:\/\/(?:[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?\.)+[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?(?::(\d{1,5}))?(?:[/?#]\S*)?$/iu.exec(text);
+  const local = /^https?:\/\/(?:localhost|\d{1,3}(?:\.\d{1,3}){3})(?::(\d{1,5}))?(?:[/?#]\S*)?$/i.exec(text);
+  const port = (web ?? local)?.[1];
+  if ((!web && !local) || (port !== undefined && (Number(port) < 1 || Number(port) > 65_535))) {
     throw new Error(`Expected a web address starting with https:// or http://, got "${text.slice(0, 80)}"`);
   }
   return text;

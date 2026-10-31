@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { extname, join, posix } from "node:path";
+import { extname, posix } from "node:path";
 import { type ProjectFacts, projectFactsSchema } from "../../shared/knowledge";
+import { readProjectFile } from "./files";
 import type { ProjectRoot } from "./git";
 import { SKIPPED_FOLDERS } from "./sources";
 import type { KnowledgeStore } from "./store";
@@ -300,6 +300,8 @@ export function buildFacts(input: FactsInput): ProjectFacts {
   };
 }
 
+// Dependency lists larger than this are not read: real ones are far smaller.
+const MANIFEST_MAX_BYTES = 1024 * 1024;
 const MANIFEST = /(^|\/)(package\.json|go\.mod|pyproject\.toml|requirements[^/]*\.txt)$/;
 
 // The project's facts from its index and its dependency lists on disk. Dependency lists are read at
@@ -309,7 +311,7 @@ export async function projectFacts(repo: ProjectRoot, store: KnowledgeStore): Pr
   const manifests = new Map<string, string>();
   for (const path of allPaths) {
     if (!MANIFEST.test(path) || path.split("/").length > 3 || path.split("/").some((folder) => SKIPPED_FOLDERS.has(folder))) continue;
-    const text = await readFile(join(repo.top, path), "utf8").catch(() => null);
+    const text = await readProjectFile(repo.top, path, MANIFEST_MAX_BYTES);
     if (text !== null) manifests.set(path, text);
   }
   return buildFacts({ files: store.codeFiles(), allPaths, manifests });

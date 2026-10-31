@@ -1,6 +1,6 @@
 import { type Busy, busySchema, type KnowledgeEntry, type KnowledgeKind, type ProjectFacts, type RelatedMemory, type SearchHit } from "../../shared/knowledge";
 import type { KnowledgeBase } from "./base";
-import { AREA_PREFIX, areaOf, storedFacts, updateFacts } from "./facts";
+import { AREA_PREFIX, areaOf, isTestFile, storedFacts, updateFacts } from "./facts";
 import type { ProjectRoot } from "./git";
 import { BUSY_DAYS, recentChanges } from "./history";
 import type { KnowledgeStore, TaskRecord } from "./store";
@@ -36,8 +36,10 @@ export class KnowledgeService {
     private readonly now: () => number = Date.now,
   ) {}
 
+  // A failed re-index (a deleted worktree, an unreadable folder) is the project's problem, shown with
+  // it and logged by the base; what was indexed before is still the best answer, so reads go on.
   private async current(repo: ProjectRoot): Promise<KnowledgeStore> {
-    await this.base.refresh(repo, SEARCH_WAIT_MS);
+    await this.base.refresh(repo, SEARCH_WAIT_MS).catch(() => "failed");
     return this.base.open(repo);
   }
 
@@ -52,8 +54,10 @@ export class KnowledgeService {
     const wantsTasks = kinds.length === 0 || kinds.includes("task");
     const blobs = wantsTasks ? store.fileBlobs() : new Map<string, string>();
     const within = (path: string) => paths.length === 0 || paths.some((wanted) => path === wanted || path.startsWith(`${wanted.replace(/\/+$/, "")}/`)) || anyGlob(paths, path);
-    // With a path filter, more candidates are read so enough survive it.
-    const fetch = paths.length > 0 ? limit * 5 : limit;
+    // Symbols in test files rarely answer a question about the project; they come back only when the
+    // agent asks for code or for paths. With a filter, more candidates are read so enough survive it.
+    const keepTests = kinds.includes("code") || paths.length > 0;
+    const fetch = paths.length > 0 || !keepTests ? limit * 5 : limit;
     const tasks = wantsTasks
       ? store
           .searchTasks(query, Math.min(MAX_TASK_HITS, fetch))
@@ -71,7 +75,7 @@ export class KnowledgeService {
       : [];
     const sources = store
       .search(query, { kinds, limit: fetch })
-      .filter((hit) => within(hit.path))
+      .filter((hit) => within(hit.path) && (keepTests || hit.kind !== "code" || !isTestFile(hit.path)))
       .slice(0, limit - tasks.length)
       .map((hit) => ({ ...hit, needsCheck: hit.kind === "adr" && store.sourceStatus(hit.path)?.status === "superseded" }));
     return this.withRelated(repo.key, [...sources, ...tasks]);

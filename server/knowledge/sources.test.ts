@@ -30,6 +30,13 @@ describe("classify", () => {
 });
 
 describe("chunkMarkdown", () => {
+  it("reads headings with closing hashes and stays fast on a long line that is almost a heading", () => {
+    expect(chunkMarkdown("a.md", "# Title ##\nbody\n## C# notes\nmore").map((chunk) => chunk.title)).toEqual(["Title", "Title > C# notes"]);
+    const started = Date.now();
+    chunkMarkdown("a.md", `# a${" ".repeat(4_000)}x\n`);
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
   it("makes one chunk per section with parent headings in the title and the heading's line", () => {
     const text = ["Intro text.", "", "# Design", "Overview.", "## Storage", "SQLite per repo.", "```", "# not a heading", "```", "# Rollout", "Later."].join("\n");
     expect(chunkMarkdown("docs/design.md", text)).toEqual([

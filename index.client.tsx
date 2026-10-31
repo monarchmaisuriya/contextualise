@@ -6,7 +6,7 @@ import { ICONS, LOGO } from "./client/icons";
 import { ReceiptRow } from "./client/receipt";
 import { SnapshotSettingsScreen } from "./client/settings-screen";
 import { tagsChanged } from "./client/tag-events";
-import { KnowledgeScreen } from "./client/knowledge-screen";
+import { KnowledgeScreen, WorkspaceKnowledgePanel } from "./client/knowledge-screen";
 import { followAgentPills } from "./client/tag-pills";
 import { TagsScreen } from "./client/tags-screen";
 import {
@@ -30,7 +30,7 @@ import { knowledgeAttachmentSource } from "./shared/knowledge";
 
 // Shown, hidden, and moved under Paseo's Settings > Sidebar.
 function TagsSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
-  return <SidebarRow icon={LOGO} active={currentScreen?.screenId === "tags"} onPress={() => openScreen({ screenId: "tags" })} />;
+  return <SidebarRow icon="Tags" active={currentScreen?.screenId === "tags"} onPress={() => openScreen({ screenId: "tags" })} />;
 }
 
 function KnowledgeSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
@@ -45,6 +45,7 @@ export default function contribute(client: PluginClientContext) {
     client.addSidebarFooterItem({ id: "tags", title: "Tags", Component: TagsSidebarItem }),
     client.addScreen({ id: "knowledge", title: "Project knowledge", Component: KnowledgeScreen }),
     client.addSidebarFooterItem({ id: "knowledge", title: "Project knowledge", Component: KnowledgeSidebarItem }),
+    client.addWorkspacePanel({ id: "knowledge", title: "Project knowledge", icon: ICONS.knowledge, Component: WorkspaceKnowledgePanel }),
     client.addSettingsScreen({ id: "snapshot", title: "Contextualise", icon: LOGO, Component: SnapshotSettingsScreen }),
     client.addAttachmentSource(tagAttachmentSource),
     client.addAttachmentSource(agentAttachmentSource),
@@ -111,6 +112,7 @@ export default function contribute(client: PluginClientContext) {
         openTagsFor(agent.id, agent.workspaceId);
       },
     }),
+    // Two items, so each title says what it will do; Command Center items cannot report a result.
     ...([true, false] as const).map((pinned) =>
       client.addCommandCenterItem({
         id: pinned ? "pin-agent" : "unpin-agent",
@@ -132,6 +134,16 @@ export default function contribute(client: PluginClientContext) {
       context: "global",
       onSelect({ openScreen }) {
         openScreen({ screenId: "knowledge" });
+      },
+    }),
+    client.addCommandCenterItem({
+      id: "open-workspace-knowledge",
+      title: "Open project knowledge for this workspace",
+      icon: ICONS.knowledge,
+      keywords: ["knowledge", "docs", "adr", "architecture", "tasks", "contextualise", "workspace"],
+      context: "workspace",
+      onSelect({ openPanel }) {
+        openPanel("knowledge");
       },
     }),
     client.addCommandCenterItem({

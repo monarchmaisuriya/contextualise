@@ -21,6 +21,7 @@ describe("knowledge tools", () => {
   let base: KnowledgeBase;
   let tokens: TokenAuthority;
   let related: ((repoKey: string, path: string) => Promise<{ id: string; subject: string }[]>) | null;
+  const calls: [string, string, string][] = [];
   const clients: Client[] = [];
 
   const connect = async (token: string) => {
@@ -47,7 +48,8 @@ describe("knowledge tools", () => {
     base = new KnowledgeBase({ root: async () => root, symbols: new SymbolReader(async () => process.cwd()), indexOptions: async () => ({ codeSymbols: true }) });
     related = null;
     tokens = new TokenAuthority(await loadTokenSecret(root));
-    http = await new KnowledgeMcp(tokens, new KnowledgeService(base, async () => related)).listen(0);
+    calls.length = 0;
+    http = await new KnowledgeMcp(tokens, new KnowledgeService(base, async () => related), { recordCall: async (repoKey, tool, token) => void calls.push([repoKey, tool, token]) }).listen(0);
   });
   afterEach(async () => {
     for (const client of clients.splice(0)) await client.close();
@@ -61,6 +63,24 @@ describe("knowledge tools", () => {
   it("offers only read tools", async () => {
     const client = await connect(tokens.mint({ repoKey: "local/abc", top }));
     expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["knowledge_search", "knowledge_read", "knowledge_outline", "knowledge_history"]);
+  });
+
+  it("tells the agent when to use its tools, so it can find them while they are deferred", async () => {
+    const client = await connect(tokens.mint({ repoKey: "local/abc", top }));
+    const instructions = client.getInstructions() ?? "";
+    expect(instructions).toContain("At the start of a task, search with knowledge_search");
+    expect(instructions.length).toBeLessThan(1_000);
+  });
+
+  it("counts each tool call for its project and agent, and two agents in one checkout as two", async () => {
+    const first = await connect(tokens.mint({ repoKey: "local/abc", top }));
+    const second = await connect(tokens.mint({ repoKey: "local/abc", top }));
+    await first.callTool({ name: "knowledge_search", arguments: { query: "sqlite" } });
+    await first.callTool({ name: "knowledge_history", arguments: { path: "docs" } });
+    await second.callTool({ name: "knowledge_search", arguments: { query: "sqlite" } });
+    expect(calls.map(([repoKey, tool]) => [repoKey, tool])).toEqual([["local/abc", "knowledge_search"], ["local/abc", "knowledge_history"], ["local/abc", "knowledge_search"]]);
+    expect(calls[0][2]).toBe(calls[1][2]);
+    expect(calls[2][2]).not.toBe(calls[0][2]);
   });
 
   it("describes a main area when given its folder", async () => {

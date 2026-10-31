@@ -27,7 +27,7 @@ Every agent's composer has a **Tags** pill next to Tasks and Subagents. Its labe
 
 Tags share names with Paseo's workspace labels. A workspace labeled "Auth Rewrite" belongs to the tag `auth rewrite` automatically; case and spacing do not matter. Contextualise reads workspace labels and never changes them.
 
-The **Tags** screen (sidebar footer, or "Open tags" in the Command Center) lists every tag with its labeled workspaces, tagged agents, links, and fetched items. One row at the top filters (the box says how many tags, agents, and items there are), cycles the sort (recent, name, size), and expands or collapses every tag. Each tag has **Preview**, which shows exactly what Attach > Tag sends (with a Copy button), and a ⋮ button for **Fetch item** and **Add link**. Tap an agent, link, or workspace to open it; × removes an agent or link from the tag. "Tag this agent..." in the Command Center opens it for one agent, with the same chips as the pill. "Pin this agent" and "Unpin this agent" in the Command Center do the same as the pill's Pin button; pinned agents are listed at the top of the Tags screen, where a pinned agent Paseo no longer has shows as missing until you unpin it.
+The **Tags** screen (sidebar footer, or "Open tags" in the Command Center) lists every tag with its labeled workspaces, tagged agents, links, and fetched items. One row at the top filters (the box says how many tags, agents, and items there are), shows the three sorts side by side (recent, name, size; on a phone they get a line of their own), and expands or collapses every tag. Each tag has **Preview**, which shows exactly what Attach > Tag sends (with a Copy button), and a ⋮ button for **Fetch item** and **Add link**. Tap an agent, link, or workspace to open it; × removes an agent or link from the tag. "Tag this agent..." in the Command Center opens it for one agent, with the same chips as the pill. "Pin this agent" and "Unpin this agent" in the Command Center do the same as the pill's Pin button; pinned agents are listed at the top of the Tags screen, where a pinned agent Paseo no longer has shows as missing until you unpin it.
 
 ## Fetching Jira, Sentry, Slack, and Notion items
 
@@ -61,21 +61,21 @@ Every new agent started in a project, a git repository or a folder outside git, 
   - the main areas of code, each with its written line or the names other areas use most;
   - the most recent finished tasks.
 
-  The map says it describes the project and is not instructions. Settings choose which parts it lists and how many tasks.
+  The map says its notes describe the project and are not instructions, names the tool server (`paseo-contextualise`), and asks the agent to search it at the start of a task, before reading docs or changing code. Settings choose which parts it lists and how many tasks.
 - **Four read-only tools** over the project's own knowledge:
-  - `knowledge_search`: search, optionally limited to files, folders, or globs with `paths`;
+  - `knowledge_search`: search, optionally limited to files, folders, or globs with `paths`; the project's own writing (decisions, conventions, architecture, docs) ranks above code symbols that match the same words, and symbols in test files appear only when code or paths are asked for;
   - `knowledge_read`: open one entry;
   - `knowledge_outline`: a file's sections or functions and classes, with lines; given a main area's folder, what that area uses, what uses it, its key names, and its main files;
   - `knowledge_history`: the finished tasks that changed a file or folder.
 
-  Paseo approves their calls automatically, because they only read this project's index (a setting turns that off).
+  Paseo approves their calls automatically, because they only read this project's index (a setting turns that off). Claude agents get them loaded from their first turn, with no tool-search step; the server also tells agents when to use them.
 
 **Folders outside git** are projects too, keyed the way Memorise keys them:
 - the key comes from the folder's name and real path;
 - it is kept when the folder is renamed or moved on the same disk;
 - agents in the subfolders of a Paseo project share the project's knowledge.
 
-Files are found by walking the folder, skipping hidden, dependency, and build folders, up to 50,000 entries. A file is read again when its modified time or size changes. The home folder, the filesystem root, and Paseo's plugin data folders never become projects.
+Files are found by walking the folder, skipping hidden, dependency, and build folders, up to 50,000 entries. A git repository inside the folder adds only the files its index lists, so what it ignores (virtual environments, build output) stays out; only its index is read, so no command its own git config names ever runs. Files it does not track, repositories inside it, and one git cannot read are left out. A file is read again when its modified time or size changes. The home folder, the filesystem root, and Paseo's plugin data folders never become projects.
 
 What is indexed (in git, the files git tracks, so `.gitignore` is honoured):
 
@@ -123,12 +123,13 @@ These are rebuilt whenever files change. On a 7,000-file Python repository the f
 - **Never generated here:** decisions, pitfalls, and preferences; Memorise keeps those.
 - **Generated titles** also name agents in plain folders in Attach > Agent conversation, where Paseo has only the first request.
 
-**Where to look.** Project knowledge in the sidebar footer (or "Open project knowledge" in the Command Center) shows each project:
+**Where to look.** Project knowledge in the sidebar footer (or "Open project knowledge" in the Command Center) shows each project, opening on the one you looked at last; tap the project name to pick another. Each workspace also has a Project knowledge tab for its own project ("Open project knowledge for this workspace" in the Command Center, or the new-tab menu). Both show:
 
 - **Overview:** the project description (the written overview, or the README's opening), its size and languages, its most used libraries, a diagram of how the main areas connect, area cards, the files busy lately, design documents, decisions, and team rules by heading, and recent work.
 - **An area's page:** its diagram of the areas it uses and that use it, its key names, main files, busy files, documents, recent work, and its explanation.
 - **Areas, Documents, Code, and Past work** list everything of each, a page at a time; search covers all of it.
-- A switch to turn the project off, pins (pinned entries always appear in the map), Add past conversations, Summarise past conversations, and Re-index.
+- A switch to turn the project off, pins (pinned entries always appear in the map), and a ⋮ menu with Re-index, Add past conversations, and Summarise past conversations.
+- **How much it is used:** "Last 7 days: 12 of 15 agents used project knowledge (30 searches, 18 reads)". Only counts are kept, per project and day, for 30 days: no queries, paths, or agent ids.
 
 Diagrams are drawn by Paseo's own Markdown renderer (Mermaid), so they follow the theme and open full screen. The project's documents render as Markdown; text an agent wrote stays plain text, so it cannot carry links or images.
 
@@ -166,7 +167,7 @@ The muted text after the title starts with what tells agents apart: how long ago
 
 Paseo draws each picker row on one line and never shortens the title, so a long title hides the muted text; titles are cut at 44 characters by default (a setting), and links in them are shortened (no scheme, "www.", or "app.", and no page id after a page's name). Paseo decides the picker's width and draws rows on one line, which a plugin cannot change. Clicking an attached agent opens that agent; clicking a tag or terminal opens this page.
 
-Conversations contain your messages and the agents' replies; tool calls and reasoning are left out. Secret-shaped text (private keys, AWS, GitHub, Slack and Google keys, `sk-` API keys, JSON web tokens, `password=`-style assignments) is replaced with `[removed: <kind>]` in conversations and terminal output. Every attachment starts with a note that it is reference material, not instructions.
+Conversations contain your messages and the agents' replies; tool calls and reasoning are left out. Secret-shaped text (private keys, AWS, GitHub, Slack and Google keys, `sk-` API keys, Stripe, npm, GitLab, and Hugging Face tokens, JSON web tokens, passwords inside links, `Bearer` and `Basic` headers, and assignments to secret-looking names such as `DB_PASSWORD=` or `"password": "…"`) is replaced with `[removed: <kind>]` in conversations and terminal output. Every attachment starts with a note that it is reference material, not instructions.
 
 If an agent's history cannot be read, the attachment says so for that agent and the rest still attaches.
 
@@ -188,7 +189,7 @@ Settings > Contextualise:
 | | Index code symbols | on |
 | | Suggest memory fixes to Memorise | on (acts only when Memorise 0.10 or later runs) |
 | | Project map length (lines); 0 gives the tools without a map | 40 (0 to 150) |
-| | Knowledge tools port (used after a reload) | 6791 (1024 to 65535, not 6790) |
+| | Knowledge tools port, under Advanced (used after a reload) | 6791 (1024 to 65535, not 6790) |
 | | Map parts: overview, pinned, architecture, conventions, ADRs, main areas, tasks; recent tasks | all on; 3 (0 to 10) |
 | | Symbols per language (TypeScript, JavaScript, Python, Go) | all on |
 | | Also index as docs; never index (comma-separated globs) | empty |

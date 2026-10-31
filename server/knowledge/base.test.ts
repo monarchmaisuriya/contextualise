@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -124,7 +124,7 @@ describe("KnowledgeBase", () => {
     now += FRESH_MS + 1;
     await base.refresh(repo, 10_000);
     expect(reopened.counts().doc).toBe(1);
-    expect(reopened.getMeta("contentVersion")).toBe("3");
+    expect(reopened.getMeta("contentVersion")).toBe("4");
   });
 
   it("builds the project's areas after indexing and rebuilds them when code changes", async () => {
@@ -165,5 +165,19 @@ describe("KnowledgeBase", () => {
     expect(await base.repoFor(join(root, "workers"))).toBeNull();
     mkdirSync(join(home, "plugin-data", "memorise", "workers"), { recursive: true });
     expect(await base.repoFor(join(home, "plugin-data", "memorise", "workers"))).toBeNull();
+  });
+
+  it("skips a task log line that is not a valid record, keeping the others readable", async () => {
+    const repo = (await base.repoFor(top))!;
+    await base.recordTask(repo, task);
+    const store = await base.open(repo);
+    const log = join(root, "knowledge", readdirSync(join(root, "knowledge")).find((name) => name.endsWith(".tasks.jsonl")) as string);
+    appendFileSync(log, `${JSON.stringify({ ...task, id: "task:bad", agentId: "bad", citations: undefined })}\n`);
+    expect(store.tasks(10)).toHaveLength(1);
+    rmSync(join(root, "knowledge", readdirSync(join(root, "knowledge")).find((name) => name.endsWith(".sqlite")) as string));
+    base.close();
+    base = make();
+    const reopened = await base.open(repo);
+    expect(reopened.tasks(10).map((record) => record.id)).toEqual(["task:agent-1"]);
   });
 });
