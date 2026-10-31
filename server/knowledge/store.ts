@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
-import { KNOWLEDGE_KINDS, type KnowledgeKind, type TaskSummary } from "../../shared/knowledge";
+import { z } from "zod";
+import { KNOWLEDGE_KINDS, type KnowledgeKind, type TaskSummary, taskSummarySchema } from "../../shared/knowledge";
 import type { AdrInfo, TextChunk } from "./sources";
 import type { CodeImport, CodeSymbol } from "./symbols";
 
@@ -18,6 +19,7 @@ export interface StoredEntry extends Omit<StoredHit, "snippet"> {
 
 // A finished task as stored: its summary, plus each changed file's git blob at the time, so a later
 // change to that file marks the task "needs check".
+export const taskRecordSchema = taskSummarySchema.omit({ needsCheck: true }).extend({ citations: z.array(z.object({ path: z.string(), blob: z.string() })) });
 export type TaskRecord = Omit<TaskSummary, "needsCheck"> & { citations: { path: string; blob: string }[] };
 
 const SCHEMA_VERSION = "1";
@@ -39,6 +41,12 @@ function ftsQuery(text: string, join: "AND" | "OR"): string | null {
 
 // One SQLite file per repository. Everything but tasks is a cache of the repository's files and is
 // rebuilt when lost; tasks are also kept in tasks.jsonl beside it (see KnowledgeBase).
+// How much a match counts per kind of entry. bm25 scores are negative (lower is better), so a larger
+// weight ranks a kind higher; every weight is above zero, so no kind drops out. Grep already finds
+// code; what only this index holds is the project's docs, decisions, and conventions.
+export const SEARCH_KIND_WEIGHTS: Readonly<Record<Exclude<KnowledgeKind, "task">, number>> = { brief: 2, architecture: 2, adr: 2, convention: 2, doc: 1.5, code: 1 };
+const KIND_WEIGHT_SQL = `(CASE kind ${Object.entries(SEARCH_KIND_WEIGHTS).map(([kind, weight]) => `WHEN '${kind}' THEN ${weight}`).join(" ")} ELSE 1 END)`;
+
 export class KnowledgeStore {
   private readonly db: DatabaseSync;
 
@@ -111,7 +119,14 @@ export class KnowledgeStore {
       this.deleteSource(source.path);
       this.db.prepare("INSERT INTO sources (path, kind, blob, status, superseded_by) VALUES (?, ?, ?, ?, ?)").run(source.path, source.kind, source.blob, source.adr?.status ?? null, source.adr?.supersededBy ?? null);
       const chunk = this.db.prepare("INSERT INTO chunks (id, path, kind, line, title, body) VALUES (?, ?, ?, ?, ?, ?)");
-      for (const part of source.chunks) chunk.run(`${source.kind}:${source.path}:${part.line}`, source.path, source.kind, part.line, part.title, part.body);
+      // A long section is stored in several parts that start on the same line; the first keeps the
+      // plain id, later ones get #2, #3, so every part can be read and pinned on its own.
+      const parts = new Map<number, number>();
+      for (const part of source.chunks) {
+        const count = (parts.get(part.line) ?? 0) + 1;
+        parts.set(part.line, count);
+        chunk.run(`${source.kind}:${source.path}:${part.line}${count > 1 ? `#${count}` : ""}`, source.path, source.kind, part.line, part.title, part.body);
+      }
       const symbol = this.db.prepare("INSERT INTO symbols (path, name, kind, line, signature, params, shape) VALUES (?, ?, ?, ?, ?, ?, ?)");
       for (const found of source.symbols ?? []) {
         symbol.run(source.path, found.name, found.kind, found.line, found.signature, found.params, found.shape);
@@ -166,7 +181,7 @@ export class KnowledgeStore {
     return this.db
       .prepare(
         `SELECT s.path AS path, s.status AS status, s.superseded_by AS supersededBy,
-          (SELECT title FROM chunks c WHERE c.path = s.path ORDER BY CAST(c.line AS INTEGER) LIMIT 1) AS title
+          COALESCE((SELECT title FROM chunks c WHERE c.path = s.path ORDER BY CAST(c.line AS INTEGER) LIMIT 1), s.path) AS title
          FROM sources s WHERE s.kind = 'adr' ORDER BY s.path`,
       )
       .all() as { path: string; title: string; status: string | null; supersededBy: string | null }[];
@@ -175,7 +190,7 @@ export class KnowledgeStore {
   // The first heading of each file of a kind, for the project map.
   titles(kind: KnowledgeKind): { path: string; title: string }[] {
     return this.db
-      .prepare(`SELECT s.path AS path, (SELECT title FROM chunks c WHERE c.path = s.path ORDER BY CAST(c.line AS INTEGER) LIMIT 1) AS title FROM sources s WHERE s.kind = ? ORDER BY s.path`)
+      .prepare(`SELECT s.path AS path, COALESCE((SELECT title FROM chunks c WHERE c.path = s.path ORDER BY CAST(c.line AS INTEGER) LIMIT 1), s.path) AS title FROM sources s WHERE s.kind = ? ORDER BY s.path`)
       .all(kind) as { path: string; title: string }[];
   }
 
@@ -186,7 +201,8 @@ export class KnowledgeStore {
     return counts;
   }
 
-  // All words must match; when nothing does, any word may. Title matches rank above body matches.
+  // All words must match; when nothing does, any word may. Title matches rank above body matches, and
+  // at an equal match the project's own writing ranks above code symbols (SEARCH_KIND_WEIGHTS).
   search(text: string, options: { kinds: readonly KnowledgeKind[]; limit: number }): StoredHit[] {
     const kinds = options.kinds.filter((kind) => kind !== "task");
     if (options.kinds.length > 0 && kinds.length === 0) return [];
@@ -195,7 +211,7 @@ export class KnowledgeStore {
       if (!query) return [];
       const filter = kinds.length > 0 ? `AND kind IN (${kinds.map(() => "?").join(", ")})` : "";
       const rows = this.db
-        .prepare(`SELECT id, kind, path, line, title, snippet(chunks, 5, '', '', ' … ', 24) AS snippet FROM chunks WHERE chunks MATCH ? ${filter} ORDER BY bm25(chunks, 0, 0, 0, 0, 5.0, 1.0) LIMIT ?`)
+        .prepare(`SELECT id, kind, path, line, title, snippet(chunks, 5, '', '', ' … ', 24) AS snippet FROM chunks WHERE chunks MATCH ? ${filter} ORDER BY bm25(chunks, 0, 0, 0, 0, 5.0, 1.0) * ${KIND_WEIGHT_SQL} LIMIT ?`)
         .all(query, ...kinds, options.limit) as unknown as StoredHit[];
       if (rows.length > 0 || join === "OR") return rows.map((row) => ({ ...row, line: Number(row.line) }));
     }

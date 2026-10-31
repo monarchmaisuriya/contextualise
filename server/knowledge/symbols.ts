@@ -45,7 +45,7 @@ interface TsQuery {
 interface TsModule {
   Parser: {
     init(): Promise<void>;
-    new (): { setLanguage(language: unknown): void; parse(text: string): { rootNode: TsNode; delete(): void } | null };
+    new (): { setLanguage(language: unknown): void; parse(text: string): { rootNode: TsNode; delete(): void } | null; delete(): void };
   };
   Language: { load(path: string): Promise<unknown> };
   Query: new (language: unknown, source: string) => TsQuery;
@@ -177,9 +177,16 @@ export class SymbolReader {
     if (!grammar) return { symbols: [], imports: [] };
     const { module } = await this.load();
     const { language, query } = await this.grammar(grammar);
+    // A parser lives in WebAssembly memory, which garbage collection never frees, so it is deleted as
+    // soon as the tree exists; the tree does not need it.
     const parser = new module.Parser();
-    parser.setLanguage(language);
-    const tree = parser.parse(text);
+    let tree: ReturnType<typeof parser.parse>;
+    try {
+      parser.setLanguage(language);
+      tree = parser.parse(text);
+    } finally {
+      parser.delete();
+    }
     if (!tree) throw new Error(`tree-sitter could not parse ${path}`);
     try {
       const symbols: CodeSymbol[] = [];

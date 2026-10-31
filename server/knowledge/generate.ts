@@ -10,6 +10,7 @@ import { jsonObjectIn } from "../vendor-fetch";
 import type { WorkerJob } from "../workers";
 import type { KnowledgeBase } from "./base";
 import { AREA_PREFIX, storedFacts, updateFacts } from "./facts";
+import { readProjectFile } from "./files";
 import type { ProjectRoot } from "./git";
 import { currentBlobs } from "./indexer";
 import type { ProjectPrefsStore } from "./prefs";
@@ -28,6 +29,7 @@ const WORKER_TIMEOUT_MS = 5 * 60_000;
 export const DESCRIBE_AFTER_MS = 7 * 24 * 60 * 60_000;
 const DESCRIBE_TASKS = 10;
 const README_LINES = 40;
+const README_MAX_BYTES = 256 * 1024;
 const EXPLAIN_FILES = 40;
 export const LINE_MAX_CHARS = 140;
 
@@ -155,9 +157,18 @@ export class Generator {
     return join(await this.deps.root(), "knowledge", "generation.json");
   }
 
+  // The file only counts today's runs, so one that cannot be read starts a fresh count (logged)
+  // instead of stopping every summary until someone deletes it.
   private async readState(): Promise<GenerationState> {
-    const text = await readFile(await this.statePath(), "utf8").catch(() => null);
-    const parsed = text ? stateSchema.safeParse(JSON.parse(text)) : null;
+    const path = await this.statePath();
+    const text = await readFile(path, "utf8").catch(() => null);
+    let data: unknown = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch (error) {
+      console.error(`[contextualise] ${path} is not valid JSON, so today's run count starts again: ${String(error)}`);
+    }
+    const parsed = data === null ? null : stateSchema.safeParse(data);
     return parsed?.success ? parsed.data : { version: 1, day: { date: "", runs: 0 } };
   }
 
@@ -265,7 +276,7 @@ export class Generator {
     if (facts.areas.length === 0 && titles.length === 0) return "skipped";
     if (!(await this.takeRun())) return "capped";
     const readme = [...store.fileBlobs().keys()].find((path) => /^readme(\.(md|markdown|rst|txt))?$/i.test(path));
-    const intro = readme ? (await readFile(join(project.top, readme), "utf8").catch(() => "")).split("\n").slice(0, README_LINES).join("\n") : "";
+    const intro = readme ? ((await readProjectFile(project.top, readme, README_MAX_BYTES)) ?? "").split("\n").slice(0, README_LINES).join("\n") : "";
     const material = [
       `Project: ${project.key}`,
       `Code: ${facts.codeFiles} code files, ${facts.testFiles} test files; languages: ${Object.entries(facts.languages).map(([language, count]) => `${language} ${count}`).join(", ") || "none"}`,

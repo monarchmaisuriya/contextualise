@@ -5,10 +5,13 @@ import { z } from "zod";
 
 const SECRET_BYTES = 32;
 
-// What a token lets an agent reach: its own repository's knowledge only.
+// What a token lets an agent reach: its own repository's knowledge only. `agent` is a random id set
+// when the token is minted, one per agent, so use can be counted per agent; tokens minted before it
+// existed have none and still verify.
 export const agentScopeSchema = z.object({
   repoKey: z.string().min(1),
   top: z.string().min(1),
+  agent: z.string().min(1).max(64).optional(),
 });
 export type AgentScope = z.infer<typeof agentScopeSchema>;
 
@@ -26,7 +29,7 @@ export class TokenAuthority {
   }
 
   mint(scope: AgentScope): string {
-    const payload = Buffer.from(JSON.stringify(agentScopeSchema.parse(scope))).toString("base64url");
+    const payload = Buffer.from(JSON.stringify(agentScopeSchema.parse({ ...scope, agent: scope.agent ?? randomBytes(12).toString("base64url") }))).toString("base64url");
     return `${payload}.${this.sign(payload).toString("base64url")}`;
   }
 

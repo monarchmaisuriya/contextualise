@@ -2,10 +2,11 @@ import { type PluginSurfaceProps, useRpc, useSettings } from "@getpaseo/plugin/c
 import { SettingsAction, SettingsCard, SettingsInput, SettingsRow, SettingsSection, SettingsSelect, SettingsSwitch, TextInput } from "@getpaseo/plugin/client/ui";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Text } from "react-native";
+import { Pressable, Text } from "react-native";
 import { type FetchPreference, KNOWLEDGE_MAP_PARTS, type KnowledgeMapPart, MAX_CUSTOM_ROUTES, SYMBOL_LANGUAGES, type SymbolLanguage, type SnapshotSettings, snapshotSettings } from "../shared/contracts";
 import { memoriseStatusRpc } from "../shared/knowledge";
 import { memoriseNote } from "./memorise-note";
+import { keepsOpen, saveRowKey, withDraft } from "./settings-drafts";
 import { tagsChanged } from "./tag-events";
 
 type NumberKey =
@@ -111,6 +112,8 @@ const GENERATE_PROVIDER_OPTIONS = [
   { label: "Always Codex", value: "codex" as const },
 ];
 const NUMBER_LABELS = new Map([...KNOWLEDGE_NUMBERS, ...GENERATE_NUMBERS, ...ATTACHMENT_NUMBERS, ...ADVANCED_NUMBERS, TITLE_LENGTH_FIELD, PILL_LENGTH_FIELD, REFRESH_HOURS_FIELD, MAP_LINES_FIELD, PORT_FIELD].map(({ key, label }) => [key, label]));
+// The typed fields inside the closed-by-default Advanced section.
+const ADVANCED_KEYS: readonly DraftKey[] = [PORT_FIELD.key, ...ADVANCED_NUMBERS.map(({ key }) => key), REFRESH_HOURS_FIELD.key, "extraInstructions", "customRoutes"];
 
 function draftValue(values: SnapshotSettings, key: DraftKey): string {
   if (key === "customRoutes") return values.customRoutes.length === 0 ? "" : JSON.stringify(values.customRoutes);
@@ -124,6 +127,8 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
   const note = memorise.data ? memoriseNote(memorise.data.state) : null;
   const [drafts, setDrafts] = useState<Partial<Record<DraftKey, string>>>({});
   const [errors, setErrors] = useState<Partial<Record<DraftKey, string>>>({});
+  const [lastEdited, setLastEdited] = useState<DraftKey | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   if (settings.status === "loading") return <Text style={{ color: theme.colors.foregroundMuted, padding: 16 }}>Loading settings</Text>;
   if (settings.status !== "ready") {
     return (
@@ -154,7 +159,7 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
         try {
           next.customRoutes = text === "" ? [] : JSON.parse(text);
         } catch {
-          problems.customRoutes = "Expected a JSON list of routes, like the example.";
+          problems.customRoutes = "Expected a JSON list of routes, in the format shown in the empty box.";
         }
       } else if (key === "claudeFetchModel" || key === "codexFetchModel" || key === "extraInstructions" || key === "knowledgeExtraDocGlobs" || key === "knowledgeExcludeGlobs") next[key] = text;
       else if (!/^\d+$/.test(text)) problems[key] = `Enter a whole number for "${NUMBER_LABELS.get(key)}" (got "${text}").`;
@@ -174,6 +179,10 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
       tagsChanged();
     });
   };
+  const edit = (key: DraftKey, text: string) => {
+    setDrafts((current) => withDraft(current, key, text, draftValue(values, key)));
+    setLastEdited(key);
+  };
   const draftInput = (key: DraftKey, label: string, hint: string, placeholder?: string) => (
     // Keyed by revision so a save shows the stored value (0 becomes the default), not the typed text.
     <SettingsInput
@@ -181,23 +190,26 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
       label={label}
       hint={hint}
       placeholder={placeholder}
-      initialValue={draftValue(values, key)}
+      initialValue={drafts[key] ?? draftValue(values, key)}
       error={errors[key] ?? null}
       disabled={settings.saving}
-      onChangeText={(text) => setDrafts((current) => ({ ...current, [key]: text }))}
+      onChangeText={(text) => edit(key, text)}
     />
   );
-  const saveRow = <SettingsAction label="" actionLabel="Save changes" disabled={settings.saving || Object.keys(drafts).length === 0} error={settings.saveError} onPress={saveDrafts} />;
+  // One Save, in the card of the field typed in last (or another waiting one); it saves every typed
+  // field on the page, and names a problem in any of them, so nothing waits or fails out of sight.
+  const unsaved = Object.keys(drafts).length;
+  const saveKey = saveRowKey(lastEdited, drafts);
+  const problems = Object.values(errors).join(" ");
+  const saveRowFor = (keys: readonly DraftKey[]) =>
+    saveKey !== null && keys.includes(saveKey) ? (
+      <SettingsAction label={unsaved === 1 ? "1 unsaved change" : `${unsaved} unsaved changes`} actionLabel="Save" disabled={settings.saving} error={problems || settings.saveError} onPress={saveDrafts} />
+    ) : null;
+  const advancedShown = advancedOpen || keepsOpen(ADVANCED_KEYS, drafts, errors);
 
   return (
     <>
-      <SettingsSection title="Project knowledge">
-        {note ? (
-          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, paddingHorizontal: 4, paddingBottom: 6 }} selectable>
-            {note.text}
-            {note.command ? ` Run: ${note.command}` : ""}
-          </Text>
-        ) : null}
+      <SettingsSection title="Project knowledge" info={note ? `${note.text}${note.command ? ` Run: ${note.command}` : ""}` : undefined}>
         <SettingsCard>
           <SettingsSwitch
             label="Give new agents knowledge of the project"
@@ -221,8 +233,7 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
             onValueChange={(value) => persist({ ...values, memoriseSuggestions: value })}
           />
           {draftInput(MAP_LINES_FIELD.key, MAP_LINES_FIELD.label, MAP_LINES_FIELD.hint)}
-          {draftInput(PORT_FIELD.key, PORT_FIELD.label, PORT_FIELD.hint)}
-          {saveRow}
+          {saveRowFor([MAP_LINES_FIELD.key])}
         </SettingsCard>
         <SettingsCard>
           {KNOWLEDGE_MAP_PARTS.map((part) => (
@@ -235,7 +246,7 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
             />
           ))}
           {KNOWLEDGE_NUMBERS.slice(0, 1).map(({ key, label, hint }) => draftInput(key, label, hint))}
-          {saveRow}
+          {saveRowFor(KNOWLEDGE_NUMBERS.slice(0, 1).map(({ key }) => key))}
         </SettingsCard>
         <SettingsCard>
           {SYMBOL_LANGUAGES.map((language) => (
@@ -257,14 +268,14 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
             disabled={settings.saving || !values.knowledgeEnabled}
             onValueChange={(value) => persist({ ...values, knowledgeAutoApproveTools: value })}
           />
-          {saveRow}
+          {saveRowFor(["knowledgeExtraDocGlobs", "knowledgeExcludeGlobs", ...KNOWLEDGE_NUMBERS.slice(1).map(({ key }) => key)])}
         </SettingsCard>
       </SettingsSection>
       <SettingsSection title="Conversation summaries">
         <SettingsCard>
           <SettingsSwitch
             label="Write summaries of finished conversations"
-            hint="Off by default. On: when a conversation has been idle for a while, a helper agent reads it and writes a short title and summary, and now and then a short description of the project. Your messages are sent to Claude or Codex for this (passwords and keys are removed first), and each summary uses some of your plan. It never records your preferences or lessons learned; Memorise keeps those."
+            hint="Off by default. On: after a conversation goes quiet, a helper agent writes a short title and summary of it, and now and then a description of the project. Your messages go to Claude or Codex for this, with passwords and keys removed, and each summary uses some of your plan."
             value={values.knowledgeGenerate}
             disabled={settings.saving || !values.knowledgeEnabled}
             onValueChange={(value) => persist({ ...values, knowledgeGenerate: value })}
@@ -278,13 +289,13 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
             onValueChange={(value) => persist({ ...values, knowledgeGenerateProvider: value })}
           />
           {GENERATE_NUMBERS.map(({ key, label, hint }) => draftInput(key, label, hint))}
-          {saveRow}
+          {saveRowFor(GENERATE_NUMBERS.map(({ key }) => key))}
         </SettingsCard>
       </SettingsSection>
       <SettingsSection title="Attachments">
         <SettingsCard>
           {ATTACHMENT_NUMBERS.map(({ key, label, hint }) => draftInput(key, label, hint))}
-          {saveRow}
+          {saveRowFor(ATTACHMENT_NUMBERS.map(({ key }) => key))}
         </SettingsCard>
         <SettingsCard>
           {SECTION_SWITCHES.map(({ key, label, hint }) => (
@@ -297,7 +308,7 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
           <SettingsSwitch label="Show the Tags button" hint="The Tags button in every message box." value={values.showPill} disabled={settings.saving} onValueChange={(value) => persist({ ...values, showPill: value })} />
           <SettingsSelect label="Tags button shows" value={values.pillLabel} options={PILL_LABEL_OPTIONS} disabled={settings.saving || !values.showPill} onValueChange={(value) => persist({ ...values, pillLabel: value })} />
           {draftInput(PILL_LENGTH_FIELD.key, PILL_LENGTH_FIELD.label, PILL_LENGTH_FIELD.hint)}
-          {saveRow}
+          {saveRowFor([PILL_LENGTH_FIELD.key])}
         </SettingsCard>
       </SettingsSection>
       <SettingsSection title="Attach lists">
@@ -311,7 +322,7 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
             onValueChange={(value) => persist({ ...values, pickerPrefix: value })}
           />
           {draftInput(TITLE_LENGTH_FIELD.key, TITLE_LENGTH_FIELD.label, TITLE_LENGTH_FIELD.hint)}
-          {saveRow}
+          {saveRowFor([TITLE_LENGTH_FIELD.key])}
         </SettingsCard>
         <SettingsCard>
           <SettingsSelect label="Sort conversations by" value={values.agentSort} options={AGENT_SORT_OPTIONS} disabled={settings.saving} onValueChange={(value) => persist({ ...values, agentSort: value })} />
@@ -332,7 +343,7 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
           />
           {draftInput("claudeFetchModel", "Claude model", "Model id as Paseo lists it. Empty uses Claude's default.", "claude-sonnet-5-5")}
           {draftInput("codexFetchModel", "Codex model", "Model id as Paseo lists it. Empty uses Codex's default.")}
-          {saveRow}
+          {saveRowFor(["claudeFetchModel", "codexFetchModel"])}
         </SettingsCard>
         <SettingsCard>
           <SettingsSwitch
@@ -344,8 +355,18 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
           />
         </SettingsCard>
       </SettingsSection>
-      <SettingsSection title="Advanced">
+      {/* Rarely changed, so closed until asked for. */}
+      <SettingsSection
+        title="Advanced"
+        trailing={
+          <Pressable onPress={() => setAdvancedOpen(!advancedShown)} hitSlop={10} accessibilityRole="button" accessibilityState={{ expanded: advancedShown }} accessibilityLabel={advancedShown ? "Hide advanced settings" : "Show advanced settings"}>
+            <Text style={{ color: theme.colors.accent, fontSize: 13 }}>{advancedShown ? "Hide" : "Show"}</Text>
+          </Pressable>
+        }
+      >
+        {advancedShown ? (
         <SettingsCard>
+          {draftInput(PORT_FIELD.key, PORT_FIELD.label, PORT_FIELD.hint)}
           {ADVANCED_NUMBERS.map(({ key, label, hint }) => draftInput(key, label, hint))}
           <SettingsSwitch
             label="Keep saved items up to date"
@@ -358,25 +379,26 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
           {draftInput("extraInstructions", "Extra instructions for workers", "Up to 1,000 characters, added to every fetch, for example: include acceptance criteria.")}
           <SettingsRow
             label="Custom routes"
-            hint={`Extra ways to read a vendor, tried before the built-in ones: which agent, which of its MCP servers, and the only tools it may use there (read tools only). Up to ${MAX_CUSTOM_ROUTES}. Example: ${ROUTES_EXAMPLE}`}
+            hint={`Extra ways to read a vendor, tried before the built-in ones: which agent, which of its MCP servers, and the only tools it may use there (read tools only). Up to ${MAX_CUSTOM_ROUTES}; the box shows the format.`}
             error={errors.customRoutes ?? null}
           >
             <TextInput
               key={`customRoutes:${settings.revision}`}
-              defaultValue={draftValue(values, "customRoutes")}
+              defaultValue={drafts.customRoutes ?? draftValue(values, "customRoutes")}
               placeholder={ROUTES_EXAMPLE}
               multiline
               autoCapitalize="none"
               autoCorrect={false}
               editable={!settings.saving}
               style={{ minHeight: 80, color: theme.colors.foreground, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, padding: 8, fontFamily: "monospace" }}
-              onChangeText={(text) => setDrafts((current) => ({ ...current, customRoutes: text }))}
+              onChangeText={(text) => edit("customRoutes", text)}
               accessibilityLabel="Custom routes as JSON"
             />
           </SettingsRow>
-          {saveRow}
+          {saveRowFor([PORT_FIELD.key, ...ADVANCED_NUMBERS.map(({ key }) => key), REFRESH_HOURS_FIELD.key, "extraInstructions", "customRoutes"])}
           <SettingsAction label="Reset everything" hint="Puts every Contextualise setting back to its default." actionLabel="Reset" disabled={settings.saving} onPress={() => void settings.reset().then(tagsChanged)} />
         </SettingsCard>
+        ) : null}
       </SettingsSection>
     </>
   );

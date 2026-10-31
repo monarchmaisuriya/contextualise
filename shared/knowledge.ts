@@ -183,6 +183,33 @@ export const memoriseStatusRpc = defineRpc({
   output: z.object({ state: memoriseStateSchema }),
 });
 
+// The four tools an agent gets for its project's knowledge, by name.
+export const KNOWLEDGE_TOOLS = ["knowledge_search", "knowledge_read", "knowledge_outline", "knowledge_history"] as const;
+export type KnowledgeTool = (typeof KNOWLEDGE_TOOLS)[number];
+
+// How a project's knowledge tools were used over the last `days` days. `calls` is keyed by tool name.
+export const knowledgeUsageSchema = z.object({
+  days: z.number().int(),
+  agentsGiven: z.number().int().min(0),
+  agentsUsed: z.number().int().min(0),
+  calls: z.object(Object.fromEntries(KNOWLEDGE_TOOLS.map((tool) => [tool, z.number().int().min(0)])) as Record<KnowledgeTool, z.ZodNumber>),
+});
+export type KnowledgeUsage = z.infer<typeof knowledgeUsageSchema>;
+
+export const knowledgeUsageRpc = defineRpc({
+  name: "knowledge.usage",
+  input: z.object({ repoKey: z.string() }),
+  output: knowledgeUsageSchema,
+});
+
+// The project a workspace's folder belongs to, for its Project knowledge tab, as the server resolves
+// it: worktrees and subfolders map to their project. Null when the folder gets no knowledge.
+export const projectForWorkspaceRpc = defineRpc({
+  name: "knowledge.project-for",
+  input: z.object({ workspaceId: z.string().min(1) }),
+  output: z.object({ repoKey: z.string().nullable() }),
+});
+
 export const projectFactsRpc = defineRpc({
   name: "knowledge.facts",
   input: z.object({ repoKey: z.string() }),

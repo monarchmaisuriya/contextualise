@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { snapshotSettingsSchema, type SnapshotSettings } from "../../shared/contracts";
 import type { PaseoApi } from "../paseo-types";
@@ -208,5 +208,13 @@ describe("Generator", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("starts a fresh daily count when generation.json is not valid JSON, instead of failing every run", async () => {
+    const repo = await project();
+    const state = join(home, "plugin-data", "contextualise", "knowledge", "generation.json");
+    mkdirSync(dirname(state), { recursive: true });
+    writeFileSync(state, '{"version":1,"day":{"date":"20');
+    expect(await generator.describe(paseo, repo, true)).toBe("done");
   });
 });

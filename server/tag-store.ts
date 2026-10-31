@@ -157,7 +157,8 @@ export class TagStore {
       const outcomes: Outcome[] = [];
       for (const name of names) {
         const key = tagKey(name);
-        const tag = file.tags[key] ?? { name, agents: [], links: [], notes: [] };
+        // Own entries only: "constructor" is a tag name, not the object's inherited property.
+        const tag = (Object.hasOwn(file.tags, key) ? file.tags[key] : undefined) ?? { name, agents: [], links: [], notes: [] };
         const changed = edit(tag);
         if (tag.agents.length === 0 && tag.links.length === 0 && tag.notes.length === 0) delete file.tags[key];
         else file.tags[key] = tag;

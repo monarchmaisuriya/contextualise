@@ -68,9 +68,21 @@ export interface WorkerJob {
 
 const workspaceLookups = new Map<string, Promise<string>>();
 
+// Paseo's client waits for ever on workspace and agent creation, so every step of starting a worker
+// is held to the job's deadline.
+function beforeDeadline<T>(work: Promise<T>, deadline: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, fail) => {
+    timer = setTimeout(() => fail(new Error(`did not start: ${what} took longer than the worker's time limit`)), Math.max(0, deadline - Date.now()));
+  });
+  return Promise.race([work, late]).finally(() => clearTimeout(timer));
+}
+
 // One hidden workspace on the worker folder, found again on later runs and never archived: Paseo
 // shows a project in the sidebar once its last workspace is archived (seen by Memorise).
-export function workerWorkspace(paseo: PaseoApi, root: string): Promise<string> {
+// Lookups for one folder run one after another; each is held to its caller's deadline, so one that
+// hangs does not hold up the next.
+export function workerWorkspace(paseo: PaseoApi, root: string, deadline: number): Promise<string> {
   const dir = workersDir(root);
   const next = (workspaceLookups.get(dir) ?? Promise.resolve("")).catch(() => "").then(async () => {
     await mkdir(dir, { recursive: true, mode: 0o700 });
@@ -85,8 +97,9 @@ export function workerWorkspace(paseo: PaseoApi, root: string): Promise<string> 
     const created = await paseo.workspaces.create({ source: { kind: "directory", path: dir }, background: true, title: WORKER_WORKSPACE_TITLE });
     return created.id;
   });
-  workspaceLookups.set(dir, next);
-  return next;
+  const bounded = beforeDeadline(next, deadline, "finding the worker workspace");
+  workspaceLookups.set(dir, bounded);
+  return bounded;
 }
 
 // Runs one fetch worker to its final message.
@@ -95,20 +108,26 @@ export function runFetchWorker(paseo: PaseoApi, root: string, job: FetchJob, onC
   return runWorker(paseo, root, { ...rest, provider: route.provider, outputSchema: FETCH_OUTPUT_SCHEMA as unknown as Record<string, unknown> }, onCreated);
 }
 
-// Runs one background agent to its final message. The agent is archived afterwards whatever happens.
+// Runs one background agent to its final message, within `job.timeoutMs` from the call, starting
+// included. The agent is archived afterwards whatever happens, also when it is created too late.
 export async function runWorker(paseo: PaseoApi, root: string, job: WorkerJob, onCreated: (agentId: string) => void): Promise<string> {
-  const workspaceId = await workerWorkspace(paseo, root);
+  const deadline = Date.now() + job.timeoutMs;
+  const workspaceId = await workerWorkspace(paseo, root, deadline);
   let handle: Awaited<ReturnType<PaseoApi["agents"]["create"]>> | null = null;
   try {
     const { modeId, options } = LOCKDOWN[job.provider];
-    handle = await paseo.workspaces.ref(workspaceId).agents.create({
-      title: job.title.slice(0, 120),
-      config: { provider: await fetchModel(paseo, job.provider, job.model), modeId, options },
-      prompt: job.prompt,
-      outputSchema: job.outputSchema,
-    });
+    const provider = await beforeDeadline(fetchModel(paseo, job.provider, job.model), deadline, "listing models");
+    const creating = paseo.workspaces.ref(workspaceId).agents.create({ title: job.title.slice(0, 120), config: { provider, modeId, options }, prompt: job.prompt, outputSchema: job.outputSchema });
+    try {
+      handle = await beforeDeadline(creating, deadline, "creating the agent");
+    } catch (error) {
+      void creating.then(
+        (late) => late.archive().catch((archiveError: unknown) => console.error(`[contextualise] could not archive late background agent ${late.id}: ${String(archiveError)}`)),
+        () => undefined,
+      );
+      throw error;
+    }
     onCreated(handle.id);
-    const deadline = Date.now() + job.timeoutMs;
     let permissionWaits = 0;
     for (;;) {
       const left = deadline - Date.now();

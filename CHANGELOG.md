@@ -2,6 +2,43 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.18.0 - 2026-11-01
+
+### Changed
+
+- The project map now names the knowledge tools' server (`paseo-contextualise`) and says when to use them: before reading docs, guessing how the project works or why, or redoing earlier work. Agents could not load the tools from the map before, because it gave only bare tool names. The tool server also sends the same guidance as its instructions, which agents see before the tools are loaded.
+- Claude agents now get the four knowledge tools loaded from their first turn, instead of having to find them with tool search first. Other providers are unaffected.
+- A project folder that is not a git repository but holds repositories now indexes only the files those repositories track, so virtual environments and build output they ignore stay out of search. Only each repository's file list is read: no git command runs there that the repository's own config could steer. Files a repository does not track, repositories inside it, and a repository git cannot read (logged) are left out.
+- Search ranks the project's own writing (decisions, conventions, architecture, docs) above code symbols that match the same words, and leaves out symbols from test files unless code or a path is asked for. On real indexes, test-file symbols in the top 8 results went from 23 to 0 across 10 questions.
+- Project knowledge screen: one header line with the project name, a switch, and a menu (re-index, add or summarise past conversations); other projects open from the name. It opens on the project you looked at last. Bars show only when their values differ, libraries read as plain text, and "needs check" and unfinished tasks show as warnings, not errors.
+- Tags screen: Fetch item and Add link on a closed tag now open it and show the form (before, nothing visible happened). Sort shows its three orders side by side. The tag popover gets a filter once there are more than 8 other tags. The sidebar row uses a tag icon.
+- Settings: one Save, beside the field you typed in last, instead of nine; Advanced (including the port) is closed until opened; the summaries hint is shorter.
+- Copy everywhere reports a failed copy; buttons, chips, and icon buttons have larger touch areas; secondary text is no longer drawn fainter than the theme's muted colour.
+
+### Added
+
+- A Project knowledge tab in each workspace, showing that workspace's project (worktrees and subfolders included), and a Command Center item to open it.
+- The project brain shows how agents used project knowledge over the last 7 days, for example "Last 7 days: 12 of 15 agents used project knowledge (30 searches, 18 reads)". Only counts are kept, per project and day, for 30 days: no queries, paths, or agent ids.
+
+### Fixed
+
+- Every git call the plugin makes now refuses a repository's fsmonitor command and optional index locks, and edited files are hashed without content filters, so a repository's own config cannot make the daemon run a command while indexing.
+
+- Secret removal missed common shapes: names with a prefix (`DB_PASSWORD=`, `aws_secret_access_key =`), quoted values with spaces, passwords inside links, `Bearer` and `Basic` headers, and Stripe, npm, GitLab, Hugging Face, and similar tokens. A private key in terminal output is now removed whole, not line by line.
+- Project knowledge read files that a repository commits as symbolic links, so a link to a file outside the project was indexed, and a link to a folder or a device broke indexing. Only plain files are read now, and submodules no longer make indexing fail.
+- The knowledge tools were approved by server-name prefix; now only the four knowledge tools are approved, by exact name.
+- Text from the repository could rebuild the project map's markers or add lines to every agent's prompt (file paths, "Superseded by" links), and a stray start marker in a prompt deleted the text after it. A design, rules, or decision file with only a heading removed the map for every agent in that project.
+- A glob passed by an agent (`paths`) or exported by Memorise could block the plugin for minutes or throw; globs are now matched by Node's matcher, the one Memorise uses.
+- A long Markdown line that is almost a heading blocked indexing for seconds to minutes.
+- When a project's folder was gone (a removed worktree), every screen and Attach > Project knowledge failed; they now answer from the stored index and show the problem. An unreadable folder outside git no longer empties its index.
+- Fetch and summary replies whose text held code blocks failed to parse.
+- A background agent that Paseo never finished starting held a fetch slot for good; starting is now held to the time limit, and an agent created too late is archived.
+- Parsing code leaked memory on every file.
+- Long document sections shared one id, so reading or attaching a later part gave the first.
+- A tag named `constructor` could not be changed, and some invalid links were accepted. Fetched items keep only a web link and a one-line title.
+- A damaged `generation.json` stopped every summary; a damaged task-log line broke reads of that task.
+- Indexes are read again once after updating, so entries read from linked files are removed.
+
 ## 0.17.2 - 2026-10-29
 
 ### Changed

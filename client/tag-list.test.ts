@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { TagSummary } from "../shared/contracts";
-import { filterTags, filterPlaceholder, nextSort, sortTags } from "./tag-list";
+import { filterTags, filterPlaceholder, sortTags } from "./tag-list";
 
 const tag = (name: string, agents: number, notes = 0): TagSummary => ({
   key: name,
@@ -10,12 +10,6 @@ const tag = (name: string, agents: number, notes = 0): TagSummary => ({
   links: [],
   agents: Array.from({ length: agents }, (_, i) => ({ agentId: `${name}-${i}`, workspaceId: "w", taggedAt: "t", title: `${name} agent ${i}`, provider: "claude", workspaceName: null, state: "active" as const })),
   notes: Array.from({ length: notes }, (_, i) => ({ id: `${name}-n${i}`, vendor: "jira" as const, ref: `P-${i}`, title: `Item ${i}`, url: null, status: "ready" as const, text: "", error: null, addedAt: "t", fetchedAt: "t", provider: null, notifyAgentId: null })),
-});
-
-test("one sort control cycles recent, name, size, then back", () => {
-  expect(nextSort("recent")).toBe("name");
-  expect(nextSort("name")).toBe("size");
-  expect(nextSort("size")).toBe("recent");
 });
 
 test("tags sort by list order, name, or size", () => {

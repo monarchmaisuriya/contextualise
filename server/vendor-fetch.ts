@@ -1,4 +1,5 @@
-import { FETCH_PROVIDER_LABELS, type FetchPreference, type FetchProvider, type ItemRef, type Route, VENDOR_LABELS, type Vendor } from "../shared/contracts";
+import { FETCH_PROVIDER_LABELS, type FetchPreference, type FetchProvider, type ItemRef, parseLinkUrl, type Route, VENDOR_LABELS, type Vendor } from "../shared/contracts";
+import { redactSecrets } from "./secrets";
 
 // The built-in ways to read each vendor, checked live on 2026-10-27: a Paseo-run Claude agent carries
 // claude.ai's Atlassian, Sentry, and Slack connectors and the user's Notion server; Codex carries
@@ -103,14 +104,36 @@ export interface FetchReply {
   text: string;
 }
 
-// Workers answer with JSON, sometimes wrapped in a Markdown code fence or a sentence.
+// Workers answer with JSON, sometimes wrapped in a Markdown code fence or a sentence. The JSON's own
+// text often holds code fences (stack traces, logs), so the reply is tried whole first, then as one
+// fenced block up to its last fence, then from its first "{" to its last "}".
 export function jsonObjectIn(reply: string): unknown {
-  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(reply);
-  const candidate = (fenced ? fenced[1] : reply).trim();
-  const start = candidate.indexOf("{");
-  const end = candidate.lastIndexOf("}");
-  if (start < 0 || end <= start) throw new Error(`The worker's reply had no JSON object: "${reply.slice(0, 120)}"`);
-  return JSON.parse(candidate.slice(start, end + 1));
+  const trimmed = reply.trim();
+  const wrapped = /^```[A-Za-z]*\n([\s\S]*)\n```$/.exec(trimmed)?.[1];
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  const braces = start >= 0 && end > start ? trimmed.slice(start, end + 1) : undefined;
+  for (const candidate of [trimmed, wrapped, braces]) {
+    if (candidate === undefined) continue;
+    try {
+      const value: unknown = JSON.parse(candidate);
+      if (typeof value === "object" && value !== null && !Array.isArray(value)) return value;
+    } catch {
+      // Not this form; the next one is tried, and none fitting is an error below.
+    }
+  }
+  throw new Error(`The worker's reply had no JSON object: "${reply.slice(0, 120)}"`);
+}
+
+const FETCHED_TITLE_MAX_CHARS = 200;
+
+function webLinkOrNull(url: unknown): string | null {
+  if (typeof url !== "string" || url.trim() === "") return null;
+  try {
+    return parseLinkUrl(url);
+  } catch {
+    return null;
+  }
 }
 
 export function parseFetchReply(reply: string): FetchReply {
@@ -123,5 +146,7 @@ export function parseFetchReply(reply: string): FetchReply {
   if (typeof found !== "boolean" || typeof title !== "string" || typeof text !== "string" || (url !== null && url !== undefined && typeof url !== "string")) {
     throw new Error(`The worker's reply did not match {found, title, url, text}: "${reply.slice(0, 120)}"`);
   }
-  return { found, title, url: typeof url === "string" && url !== "" ? url : null, text };
+  // The reply is built from the item's text, which anyone who can edit the item controls: the link
+  // must be a web link and the title one plain line, like the links and names people add.
+  return { found, title: redactSecrets(title).replace(/\s+/g, " ").trim().slice(0, FETCHED_TITLE_MAX_CHARS), url: webLinkOrNull(url), text };
 }

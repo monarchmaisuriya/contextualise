@@ -1,5 +1,5 @@
 import { openExternalUrl, type PluginScreenProps, useRpc } from "@getpaseo/plugin/client";
-import { copyText, Icon, Markdown, Modal, ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/ui";
+import { Icon, Markdown, Modal, ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
@@ -26,10 +26,10 @@ import { AgentTags } from "./agent-tags";
 import { errorText } from "./errors";
 import { FetchForm } from "./fetch-form";
 import { ICONS, VENDOR_ICONS } from "./icons";
-import { ago, Button, Chip, IconButton, plural, SectionTitle, type Styles, summary, TAGS_QUERY, useStyles, useTagChange } from "./kit";
+import { ago, Button, Chip, CopyButton, IconButton, plural, SearchField, SectionTitle, type Styles, summary, TAGS_QUERY, useStyles, useTagChange } from "./kit";
 import { useMoreActions } from "./more-actions";
 import { onTagsChanged } from "./tag-events";
-import { filterPlaceholder, filterTags, nextSort, SORT_LABELS, type Sort, sortTags } from "./tag-list";
+import { filterPlaceholder, filterTags, SORT_LABELS, SORTS, type Sort, sortTags } from "./tag-list";
 
 type Navigation = PluginScreenProps["navigation"];
 
@@ -113,7 +113,7 @@ function NoteReader({ note, styles, onClose }: { note: NoteMember; styles: Style
               {VENDOR_LABELS[note.vendor]} · fetched{by} {note.fetchedAt ? ago(note.fetchedAt) : ""} · {plural(note.text.length, "character")}
             </Text>
             {note.url ? <Button label="Open" icon={ICONS.open} styles={styles} onPress={() => void openExternalUrl(note.url ?? "").catch((error: unknown) => toast.error(errorText(error)))} /> : null}
-            <Button label="Copy" icon={ICONS.copy} styles={styles} onPress={() => void copyText(note.text).then(() => toast.show("Copied", { variant: "success" }), (error: unknown) => toast.error(errorText(error)))} />
+            <CopyButton text={note.text} styles={styles} />
           </View>
           <Markdown>{note.text}</Markdown>
         </View>
@@ -183,7 +183,6 @@ function AddLinkForm({ tagName, styles, onClose }: { tagName: string; styles: St
 // Exactly what Attach > Tag would send, so it can be read (and copied) before sending.
 function PreviewModal({ tag, styles, onClose }: { tag: TagSummary; styles: Styles; onClose(): void }) {
   const preview = useRpc(previewTagRpc);
-  const toast = useToast();
   const query = useQuery({ queryKey: ["contextualise", "preview", tag.key], queryFn: () => preview({ tag: tag.name }), staleTime: 0 });
   return (
     <Modal title={`What Attach > Tag sends for "${tag.name}"`} open onOpenChange={(open) => !open && onClose()}>
@@ -196,17 +195,7 @@ function PreviewModal({ tag, styles, onClose }: { tag: TagSummary; styles: Style
               <Text style={[styles.muted, styles.grow]}>
                 {query.data.subtitle} · {plural(query.data.text.length, "character")}
               </Text>
-              <Button
-                label="Copy"
-                icon={ICONS.copy}
-                styles={styles}
-                onPress={() =>
-                  void copyText(query.data.text).then(
-                    () => toast.show("Copied", { variant: "success" }),
-                    (error: unknown) => toast.error(errorText(error)),
-                  )
-                }
-              />
+              <CopyButton text={query.data.text} styles={styles} />
             </View>
             <Markdown>{query.data.text}</Markdown>
           </View>
@@ -222,8 +211,9 @@ function TagCard({ tag, styles, navigation, open, onToggle }: { tag: TagSummary;
   const [previewing, setPreviewing] = useState(false);
   const pending = tag.notes.filter((note) => note.status === "fetching").length;
   const more = useMoreActions(tag.name, [
-    { label: "Fetch item", onPress: () => setFetchingOpen(true) },
-    { label: "Add link", onPress: () => setLinking(true) },
+    // The forms show inside the card, so picking one opens a closed card.
+    { label: "Fetch item", onPress: () => { setFetchingOpen(true); if (!open) onToggle(); } },
+    { label: "Add link", onPress: () => { setLinking(true); if (!open) onToggle(); } },
   ], styles);
   return (
     <View style={styles.card}>
@@ -324,22 +314,23 @@ export function TagsScreen({ theme, layout, params, navigation }: PluginScreenPr
       {params.agentId ? <AgentTags agentId={params.agentId} fallbackWorkspaceId={params.workspaceId} styles={styles} /> : null}
       {tags.data && tags.data.pinnedAgents.length > 0 ? <PinnedAgents pins={tags.data.pinnedAgents} styles={styles} navigation={navigation} /> : null}
       {all.length > 0 ? (
-        <View style={styles.row}>
-          <View style={[styles.inline, styles.input, { borderWidth: 0 }]}>
-            <Icon name={ICONS.search} size={15} color={styles.colors.foregroundMuted} />
-            <TextInput style={[styles.grow, { color: styles.colors.foreground }]} value={filter} onChangeText={setFilter} placeholder={filterPlaceholder(all)} accessibilityLabel="Filter tags" />
-            {filter !== "" ? <IconButton icon={ICONS.close} label="Clear filter" onPress={() => setFilter("")} styles={styles} /> : null}
+        // On a phone the sort options get a line of their own; beside the filter they leave it no room.
+        <View style={layout.compact ? { gap: 8 } : styles.row}>
+          <View style={layout.compact ? undefined : styles.grow}>
+            <SearchField value={filter} onChange={setFilter} placeholder={filterPlaceholder(all)} label="Filter tags" styles={styles} />
           </View>
           {all.length > 1 ? (
-            <>
-              <Chip label={SORT_LABELS[sort]} icon={ICONS.sort} onPress={() => setSort(nextSort(sort))} accessibilityLabel={`Sorted by ${SORT_LABELS[sort]}; sort by ${SORT_LABELS[nextSort(sort)]}`} styles={styles} />
+            <View style={[styles.wrap, { alignItems: "center" }]}>
+              {SORTS.map((option) => (
+                <Chip key={option} label={SORT_LABELS[option]} on={sort === option} onPress={() => setSort(option)} accessibilityLabel={`Sort by ${SORT_LABELS[option]}`} styles={styles} />
+              ))}
               <IconButton
                 icon={allOpen ? ICONS.collapseAll : ICONS.expandAll}
                 label={allOpen ? "Collapse all tags" : "Expand all tags"}
                 onPress={() => setToggled(Object.fromEntries(shown.map((tag) => [tag.key, !allOpen])))}
                 styles={styles}
               />
-            </>
+            </View>
           ) : null}
         </View>
       ) : null}
@@ -349,8 +340,7 @@ export function TagsScreen({ theme, layout, params, navigation }: PluginScreenPr
       {tags.data && tags.data.tags.length === 0 ? (
         <View style={styles.card}>
           <Text style={styles.title}>No tags yet</Text>
-          <Text style={styles.muted}>Tag an agent with its Tags pill or /tag auth-rewrite. Labeled workspaces, links (/tag-link), and Jira, Sentry, Slack, or Notion items (/tag-fetch) join tags too.</Text>
-          <Text style={styles.muted}>Attach &gt; Tag then sends everything under a tag.</Text>
+          <Text style={styles.muted}>Tag an agent with the Tags button in its message box. Attach &gt; Tag then sends everything under that tag.</Text>
           <View style={styles.wrap}>
             <Button label={firstFetch ? "Close fetch" : "Fetch an item"} icon={firstFetch ? ICONS.close : ICONS.fetch} kind={firstFetch ? "ghost" : "primary"} styles={styles} onPress={() => setFirstFetch((value) => !value)} />
           </View>

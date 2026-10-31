@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { KnowledgeBase } from "./base";
 import { KnowledgeService } from "./service";
+import { KnowledgeStore } from "./store";
 import { SymbolReader } from "./symbols";
 
 const commit = (top: string, message: string) => {
@@ -68,5 +69,53 @@ describe("KnowledgeService facts and areas", () => {
     const { facts, busy } = await service.facts(repo);
     expect(facts.links).toEqual([{ from: "api", to: "core", count: 1 }]);
     expect(busy).toMatchObject({ available: false, problem: null, files: [] });
+  });
+
+  it("answers from the stored index when the project folder is gone", async () => {
+    execFileSync("git", ["init", "-q", top]);
+    commit(top, "start");
+    const repo = (await base.repoFor(top))!;
+    expect((await service.search(repo, "api guide", [], 5)).map((hit) => hit.path)).toEqual(["api/docs/guide.md"]);
+    rmSync(top, { recursive: true, force: true });
+    base.invalidate(repo.key);
+    // The refresh fails (the folder is gone); search, tasks, and facts still answer from the index.
+    expect((await service.search(repo, "api guide", [], 5)).map((hit) => hit.path)).toEqual(["api/docs/guide.md"]);
+    expect((await service.tasks(repo, 5)).total).toBe(0);
+    expect((await service.facts(repo)).facts.areas.map((area) => area.path).sort()).toEqual(["api", "core"]);
+  });
+
+  it("fails the refresh, rather than emptying the index, when a folder outside git cannot be read", async () => {
+    const repo = (await base.repoFor(top))!;
+    expect((await service.search(repo, "api guide", [], 5))).toHaveLength(1);
+    rmSync(top, { recursive: true, force: true });
+    base.invalidate(repo.key);
+    await expect(base.refresh(repo, 10_000)).rejects.toThrow();
+    expect((await service.search(repo, "api guide", [], 5))).toHaveLength(1);
+  });
+});
+
+describe("KnowledgeService search", () => {
+  let dir: string;
+  let store: KnowledgeStore;
+  let service: KnowledgeService;
+  const repo = { key: "local/abc", top: "/nonexistent", git: true };
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "contextualise-service-search-"));
+    store = new KnowledgeStore(join(dir, "index.sqlite"));
+    service = new KnowledgeService({ refresh: async () => "fresh", open: async () => store } as unknown as KnowledgeBase, async () => null);
+    store.replaceSource({ path: "jobs/queue.ts", kind: "code", blob: "1", chunks: [], symbols: [{ name: "drainQueue", kind: "function", line: 1, signature: "function drainQueue() {", params: 0, shape: "s" }] });
+    store.replaceSource({ path: "jobs/queue.test.ts", kind: "code", blob: "2", chunks: [], symbols: [{ name: "drainQueueTwice", kind: "function", line: 1, signature: "function drainQueueTwice() {", params: 0, shape: "s" }] });
+  });
+  afterEach(() => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("leaves out symbols from test files unless code or a path is asked for", async () => {
+    const paths = async (kinds: string[], within: string[] = []) => (await service.search(repo, "drain queue", kinds as never, 8, within)).map((hit) => hit.path).sort();
+    expect(await paths([])).toEqual(["jobs/queue.ts"]);
+    expect(await paths(["code"])).toEqual(["jobs/queue.test.ts", "jobs/queue.ts"]);
+    expect(await paths([], ["jobs/"])).toEqual(["jobs/queue.test.ts", "jobs/queue.ts"]);
   });
 });

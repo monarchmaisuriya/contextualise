@@ -60,7 +60,18 @@ export interface TextChunk {
 }
 
 const CHUNK_MAX_CHARS = 4_000;
-const HEADING = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
+// The heading marks and the rest of the line. Closing hashes are removed by `headingText` with string
+// operations: a regular expression that also matched them backtracked for seconds on long lines.
+const HEADING = /^(#{1,6})\s+(.*)$/;
+
+// A heading's text without trailing spaces or a closing run of hashes ("Title ##"); a hash run not
+// set off by a space ("C#") is part of the text.
+function headingText(rest: string): string {
+  const text = rest.trimEnd();
+  let cut = text.length;
+  while (cut > 0 && text[cut - 1] === "#") cut -= 1;
+  return cut === text.length || cut === 0 || /\s/.test(text[cut - 1]) ? text.slice(0, cut).trimEnd() : text;
+}
 
 // A heading as people read it: link text without the address, no emphasis or code marks.
 export function plainHeading(text: string): string {
@@ -91,13 +102,14 @@ export function chunkMarkdown(path: string, text: string): TextChunk[] {
   text.split("\n").forEach((raw, index) => {
     if (FENCE.test(raw)) inFence = !inFence;
     const heading = inFence ? null : HEADING.exec(raw);
-    if (!heading) {
+    const headingTitle = heading ? headingText(heading[2]) : "";
+    if (!heading || headingTitle === "") {
       lines.push(raw);
       return;
     }
     flush();
     const depth = heading[1].length;
-    trail.splice(depth - 1, trail.length, plainHeading(heading[2]));
+    trail.splice(depth - 1, trail.length, plainHeading(headingTitle));
     title = trail.filter(Boolean).join(" > ");
     line = index + 1;
   });

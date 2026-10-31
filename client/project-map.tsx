@@ -4,10 +4,13 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { areaLabel, mermaidBlock, neighbourDiagram, overviewDiagram } from "../shared/diagram";
-import { type Area, areaRpc, browseKnowledgeRpc, type BusyFile, type KnowledgeEntry, projectFactsRpc, readKnowledgeRpc, type SearchHit } from "../shared/knowledge";
+import { type Area, areaRpc, browseKnowledgeRpc, type BusyFile, type KnowledgeEntry, knowledgeUsageRpc, projectFactsRpc, readKnowledgeRpc, type SearchHit } from "../shared/knowledge";
 import { errorText } from "./errors";
 import { ICONS } from "./icons";
 import { ago, Button, Chip, plural, SectionTitle, type Styles } from "./kit";
+import { usageLine } from "./usage-line";
+import { barsCarryInformation } from "./bars";
+import type { TaskSummary } from "../shared/knowledge";
 
 const OVERVIEW_CARDS = 8;
 const OVERVIEW_BUSY = 8;
@@ -53,11 +56,13 @@ function LanguageBar({ languages, styles }: { languages: Record<string, number>;
   if (total === 0) return null;
   return (
     <View style={{ gap: 6 }}>
+{entries.length > 1 ? (
       <View style={{ flexDirection: "row", height: 8, borderRadius: 4, overflow: "hidden", gap: 2 }}>
-        {entries.map(([language, count], index) => (
-          <View key={language} style={{ flex: count, backgroundColor: colors[index % colors.length] }} />
-        ))}
-      </View>
+          {entries.map(([language, count], index) => (
+            <View key={language} style={{ flex: count, backgroundColor: colors[index % colors.length] }} />
+          ))}
+        </View>
+      ) : null}
       <View style={styles.wrap}>
         {entries.map(([language, count], index) => (
           <View key={language} style={styles.inline}>
@@ -72,7 +77,7 @@ function LanguageBar({ languages, styles }: { languages: Record<string, number>;
   );
 }
 
-function AreaCard({ area, line, largest, changes, onOpen, styles }: { area: Area; line: string | undefined; largest: number; changes: number; onOpen(): void; styles: Styles }) {
+function AreaCard({ area, line, largest, showBar, changes, onOpen, styles }: { area: Area; line: string | undefined; largest: number; showBar: boolean; changes: number; onOpen(): void; styles: Styles }) {
   const size = area.files + area.tests;
   return (
     <Pressable onPress={onOpen} accessibilityRole="button" accessibilityLabel={`Open ${areaLabel(area.path)}`} style={[styles.card, { gap: 6 }]}>
@@ -97,17 +102,18 @@ function AreaCard({ area, line, largest, changes, onOpen, styles }: { area: Area
             .join(" · ")}
         </Text>
       ) : null}
-      <Bar share={size / largest} styles={styles} />
+      {showBar ? <Bar share={size / largest} styles={styles} /> : null}
     </Pressable>
   );
 }
 
 export function AreaCards({ areas, lines, changes, limit, onOpen, styles }: { areas: Area[]; lines: Record<string, string>; changes: Map<string, number>; limit?: number; onOpen(path: string): void; styles: Styles }) {
   const largest = Math.max(1, ...areas.map((area) => area.files + area.tests));
+  const showBars = barsCarryInformation(areas.slice(0, limit).map((area) => area.files + area.tests));
   return (
     <View style={{ gap: 8 }}>
       {areas.slice(0, limit).map((area) => (
-        <AreaCard key={area.path} area={area} line={lines[area.path]} largest={largest} changes={changes.get(area.path) ?? 0} onOpen={() => onOpen(area.path)} styles={styles} />
+        <AreaCard key={area.path} area={area} line={lines[area.path]} largest={largest} showBar={showBars} changes={changes.get(area.path) ?? 0} onOpen={() => onOpen(area.path)} styles={styles} />
       ))}
     </View>
   );
@@ -115,6 +121,7 @@ export function AreaCards({ areas, lines, changes, limit, onOpen, styles }: { ar
 
 function BusyList({ files, showArea, onOpenArea, styles }: { files: BusyFile[]; showArea: boolean; onOpenArea(path: string): void; styles: Styles }) {
   const most = Math.max(1, ...files.map((file) => file.changes));
+  const showBars = barsCarryInformation(files.map((file) => file.changes));
   return (
     <View style={[styles.card, { gap: 10 }]}>
       {files.map((file) => {
@@ -129,7 +136,7 @@ function BusyList({ files, showArea, onOpenArea, styles }: { files: BusyFile[]; 
               {area !== null ? <Text style={styles.link}>{areaLabel(area)} · </Text> : null}
               {plural(file.changes, "change")} · {ago(file.lastAt)}
             </Text>
-            <Bar share={file.changes / most} styles={styles} tone="muted" />
+            {showBars ? <Bar share={file.changes / most} styles={styles} tone="muted" /> : null}
           </>
         );
         return area !== null ? (
@@ -202,6 +209,15 @@ function changesByArea(files: BusyFile[]): Map<string, number> {
 
 // The overview: numbers and languages, the areas and how they connect, where work happened lately,
 // and the design documents, decisions, and team rules by heading.
+// How agents used this project's knowledge lately; nothing until an agent has been given it, and
+// nothing if the count cannot be read (it is advisory).
+function UsageNote({ repoKey, styles }: { repoKey: string; styles: Styles }) {
+  const usage = useRpc(knowledgeUsageRpc);
+  const query = useQuery({ queryKey: ["contextualise", "knowledge", "usage", repoKey], queryFn: () => usage({ repoKey }) });
+  const line = query.data ? usageLine(query.data) : null;
+  return line ? <Text style={styles.muted}>{line}</Text> : null;
+}
+
 export function ProjectOverview({ repoKey, onOpenArea, onShowAreas, styles }: { repoKey: string; onOpenArea(path: string): void; onShowAreas(): void; styles: Styles }) {
   const query = useFacts(repoKey);
   if (query.error) return <Text style={styles.danger}>{errorText(query.error)}</Text>;
@@ -211,6 +227,7 @@ export function ProjectOverview({ repoKey, onOpenArea, onShowAreas, styles }: { 
   const changes = changesByArea(busy.files);
   return (
     <>
+      <UsageNote repoKey={repoKey} styles={styles} />
       <SectionTitle label="At a glance" styles={styles} />
       <View style={styles.card}>
         <Text style={styles.text}>
@@ -221,15 +238,8 @@ export function ProjectOverview({ repoKey, onOpenArea, onShowAreas, styles }: { 
         {facts.libraries.length > 0 ? (
           <>
             <Text style={styles.faint}>Most used libraries, by files that use them</Text>
-            <View style={styles.wrap}>
-              {facts.libraries.map((library) => (
-                <View key={library.name} style={styles.chip}>
-                  <Text style={styles.chipText}>
-                    {library.name} <Text style={styles.faint}>{library.files}</Text>
-                  </Text>
-                </View>
-              ))}
-            </View>
+            {/* Plain text, not chips: these are facts, not buttons. */}
+            <Text style={styles.text}>{facts.libraries.map((library) => `${library.name} ${library.files}`).join(" · ")}</Text>
           </>
         ) : null}
       </View>
@@ -406,14 +416,7 @@ export function AreaPage({ repoKey, path, onOpenArea, onBack, styles, onExplain 
               <SectionTitle label="Recent work here" styles={styles} />
               <View style={styles.card}>
                 {data.tasks.map((task) => (
-                  <View key={task.id} style={{ gap: 2 }}>
-                    <Text style={styles.text} numberOfLines={1}>
-                      {task.generatedTitle ?? task.title}
-                    </Text>
-                    <Text style={styles.faint} numberOfLines={1}>
-                      {ago(task.endedAt)} · {task.files.slice(0, 3).join(", ")}
-                    </Text>
-                  </View>
+                  <TaskRow key={task.id} task={task} styles={styles} />
                 ))}
               </View>
             </>
@@ -423,5 +426,31 @@ export function AreaPage({ repoKey, path, onOpenArea, onBack, styles, onExplain 
         <Text style={styles.muted}>Reading the area</Text>
       ) : null}
     </>
+  );
+}
+
+// One finished task: what it was, how it ended, and the files it changed. Used wherever tasks are
+// listed, so they read the same everywhere.
+export function TaskRow({ task, styles }: { task: Pick<TaskSummary, "title" | "generatedTitle" | "outcome" | "endedAt" | "files"> & Partial<Pick<TaskSummary, "summary" | "provider" | "needsCheck">>; styles: Styles }) {
+  return (
+    <View style={{ gap: 2, paddingVertical: 4 }}>
+      <View style={styles.row}>
+        <Text style={[styles.text, styles.grow]} numberOfLines={1}>
+          {task.generatedTitle ?? task.title}
+        </Text>
+        <Text style={task.outcome === "completed" ? styles.faint : styles.warning}>{task.outcome}</Text>
+      </View>
+      {task.summary ? (
+        <Text style={styles.muted} numberOfLines={3}>
+          {task.summary}
+        </Text>
+      ) : null}
+      <Text style={styles.faint} numberOfLines={1}>
+        {ago(task.endedAt)}
+        {task.provider ? ` · ${task.provider}` : ""}
+        {task.files.length > 0 ? ` · ${task.files.slice(0, 3).join(", ")}${task.files.length > 3 ? `, +${task.files.length - 3}` : ""}` : ""}
+        {task.needsCheck ? <Text style={styles.warning}> · needs check</Text> : null}
+      </Text>
+    </View>
   );
 }

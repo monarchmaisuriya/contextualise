@@ -147,8 +147,10 @@ export function renderTerminal(terminal: { name: string; cwd: string }, workspac
   const reserved = head.length + 2 * fence.length + 80;
   const kept: string[] = [];
   let used = reserved;
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    const line = redactSecrets(lines[i].replace(/\s+$/, ""));
+  // Redacted as one text, so a secret that spans lines (a private key) is removed whole.
+  const redacted = redactSecrets(lines.map((line) => line.replace(/\s+$/, "")).join("\n")).split("\n");
+  for (let i = redacted.length - 1; i >= 0; i -= 1) {
+    const line = redacted[i];
     if (used + line.length + 1 > maxChars) break;
     kept.unshift(line);
     used += line.length + 1;

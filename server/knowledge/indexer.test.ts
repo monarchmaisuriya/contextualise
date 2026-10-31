@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { indexRepo, trackedBlobs } from "./indexer";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { currentBlobs, indexRepo, trackedBlobs } from "./indexer";
 import { KnowledgeStore } from "./store";
 import { SymbolReader } from "./symbols";
 
@@ -83,5 +83,96 @@ describe("indexRepo", () => {
     write("package.json", '{"name":"x"}\n');
     const expected = execFileSync("git", ["-C", top, "hash-object", "package.json"], { encoding: "utf8" }).trim();
     expect((await trackedBlobs(top)).get("package.json")).toBe(expected);
+  });
+
+  it("indexes only plain files: committed links (to a file outside the repo, or to a folder) and submodules are skipped", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "contextualise-outside-"));
+    writeFileSync(join(outside, "private.md"), "# Private\nouter-secret-words\n");
+    symlinkSync(join(outside, "private.md"), join(top, "notes.md"));
+    symlinkSync(".", join(top, "loop.md"));
+    // A submodule: another repository committed as a gitlink, then moved to a new commit.
+    const sub = join(top, "lib");
+    execFileSync("git", ["init", "-q", sub]);
+    writeFileSync(join(sub, "README.md"), "# Lib\n");
+    execFileSync("git", ["-C", sub, "add", "-A"]);
+    execFileSync("git", ["-C", sub, "-c", "user.email=a@example.com", "-c", "user.name=a", "commit", "-q", "-m", "one"]);
+    commit();
+    writeFileSync(join(sub, "README.md"), "# Lib moved\n");
+    execFileSync("git", ["-C", sub, "-c", "user.email=a@example.com", "-c", "user.name=a", "commit", "-q", "-am", "two"]);
+    try {
+      await index();
+      expect(store.search("outer secret words", { kinds: [], limit: 5 })).toEqual([]);
+      expect([...store.indexedSources().keys()]).not.toEqual(expect.arrayContaining(["notes.md", "loop.md", "lib"]));
+      expect(store.indexedSources().has("ARCHITECTURE.md")).toBe(true);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("currentBlobs in a folder outside git", () => {
+  let folder: string;
+  const write = (path: string, text: string) => {
+    mkdirSync(dirname(join(folder, path)), { recursive: true });
+    writeFileSync(join(folder, path), text);
+  };
+
+  beforeEach(() => {
+    folder = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-folder-")));
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(folder, { recursive: true, force: true });
+  });
+
+  it("takes only the tracked files of a repository inside the folder, so what it ignores stays out", async () => {
+    write("notes.md", "# Notes\n");
+    write("app/.gitignore", "venv/\n");
+    write("app/src/main.py", "def main():\n    pass\n");
+    write("app/venv/lib/site.py", "def vendored():\n    pass\n");
+    execFileSync("git", ["init", "-q", join(folder, "app")]);
+    execFileSync("git", ["-C", join(folder, "app"), "add", "-A"]);
+    const blobs = await currentBlobs({ key: "folder/work", top: folder, git: false });
+    expect([...blobs.keys()].sort()).toEqual(["app/.gitignore", "app/src/main.py", "notes.md"]);
+    expect(blobs.get("app/src/main.py")).toMatch(/^stat:\d+:\d+$/);
+  });
+
+  it("never runs a command a repository's own git config names (fsmonitor, clean filter)", async () => {
+    const marker = join(folder, "ran");
+    write("hook.sh", `#!/bin/sh\necho ran >> "${marker}"\ncat\n`);
+    chmodSync(join(folder, "hook.sh"), 0o755);
+    write("app/.gitattributes", "*.txt filter=probe\n");
+    write("app/a.txt", "one\n");
+    execFileSync("git", ["init", "-q", join(folder, "app")]);
+    execFileSync("git", ["-C", join(folder, "app"), "add", "-A"]);
+    execFileSync("git", ["-C", join(folder, "app"), "config", "core.fsmonitor", join(folder, "hook.sh")]);
+    execFileSync("git", ["-C", join(folder, "app"), "config", "filter.probe.clean", join(folder, "hook.sh")]);
+    write("app/a.txt", "two\n");
+    expect([...(await currentBlobs({ key: "folder/work", top: folder, git: false })).keys()]).toContain("app/a.txt");
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("does not treat a linked .git as a repository", async () => {
+    const other = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-other-")));
+    try {
+      execFileSync("git", ["init", "-q", other]);
+      mkdirSync(join(folder, "linked"));
+      symlinkSync(join(other, ".git"), join(folder, "linked", ".git"));
+      write("linked/notes.md", "# Notes\n");
+      const blobs = await currentBlobs({ key: "folder/work", top: folder, git: false });
+      expect([...blobs.keys()]).toEqual(["linked/notes.md"]);
+    } finally {
+      rmSync(other, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves out a repository git cannot read, says so, and still lists the rest", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    write("notes.md", "# Notes\n");
+    write("broken/.git", "not a git folder\n");
+    write("broken/src/main.py", "x = 1\n");
+    const blobs = await currentBlobs({ key: "folder/work", top: folder, git: false });
+    expect([...blobs.keys()]).toEqual(["notes.md"]);
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("broken"));
   });
 });

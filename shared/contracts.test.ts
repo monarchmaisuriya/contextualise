@@ -12,7 +12,9 @@ test("several tags split on commas, collapse duplicates, and refuse empty or too
 test("links accept web addresses only", () => {
   expect(parseLinkUrl(" https://example.com/a?b=1#c ")).toBe("https://example.com/a?b=1#c");
   expect(parseLinkUrl("http://localhost:3000/x")).toBe("http://localhost:3000/x");
-  for (const bad of ["javascript:alert(1)", "file:///etc/passwd", "ftp://example.com", "example.com", "https://", "https://exa mple.com"]) expect(() => parseLinkUrl(bad), bad).toThrow();
+  for (const bad of ["javascript:alert(1)", "file:///etc/passwd", "ftp://example.com", "example.com", "https://", "https://exa mple.com", "https://exa^mple.com", "https://a.b:99999", "https://a.b:1:2", "https://[x.y"]) expect(() => parseLinkUrl(bad), bad).toThrow();
+  // Whatever the check lets through, the URL class can parse.
+  for (const good of ["https://example.com/a?b=1#c", "http://localhost:3000/x", "https://sub.example-site.co.uk:8443/p", "http://10.0.0.1/x", "https://bücher.de/x"]) expect(() => new URL(parseLinkUrl(good)), good).not.toThrow();
 });
 
 test("/tag-link takes the URL first and the rest as the tag", () => {

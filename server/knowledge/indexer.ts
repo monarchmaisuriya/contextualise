@@ -1,9 +1,10 @@
-import { readFile, stat } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 import type { KnowledgeKind } from "../../shared/knowledge";
 import { redactSecrets } from "../secrets";
 import { git, type ProjectRoot } from "./git";
-import { folderSignatures } from "./walk";
+import { readProjectFile } from "./files";
+import { folderSignatures, MAX_WALK_ENTRIES, statSignature } from "./walk";
 import { adrInfo, type AdrInfo, chunkMarkdown, classify, type ClassifyOptions } from "./sources";
 import type { KnowledgeStore } from "./store";
 import type { CodeSymbol, ParsedCode, SymbolReader } from "./symbols";
@@ -22,14 +23,26 @@ export interface IndexChange {
 }
 
 // Every tracked file and its blob id: from the index for unchanged files, and from `git hash-object`
-// for files edited in the work tree, so an edit is indexed before it is committed.
-export async function trackedBlobs(top: string): Promise<Map<string, string>> {
+// for files edited in the work tree, so an edit is indexed before it is committed. Only plain files
+// count: symbolic links (mode 120000) point outside what the repository holds, and submodules
+// (160000) are other repositories that `git hash-object` cannot hash.
+const PLAIN_FILE_MODES = new Set(["100644", "100755"]);
+
+// The plain files git's index lists, with their staged blob ids. Reads the index only: no command a
+// repository's config names (filters, fsmonitor) runs.
+async function indexedFiles(top: string): Promise<Map<string, string>> {
   const blobs = new Map<string, string>();
   for (const entry of (await git(top, ["ls-files", "-s", "-z"], GIT_LIST_TIMEOUT_MS)).split("\0")) {
     const tab = entry.indexOf("\t");
     if (tab === -1) continue;
-    blobs.set(entry.slice(tab + 1), entry.slice(0, tab).split(" ")[1]);
+    const [mode, blob] = entry.slice(0, tab).split(" ");
+    if (PLAIN_FILE_MODES.has(mode)) blobs.set(entry.slice(tab + 1), blob);
   }
+  return blobs;
+}
+
+export async function trackedBlobs(top: string): Promise<Map<string, string>> {
+  const blobs = await indexedFiles(top);
   const edited: string[] = [];
   const status = (await git(top, ["status", "--porcelain", "-z", "--untracked-files=no", "--no-renames"], GIT_LIST_TIMEOUT_MS)).split("\0");
   for (const entry of status) {
@@ -40,15 +53,34 @@ export async function trackedBlobs(top: string): Promise<Map<string, string>> {
     else if (entry[1] === "M" || entry[1] === "T") edited.push(path);
   }
   if (edited.length > 0) {
-    const hashes = (await git(top, ["hash-object", "--", ...edited], GIT_LIST_TIMEOUT_MS)).split("\n");
+    const hashes = (await git(top, ["hash-object", "--no-filters", "--", ...edited], GIT_LIST_TIMEOUT_MS)).split("\n");
     edited.forEach((path, index) => blobs.set(path, hashes[index]));
   }
   return blobs;
 }
 
 // What each file is now: git's blob ids in a repository, change signatures in a folder outside git.
-export function currentBlobs(project: ProjectRoot): Promise<Map<string, string>> {
-  return project.git ? trackedBlobs(project.top) : folderSignatures(project.top);
+// A repository inside such a folder adds only the files its index lists, so what it ignores (virtual
+// environments, build output) stays out; their signatures come from the files themselves, as for the
+// rest of the folder. Only its index is read: the folder may hold copied repositories whose config
+// names commands (`git status` runs content filters), so none of their git runs. One git cannot read
+// is left out and logged.
+export async function currentBlobs(project: ProjectRoot): Promise<Map<string, string>> {
+  if (project.git) return trackedBlobs(project.top);
+  const { files, repos } = await folderSignatures(project.top);
+  for (const repo of repos) {
+    if (files.size >= MAX_WALK_ENTRIES) break;
+    const tracked = await indexedFiles(join(project.top, repo)).catch((error: unknown) => {
+      console.error(`[contextualise] left ${repo} out of the index of ${project.top}: git could not list its files: ${String(error)}`);
+      return new Map<string, string>();
+    });
+    for (const path of tracked.keys()) {
+      if (files.size >= MAX_WALK_ENTRIES) break;
+      const info = await lstat(join(project.top, repo, path)).catch(() => null);
+      if (info?.isFile()) files.set(`${repo}/${path}`, statSignature(info));
+    }
+  }
+  return files;
 }
 
 export interface IndexerOptions {
@@ -86,10 +118,16 @@ export async function indexRepo(repo: ProjectRoot, store: KnowledgeStore, option
   for (const [path, kind] of wanted) {
     const blob = blobs.get(path) as string;
     if (indexed.get(path)?.blob === blob && indexed.get(path)?.kind === kind) continue;
-    const file = join(repo.top, path);
-    const size = await stat(file).then((info) => info.size, () => -1);
-    if (size < 0 || size > (options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES)) continue;
-    const text = redactSecrets(await readFile(file, "utf8"));
+    const raw = await readProjectFile(repo.top, path, options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES);
+    if (raw === null) {
+      // Too large now, or no longer a regular file: what was indexed from it is no longer true.
+      if (indexed.has(path)) {
+        changes.push({ path, kind: indexed.get(path)?.kind ?? kind, deleted: true, removedSymbols: store.symbolsIn(path), addedSymbols: [], adrBefore: store.sourceStatus(path), adrAfter: null });
+        store.removeSource(path);
+      }
+      continue;
+    }
+    const text = redactSecrets(raw);
     const before = { symbols: store.symbolsIn(path), adr: kind === "adr" ? store.sourceStatus(path) : null };
     if (kind === "code") {
       let parsed: ParsedCode;

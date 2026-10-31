@@ -7,7 +7,9 @@ import { addTagRpc, describeAgentRpc, listTagsRpc, parseTagNames, pinAgentRpc, r
 import { errorText } from "./errors";
 import { FetchForm } from "./fetch-form";
 import { ICONS } from "./icons";
-import { Button, Chip, IconButton, type Styles, TAGS_QUERY, useTagChange } from "./kit";
+import { Button, Chip, IconButton, SearchField, type Styles, TAGS_QUERY, useTagChange } from "./kit";
+
+const OTHERS_BEFORE_FILTER = 8;
 
 // One agent's tags, used by the composer pill's popover and the Tags screen opened for an agent:
 // its tags as chips to remove, every other tag as a chip to add, and a box for new names.
@@ -24,6 +26,7 @@ export function AgentTags({ agentId, fallbackWorkspaceId, styles, footer }: { ag
   const toast = useToast();
   const [names, setNames] = useState("");
   const [fetchOpen, setFetchOpen] = useState(false);
+  const [filter, setFilter] = useState("");
   const adding = useTagChange(
     (list: string[]) => {
       if (!workspaceId) throw new Error(agent ? "Paseo has no workspace for this agent, so it cannot be tagged" : "Still loading this agent; try again in a moment");
@@ -38,7 +41,10 @@ export function AgentTags({ agentId, fallbackWorkspaceId, styles, footer }: { ag
     toast.show(result.pinned ? "Pinned: this agent comes first in Attach > Agent conversation" : "Unpinned", { variant: "success" }),
   );
   const mine = tags.filter((tag) => tag.agents.some((member) => member.agentId === agentId));
-  const others = tags.filter((tag) => !mine.includes(tag)).slice(0, 24);
+  const allOthers = tags.filter((tag) => !mine.includes(tag));
+  // Past a handful of tags, a filter beats scanning chips.
+  const filtering = allOthers.length > OTHERS_BEFORE_FILTER;
+  const others = allOthers.filter((tag) => !filtering || tag.name.toLowerCase().includes(filter.trim().toLowerCase())).slice(0, 24);
   const submit = () => {
     try {
       adding.mutate(parseTagNames(names));
@@ -61,6 +67,7 @@ export function AgentTags({ agentId, fallbackWorkspaceId, styles, footer }: { ag
           styles={styles}
         />
       </View>
+      {filtering ? <SearchField value={filter} onChange={setFilter} placeholder={`Filter ${allOthers.length} other tags`} label="Filter other tags" styles={styles} /> : null}
       {mine.length + others.length > 0 ? (
         <View style={styles.wrap}>
           {mine.map((tag) => (
