@@ -1,4 +1,4 @@
-import type { TagSummary } from "../shared/contracts";
+import type { AgentLive, TagSummary } from "../shared/contracts";
 import { plural } from "./plural";
 
 export type Sort = "recent" | "name" | "size";
@@ -45,4 +45,23 @@ export function popoverTags(tags: readonly TagSummary[], agentId: string, typed:
   const mine = tags.filter((tag) => tag.agents.some((member) => member.agentId === agentId));
   const others = tags.filter((tag) => !mine.includes(tag) && tag.name.toLowerCase().includes(wanted)).slice(0, OTHER_TAGS_SHOWN);
   return { mine, others };
+}
+
+// What a tag's agents are doing now: how many need M and how many run, for the tag's line. Empty
+// when none is live, so the line says what it said before.
+export function liveLine(tag: Pick<TagSummary, "agents">): string {
+  const live = tag.agents.flatMap((agent) => (agent.live ? [agent.live] : []));
+  const needsYou = live.filter((agent) => agent.needsYou === "permission" || agent.needsYou === "error").length;
+  const running = live.filter((agent) => agent.status === "running").length;
+  return [...(needsYou > 0 ? [`${needsYou} need${needsYou === 1 ? "s" : ""} you`] : []), ...(running > 0 ? [`${running} running`] : [])].join(" · ");
+}
+
+// One agent's state in words, most urgent first, as Paseo's sidebar orders them; null when idle.
+export function agentStatus(live: AgentLive | undefined): { text: string; urgent: boolean } | null {
+  if (!live) return null;
+  if (live.needsYou === "permission") return { text: "needs permission", urgent: true };
+  if (live.needsYou === "error") return { text: "stopped with an error", urgent: true };
+  if (live.status === "running") return { text: "running", urgent: false };
+  if (live.needsYou === "finished") return { text: "finished, not looked at", urgent: false };
+  return null;
 }

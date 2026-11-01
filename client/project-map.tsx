@@ -101,17 +101,6 @@ function AreaRows({ areas, lines, busy, onOpenArea, styles }: { areas: Area[]; l
   });
 }
 
-// The overview's areas: the biggest few, and the way to all of them.
-export function AreasSection({ facts, lines, busy, limit, onOpenArea, onShowAll, styles }: { facts: ProjectFacts; lines: Record<string, string>; busy: Busy; limit: number; onOpenArea(path: string): void; onShowAll(): void; styles: Styles }) {
-  return (
-    <>
-      <SectionHeader label="Areas" count={facts.areas.length} action={facts.areas.length > limit ? { label: "Show all", onPress: onShowAll } : undefined} styles={styles} />
-      {facts.areas.length === 0 ? <Text style={[styles.muted, { paddingHorizontal: 12 }]}>No folders of code found yet.</Text> : null}
-      <AreaRows areas={facts.areas.slice(0, limit)} lines={lines} busy={busy.files} onOpenArea={onOpenArea} styles={styles} />
-    </>
-  );
-}
-
 // Files changed most lately; a file in an area opens that area. `busy`: the project's history, whose
 // state the section explains; left out for one area's files.
 export function BusySection({ busy, files, limit, showArea, onOpenArea, styles }: { busy?: Busy; files: BusyFile[]; limit?: number; showArea: boolean; onOpenArea(path: string): void; styles: Styles }) {

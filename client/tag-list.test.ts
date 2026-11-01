@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { TagSummary } from "../shared/contracts";
-import { filterPlaceholder, filterTags, popoverTags, selectedTag, sortTags } from "./tag-list";
+import { agentStatus, filterPlaceholder, filterTags, liveLine, popoverTags, selectedTag, sortTags } from "./tag-list";
 
 const tag = (name: string, agents: number, notes = 0): TagSummary => ({
   key: name,
@@ -53,3 +53,14 @@ test("the popover field filters other tags by the name being typed and never hid
   expect(mineOf("zzz").mine.map((t) => t.name)).toEqual(["auth"]);
   expect(popoverTags(Array.from({ length: 30 }, (_, i) => tag(`t${i}`, 0)), "x", "").others).toHaveLength(24);
 });
+
+test("a tag's line counts the agents that need M and those running; an agent's status says the most urgent", () => {
+  const member = (live?: { status: string | null; needsYou: "permission" | "error" | "finished" | null }) => ({ agentId: "a", workspaceId: "w", taggedAt: "", title: null, provider: null, workspaceName: null, state: "active" as const, ...(live ? { live: { ...live, updatedAt: null } } : {}) });
+  expect(liveLine({ agents: [member({ status: "running", needsYou: "permission" }), member({ status: "running", needsYou: null }), member({ status: "error", needsYou: "error" }), member()] })).toBe("2 need you · 2 running");
+  expect(liveLine({ agents: [member({ status: "idle", needsYou: null }), member()] })).toBe("");
+  expect(agentStatus({ status: "running", needsYou: "permission", updatedAt: null })).toEqual({ text: "needs permission", urgent: true });
+  expect(agentStatus({ status: "idle", needsYou: "finished", updatedAt: null })).toEqual({ text: "finished, not looked at", urgent: false });
+  expect(agentStatus({ status: "idle", needsYou: null, updatedAt: null })).toBeNull();
+  expect(agentStatus(undefined)).toBeNull();
+});
+

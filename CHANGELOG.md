@@ -2,6 +2,23 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.21.0 - 2026-11-01
+
+### Changed
+
+- Project knowledge opens on what to know now instead of lists of equal weight:
+  - **Needs you:** agents in the project waiting on a permission or stopped with an error (tap to open the agent), then tasks that failed in the last 48 hours unless the same agent finished one since.
+  - **Pulse** over 7, 30, or 90 days: four tiles (agents running and waiting for you; agent tasks done and failed; commits and files changed; hot files without tests) and bars of agent tasks and commits per day, in your time zone. The window is remembered.
+  - **Risky to change:** code changed in the window, ranked by changes times the files that use it, with its tests; tap a file for what it imports, what uses it, and its tests.
+  - **Start here:** the README and the most used files.
+  - Recent work, About, and What agents get follow. Main areas moved to the Areas view; "Busy lately" is replaced by Risky to change.
+- Agents' states on Project knowledge refresh every 15 seconds; the rest loads when the screen opens.
+- The Tags screen shows what each tag's agents are doing now ("1 needs you · 2 running"), and each agent whether it needs a permission, stopped with an error, is running, or finished a turn not yet looked at. The screen refreshes every 10 seconds while open.
+
+### Added
+
+- Commit counts per day read every commit's time in the last 90 days (up to 20,000) with a separate, cheap `git log`; counts cut at a limit show "+".
+
 ## 0.20.0 - 2026-11-01
 
 ### Added

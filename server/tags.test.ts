@@ -13,7 +13,7 @@ test("a workspace label and an agent tag with the same name are one tag, named a
   expect(tags).toHaveLength(1);
   expect(tags[0]).toMatchObject({ key: "auth rewrite", name: "Auth Rewrite", hasWorkspaceLabel: true });
   expect(tags[0].workspaces).toEqual([{ workspaceId: "w1", name: "ws-w1", projectName: "payments", directory: "/src/payments/w1" }]);
-  expect(tags[0].agents).toEqual([{ agentId: "a1", workspaceId: "w9", taggedAt: "2026-10-27T10:00:00Z", title: "Fix login", provider: "claude", workspaceName: null, state: "active" }]);
+  expect(tags[0].agents).toEqual([{ agentId: "a1", workspaceId: "w9", taggedAt: "2026-10-27T10:00:00Z", title: "Fix login", provider: "claude", workspaceName: null, state: "active", live: { status: null, needsYou: null, updatedAt: null } }]);
   expect(tags[0].links).toEqual([{ url: "https://e.com/", title: "Spec", taggedAt: "2026-10-27T11:00:00Z" }]);
 });
 
@@ -81,9 +81,16 @@ test("tagged and pinned agents carry their current workspace's name", () => {
   expect(mergePins([{ agentId: "a1", pinnedAt: "t" }], directory)[0].workspaceName).toBe("ws-w2");
 });
 
-test("one agent is described from the directory, or as missing", () => {
-  const directory = { workspaces: [workspace("w1", [])], agents: [{ id: "a1", title: "Fix login", provider: "claude", workspaceId: "w1" }] };
-  expect(describeAgent(directory, "a1")).toEqual({ agentId: "a1", title: "Fix login", provider: "claude", workspaceId: "w1", workspaceName: "ws-w1", state: "active" });
+test("one agent is described from the directory with what it is doing now, or as missing", () => {
+  const directory = {
+    workspaces: [workspace("w1", [])],
+    agents: [
+      { id: "a1", title: "Fix login", provider: "claude", workspaceId: "w1", status: "running", updatedAt: "2026-11-01T10:00:00Z", pendingPermissions: [{ id: "p" }] },
+      { id: "a2", title: "Old", provider: "codex", workspaceId: "w1", archivedAt: "2026-10-01T00:00:00Z", status: "closed" },
+    ],
+  };
+  expect(describeAgent(directory, "a1")).toEqual({ agentId: "a1", title: "Fix login", provider: "claude", workspaceId: "w1", workspaceName: "ws-w1", state: "active", live: { status: "running", needsYou: "permission", updatedAt: "2026-11-01T10:00:00Z" } });
+  expect(describeAgent(directory, "a2")).not.toHaveProperty("live");
   expect(describeAgent(directory, "gone")).toEqual({ agentId: "gone", title: null, provider: null, workspaceId: null, workspaceName: null, state: "missing" });
 });
 

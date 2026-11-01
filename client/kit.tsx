@@ -54,6 +54,7 @@ export type Styles = ReturnType<typeof useStyles>;
 export { plural };
 export { Button, Chip, CopyButton, IconButton, SearchField, Segmented, Toggle } from "./parts/controls";
 export { ListRow, type ListRowProps, Page, Prose, SectionHeader } from "./parts/list";
+export { DayBars, Tile } from "./parts/tiles";
 export { ActionSheet, ReaderSheet, type ReaderSheetProps, type SheetAction, StateView, useActionSheet, type ViewState } from "./parts/sheets";
 
 export function summary(tag: TagSummary): string {

@@ -24,6 +24,8 @@ describe("contributeKnowledge", () => {
   const on = new Map<string, Handler[]>();
   const respondToPermission = vi.fn(async () => {});
   const workspaceEntries: { id: string; workspaceDirectory: string }[] = [];
+  const agentEntries: { agent: Record<string, unknown> }[] = [];
+  let agentsDown = false;
   const timeline = [
     { item: { type: "user_message", text: "Document the queue" }, timestamp: "2026-10-29T10:00:00.000Z" },
     { item: { type: "tool_call", name: "edit", status: "completed", detail: { type: "edit", filePath: "README.md" } }, timestamp: "2026-10-29T10:01:00.000Z" },
@@ -31,7 +33,13 @@ describe("contributeKnowledge", () => {
   const paseo = {
     config: { get: async () => ({ requestId: "r", config: { plugins } }) },
     workspaces: { list: async () => ({ entries: workspaceEntries, pageInfo: { hasMore: false, nextCursor: null } }) },
-    agents: { ref: () => ({ respondToPermission, timeline: { refetch: async () => ({ entries: timeline, hasOlder: false, startCursor: null }) } }) },
+    agents: {
+      list: async () => {
+        if (agentsDown) throw new Error("daemon busy");
+        return { entries: agentEntries, pageInfo: { hasMore: false, nextCursor: null } };
+      },
+      ref: () => ({ respondToPermission, timeline: { refetch: async () => ({ entries: timeline, hasOlder: false, startCursor: null }) } }),
+    },
   };
   const create = (cwd: string, config: Record<string, unknown> = {}) =>
     (before.get("agent.create") as (input: unknown, context: unknown) => Promise<{ config: { systemPrompt?: string; mcpServers: Record<string, unknown> } }>)({ request: { config: { provider: "claude", cwd, ...config } } }, { paseo });
@@ -99,6 +107,36 @@ describe("contributeKnowledge", () => {
     const { projects } = (await call("knowledge.projects", {})) as { projects: { repoKey: string }[] };
     expect(await call("knowledge.project-for", { workspaceId: "w1" })).toEqual({ repoKey: projects[0].repoKey });
     await expect(call("knowledge.project-for", { workspaceId: "gone" })).rejects.toThrow(/no workspace gone/);
+  });
+
+  it("answers a project's pulse: its live agents and what waits for M, and its commits in the viewer's days", async () => {
+    await create(top);
+    execFileSync("git", ["-C", top, "-c", "user.email=dev@example.com", "-c", "user.name=dev", "commit", "-q", "-m", "Start"]);
+    const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-plugin-other-")));
+    agentEntries.splice(
+      0,
+      agentEntries.length,
+      { agent: { id: "a1", title: "Asks", cwd: top, status: "running", pendingPermissions: [{ id: "p" }] } },
+      { agent: { id: "a2", title: "Works", cwd: top, status: "running", pendingPermissions: [] } },
+      { agent: { id: "a3", title: "Elsewhere", cwd: elsewhere, status: "error", pendingPermissions: [] } },
+      { agent: { id: "a4", title: "Paseo's own", cwd: top, status: "error", internal: true } },
+    );
+    try {
+      const call = (name: string, input: unknown) => (rpcs.get(name) as (input: unknown, context: unknown) => Promise<unknown>)(input, { paseo });
+      const { projects } = (await call("knowledge.projects", {})) as { projects: { repoKey: string }[] };
+      const input = { repoKey: projects[0].repoKey, days: 7, utcOffsetMinutes: 330 };
+      expect(await call("knowledge.agents-now", { repoKey: projects[0].repoKey })).toMatchObject({ available: true, running: 2, needsYou: 1, finished: 0, waiting: [{ kind: "agent", agentId: "a1", reason: "permission" }] });
+      expect(await call("knowledge.pulse", input)).toMatchObject({ failures: [], agentWork: { done: 0, failed: 0, perDay: { counts: [0, 0, 0, 0, 0, 0, 0] } }, readme: "README.md" });
+      expect(await call("knowledge.changes", input)).toMatchObject({ available: true, commits: 1, commitsTruncated: false, filesChanged: 2, perDay: { counts: [0, 0, 0, 0, 0, 0, 1] } });
+      // The agent list failing says so in the agents part; the rest of the pulse still answers.
+      agentsDown = true;
+      expect(await call("knowledge.agents-now", { repoKey: projects[0].repoKey })).toMatchObject({ available: false, problem: "Could not read Paseo's agents: daemon busy", waiting: [] });
+      expect(await call("knowledge.pulse", input)).toMatchObject({ readme: "README.md" });
+    } finally {
+      agentsDown = false;
+      agentEntries.splice(0);
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
   });
 
   it("asks for the knowledge tools to load upfront, so agents need no tool search before the first call", async () => {

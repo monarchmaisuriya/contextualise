@@ -3,7 +3,8 @@ import { type Busy, busySchema, type FileConnections, type KnowledgeEntry, type 
 import type { KnowledgeBase } from "./base";
 import { AREA_PREFIX, areaOf, factsAreCurrent, factsFor, goPackage, isTestFile } from "./facts";
 import type { ProjectRoot } from "./git";
-import { BUSY_DAYS, recentChanges } from "./history";
+import { BUSY_DAYS, type ChangeHistory, recentChanges } from "./history";
+import { ATTENTION_MS, hotspots, perDay, recentFailures } from "./pulse";
 import type { KnowledgeStore, TaskRecord } from "./store";
 import { anyGlob } from "./globs";
 import { taskNeedsCheck } from "./task-log";
@@ -16,6 +17,7 @@ const BUSY_REFRESH_MS = 10 * 60_000;
 const AREA_BUSY = 8;
 const AREA_DOCUMENTS = 10;
 const AREA_TASKS = 5;
+const START_HERE = 3;
 // Linked files listed by name; longer lists say how many more there are.
 const CONNECTIONS_SHOWN = 20;
 const IMPACT_SHOWN = 30;
@@ -207,14 +209,15 @@ export class KnowledgeService {
     const cached = kept ? busySchema.safeParse(JSON.parse(kept)) : null;
     if (cached?.success && this.now() - Date.parse(cached.data.at) < BUSY_REFRESH_MS) return cached.data;
     const at = new Date(this.now()).toISOString();
+    const none: ChangeHistory = { files: [], filesChanged: { week: 0, month: 0, quarter: 0 }, filesTruncated: false, commits: [], commitsTruncated: false };
     let busy: Busy;
-    if (!repo.git) busy = { at, days: BUSY_DAYS, available: false, problem: null, files: [] };
+    if (!repo.git) busy = { at, days: BUSY_DAYS, available: false, problem: null, ...none };
     else {
       try {
-        busy = { at, days: BUSY_DAYS, available: true, problem: null, files: await recentChanges(repo.top) };
+        busy = { at, days: BUSY_DAYS, available: true, problem: null, ...(await recentChanges(repo.top, Math.floor(this.now() / 1000))) };
       } catch (error) {
         console.error(`[contextualise] could not read the change history of ${repo.key}: ${String(error)}`);
-        busy = { at, days: BUSY_DAYS, available: false, problem: `Could not read the change history: ${error instanceof Error ? error.message : String(error)}`, files: [] };
+        busy = { at, days: BUSY_DAYS, available: false, problem: `Could not read the change history: ${error instanceof Error ? error.message : String(error)}`, ...none };
       }
     }
     store.setMeta("busy", JSON.stringify(busy));
@@ -227,22 +230,82 @@ export class KnowledgeService {
     return Object.fromEntries(facts.areas.filter((area) => typeof kept[area.path] === "string").map((area) => [area.path, kept[area.path]]));
   }
 
+  // The part of the pulse that needs no git: agent work in the window, tasks that failed lately, and
+  // the most used files to start reading from.
+  async pulse(repo: ProjectRoot, days: 7 | 30 | 90, utcOffsetMinutes: number) {
+    const { store, facts } = await this.withFacts(repo);
+    const now = this.now();
+    const empty = perDay([], days, now, utcOffsetMinutes);
+    const firstMs = Date.parse(`${empty.firstDay}T00:00:00Z`) - utcOffsetMinutes * 60_000;
+    const tasks = store.tasksSince(new Date(Math.min(firstMs, now - ATTENTION_MS)).toISOString());
+    const inWindow = tasks.filter((task) => Date.parse(task.endedAt) >= firstMs);
+    const count = (outcome: string) => inWindow.filter((task) => task.outcome === outcome).length;
+    const candidates = unique(facts.areas.flatMap((area) => area.mainFiles.map((file) => file.path)));
+    const startHere = candidates
+      .map((path) => ({ path, usedBy: usersOf(store, [path]).length, area: areaOf(path, facts) }))
+      .filter((file) => file.usedBy > 0)
+      .sort((a, b) => b.usedBy - a.usedBy || a.path.localeCompare(b.path))
+      .slice(0, START_HERE);
+    return {
+      failures: recentFailures(tasks.map((task) => ({ id: task.id, agentId: task.agentId, title: task.generatedTitle ?? task.title, outcome: task.outcome, endedAt: task.endedAt })), now),
+      agentWork: { done: count("completed"), failed: count("failed"), canceled: count("canceled"), perDay: perDay(inWindow.map((task) => Date.parse(task.endedAt)), days, now, utcOffsetMinutes) },
+      startHere,
+      readme: store.sourceStatus("README.md") ? "README.md" : null,
+      analysed: facts.codeFiles + facts.testFiles > 0,
+    };
+  }
+
+  // The part of the pulse that reads git: commits and files changed in the window, and hot files.
+  async changes(repo: ProjectRoot, days: 7 | 30 | 90, utcOffsetMinutes: number) {
+    const { facts, busy } = await this.withHistory(repo);
+    const store = await this.base.open(repo);
+    const testedAreas = new Set(facts.areas.filter((area) => area.tests > 0).map((area) => area.path));
+    const ranked = hotspots({
+      files: busy.files,
+      days,
+      isCode: (path) => !isTestFile(path) && store.isCode(path),
+      usedBy: (path) => usersOf(store, [path]).length,
+      tests: (path) => testsOf(store, [path]).length,
+      areaOf: (path) => areaOf(path, facts),
+      areaHasTests: (area) => area !== null && testedAreas.has(area),
+    });
+    const commits = perDay(busy.commits.map((at) => at * 1000), days, this.now(), utcOffsetMinutes);
+    return {
+      available: busy.available,
+      problem: busy.problem,
+      commits: commits.counts.reduce((sum, value) => sum + value, 0),
+      commitsTruncated: busy.commitsTruncated,
+      filesChanged: days === 7 ? busy.filesChanged.week : days === 30 ? busy.filesChanged.month : busy.filesChanged.quarter,
+      filesTruncated: busy.filesTruncated,
+      perDay: commits,
+      ...ranked,
+      analysed: facts.codeFiles + facts.testFiles > 0,
+    };
+  }
+
   // The project's structure alone, without change history: for callers that need no git.
   async structure(repo: ProjectRoot): Promise<ProjectFacts> {
     return (await this.withFacts(repo)).facts;
   }
 
-  async facts(repo: ProjectRoot): Promise<{ facts: ProjectFacts; busy: Busy; areaLines: Record<string, string> }> {
+  // Facts and the full change history, commit times included: for the server's own counts.
+  private async withHistory(repo: ProjectRoot): Promise<{ facts: ProjectFacts; busy: Busy; areaLines: Record<string, string> }> {
     const facts = await this.structure(repo);
     const store = await this.base.open(repo);
     const busy = await this.busy(repo, store);
     return { facts, busy: { ...busy, files: busy.files.map((file) => ({ ...file, area: areaOf(file.path, facts) })) }, areaLines: KnowledgeService.areaLines(store, facts) };
   }
 
+  // What the screen shows of the facts and history; commit times stay here, counted by the pulse.
+  async facts(repo: ProjectRoot): Promise<{ facts: ProjectFacts; busy: Omit<Busy, "commits">; areaLines: Record<string, string> }> {
+    const { busy: { commits: _commits, ...busy }, ...rest } = await this.withHistory(repo);
+    return { ...rest, busy };
+  }
+
   // One area: its facts, the areas it depends on and that use it, its busy files, and the documents
   // and recorded work in it.
   async area(repo: ProjectRoot, path: string) {
-    const { facts, busy, areaLines } = await this.facts(repo);
+    const { facts, busy, areaLines } = await this.withHistory(repo);
     const area = facts.areas.find((candidate) => candidate.path === path);
     if (!area) throw new Error(`Unknown area "${path}" in ${repo.key}; the project's areas may have changed, so open the overview again`);
     const store = await this.base.open(repo);

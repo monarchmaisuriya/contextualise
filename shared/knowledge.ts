@@ -106,9 +106,24 @@ export type ProjectFacts = z.infer<typeof projectFactsSchema>;
 // Files changed most in recent history; `available` is false outside git, and `problem` says why git
 // could not be read.
 // `area`: the area the file is in, or null for files outside every area (docs/ with no code).
-export const busyFileSchema = z.object({ path: z.string(), changes: z.number(), lastAt: z.string(), area: z.string().nullable() });
+// `changes` counts the last 90 days; `recent` the last 7 and 30.
+export const busyFileSchema = z.object({ path: z.string(), changes: z.number(), recent: z.object({ week: z.number(), month: z.number() }), lastAt: z.string(), area: z.string().nullable() });
 export type BusyFile = z.infer<typeof busyFileSchema>;
-export const busySchema = z.object({ at: z.string(), days: z.number(), available: z.boolean(), problem: z.string().nullable(), files: z.array(busyFileSchema) });
+// `commits`: every commit's time (epoch seconds) in the last 90 days, for counts by day in the
+// viewer's time zone. `filesChanged`: distinct files per window. A `...Truncated` flag says git's
+// output was cut at its limit, so the count is a floor. All fields are required, so a cache written
+// by an older version is read again rather than shown as zeros.
+export const busySchema = z.object({
+  at: z.string(),
+  days: z.number(),
+  available: z.boolean(),
+  problem: z.string().nullable(),
+  files: z.array(busyFileSchema),
+  filesChanged: z.object({ week: z.number(), month: z.number(), quarter: z.number() }),
+  filesTruncated: z.boolean(),
+  commits: z.array(z.number()),
+  commitsTruncated: z.boolean(),
+});
 export type Busy = z.infer<typeof busySchema>;
 
 export const projectSchema = z.object({
@@ -211,6 +226,84 @@ export const knowledgeUsageRpc = defineRpc({
   output: knowledgeUsageSchema,
 });
 
+// The days a project's pulse covers; tasks and commits are counted in the viewer's local days.
+export const PULSE_DAYS = [7, 30, 90] as const;
+const pulseInput = z.object({ repoKey: z.string(), days: z.union([z.literal(7), z.literal(30), z.literal(90)]), utcOffsetMinutes: z.number().int().min(-14 * 60).max(14 * 60) });
+// One count per local day, oldest first; `firstDay` is the first day's local date (YYYY-MM-DD).
+const perDaySchema = z.object({ firstDay: z.string(), counts: z.array(z.number().int().min(0)) });
+export type PerDay = z.infer<typeof perDaySchema>;
+
+export const attentionSchema = z.discriminatedUnion("kind", [
+  // An agent in this project waiting for M: a permission request or an error.
+  z.object({ kind: z.literal("agent"), agentId: z.string(), title: z.string(), reason: z.enum(["permission", "error"]), since: z.string().nullable() }),
+  // A task that failed lately, with no later completed task from the same agent.
+  z.object({ kind: z.literal("failed-task"), taskId: z.string(), agentId: z.string(), title: z.string(), endedAt: z.string() }),
+]);
+export type Attention = z.infer<typeof attentionSchema>;
+
+// The live agents in a project and those waiting for M. Cheap (no index, no git), so the screen polls it.
+export const knowledgeAgentsNowRpc = defineRpc({
+  name: "knowledge.agents-now",
+  input: z.object({ repoKey: z.string() }),
+  output: z.object({
+    // False when the daemon's agent list could not be read; `problem` says why.
+    available: z.boolean(),
+    problem: z.string().nullable(),
+    running: z.number().int(),
+    needsYou: z.number().int(),
+    finished: z.number().int(),
+    waiting: z.array(attentionSchema),
+  }),
+});
+
+// The part of a project's pulse that needs no git: agent work, recent failures, and where to start.
+export const knowledgePulseRpc = defineRpc({
+  name: "knowledge.pulse",
+  input: pulseInput,
+  output: z.object({
+    failures: z.array(attentionSchema),
+    agentWork: z.object({ done: z.number().int(), failed: z.number().int(), canceled: z.number().int(), perDay: perDaySchema }),
+    startHere: z.array(z.object({ path: z.string(), usedBy: z.number().int(), area: z.string().nullable() })),
+    readme: z.string().nullable(),
+    analysed: z.boolean(),
+  }),
+});
+
+export const hotspotSchema = z.object({
+  path: z.string(),
+  area: z.string().nullable(),
+  changes: z.number().int(),
+  usedBy: z.number().int(),
+  // Linked test files; null when the file's area has no linked tests, so "none" would not mean much.
+  tests: z.number().int().nullable(),
+});
+export type Hotspot = z.infer<typeof hotspotSchema>;
+
+// One code file's links, for a file row opened from the pulse.
+export const fileConnectionsRpc = defineRpc({
+  name: "knowledge.connections",
+  input: z.object({ repoKey: z.string(), path: z.string() }),
+  output: fileConnectionsSchema,
+});
+
+// The part of a project's pulse that reads git history: commits, files changed, and hot files.
+export const knowledgeChangesRpc = defineRpc({
+  name: "knowledge.changes",
+  input: pulseInput,
+  output: z.object({
+    available: z.boolean(),
+    problem: z.string().nullable(),
+    commits: z.number().int(),
+    commitsTruncated: z.boolean(),
+    filesChanged: z.number().int(),
+    filesTruncated: z.boolean(),
+    perDay: perDaySchema,
+    hotspots: z.array(hotspotSchema),
+    untested: z.number().int(),
+    analysed: z.boolean(),
+  }),
+});
+
 // The overview a new agent in the project gets, as the agent hook would build it from the current index (the hook re-reads changed files first), without its
 // markers. "off": knowledge or the project is switched off; "unavailable": the agent gets a one-line
 // notice instead; text is null when the overview is set to 0 lines.
@@ -235,7 +328,8 @@ export const projectFactsRpc = defineRpc({
   name: "knowledge.facts",
   input: z.object({ repoKey: z.string() }),
   // `areaLines`: one written line per area path, when an agent has written them.
-  output: z.object({ facts: projectFactsSchema, busy: busySchema, areaLines: z.record(z.string(), z.string()) }),
+  // Commit times stay on the server: the pulse counts them per day.
+  output: z.object({ facts: projectFactsSchema, busy: busySchema.omit({ commits: true }), areaLines: z.record(z.string(), z.string()) }),
 });
 
 export const areaRpc = defineRpc({

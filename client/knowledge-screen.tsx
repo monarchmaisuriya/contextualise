@@ -4,13 +4,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { snapshotSettings } from "../shared/contracts";
-import { BRIEF_ID, browseKnowledgeRpc, describeProjectRpc, explainAreaRpc, generateKnowledgeRpc, KIND_LABELS, type KnowledgeKind, knowledgeOverviewRpc, knowledgeUsageRpc, listProjectsRpc, listTasksRpc, pinEntryRpc, type Project, projectForWorkspaceRpc, readKnowledgeRpc, reindexRpc, type SearchHit, searchKnowledgeRpc, setProjectEnabledRpc } from "../shared/knowledge";
+import { BRIEF_ID, browseKnowledgeRpc, describeProjectRpc, explainAreaRpc, fileConnectionsRpc, generateKnowledgeRpc, KIND_LABELS, type KnowledgeKind, knowledgeOverviewRpc, knowledgeUsageRpc, listProjectsRpc, listTasksRpc, pinEntryRpc, type Project, projectForWorkspaceRpc, readKnowledgeRpc, reindexRpc, type SearchHit, searchKnowledgeRpc, setProjectEnabledRpc } from "../shared/knowledge";
 import { errorText } from "./errors";
 import { ICONS } from "./icons";
 import { ActionSheet, ago, Button, IconButton, ListRow, Page, plural, Prose, ReaderSheet, SearchField, SectionHeader, Segmented, StateView, type Styles, Toggle, useActionSheet, usePagedList, useStyles } from "./kit";
 import { entryMeta, glanceLine, readerBody } from "./knowledge/text";
 import { memoriseNote } from "./memorise-note";
-import { AreaPage, AreasSection, AreasView, BusySection, Connections, EntryBody, type ReadTarget, TaskRow, useFacts } from "./project-map";
+import { type Navigation, Pulse } from "./knowledge/pulse";
+import { AreaPage, AreasView, Connections, EntryBody, type ReadTarget, TaskRow, useFacts } from "./project-map";
 import { overviewLine, usageLine } from "./usage-line";
 
 const PROJECTS_QUERY = ["contextualise", "knowledge", "projects"];
@@ -116,8 +117,9 @@ function EntryReader({ repoKey, target, pins, onClose, styles }: { repoKey: stri
   );
 }
 
-// The overview's five sections: About, What agents get, Areas, Busy lately, Recent work.
-function Overview({ project, writing, change, onOpenArea, onShow, onRead, styles }: { project: Project; writing: boolean; change(work: Promise<unknown>): void; onOpenArea(path: string): void; onShow(view: ScreenView): void; onRead(target: ReadTarget): void; styles: Styles }) {
+// The overview: the pulse first (what needs M, numbers, activity, risk, where to start), then recent
+// work, then what the project says about itself and what agents get.
+function Overview({ project, hostKey, navigation, writing, change, onShow, onRead, styles }: { project: Project; hostKey: string; navigation: Navigation; writing: boolean; change(work: Promise<unknown>): void; onShow(view: ScreenView): void; onRead(target: ReadTarget): void; styles: Styles }) {
   const { repoKey } = project;
   const running = project.generation?.state === "running";
   const read = useRpc(readKnowledgeRpc);
@@ -132,15 +134,38 @@ function Overview({ project, writing, change, onOpenArea, onShow, onRead, styles
   const usage = useQuery({ queryKey: knowledgeKey("usage", repoKey), queryFn: () => getUsage({ repoKey }) });
   const getOverview = useRpc(knowledgeOverviewRpc);
   const overview = useQuery({ queryKey: knowledgeKey("overview", repoKey), queryFn: () => getOverview({ repoKey }) });
-  const facts = useFacts(repoKey);
   const describe = useRpc(describeProjectRpc);
   const generate = useRpc(generateKnowledgeRpc);
   const [previewing, setPreviewing] = useState(false);
-  if (facts.isPending || tasks.isPending) return <StateView state="loading" styles={styles} />;
+  const [file, setFile] = useState<string | null>(null);
   const used = usage.data ? usageLine(usage.data) : null;
   const total = tasks.data?.total ?? 0;
   return (
     <>
+      <Pulse
+        repoKey={repoKey}
+        hostKey={hostKey}
+        navigation={navigation}
+        onReadTask={(id, title) => onRead({ id, title })}
+        onReadReadme={() => onRead({ id: "doc:README.md:1", title: "README.md" })}
+        onOpenFile={setFile}
+        onShow={onShow}
+        styles={styles}
+      />
+      {file ? <FileReader repoKey={repoKey} path={file} onClose={() => setFile(null)} styles={styles} /> : null}
+
+      <SectionHeader label="Recent work" count={total} action={total > OVERVIEW_ROWS ? { label: "Show all", onPress: () => onShow("tasks") } : undefined} styles={styles} />
+      {tasks.error ? <StateView state="error" text={errorText(tasks.error)} styles={styles} /> : null}
+      {tasks.data && total === 0 ? (
+        <StateView
+          state="empty"
+          text={running ? "No conversations recorded here yet. Adding past conversations…" : "No conversations recorded here yet."}
+          actions={running ? [] : [{ label: "Add past conversations", onPress: () => change(generate({ repoKey, generate: false })) }]}
+          styles={styles}
+        />
+      ) : null}
+      {tasks.data?.tasks.map((task) => <TaskRow key={task.id} task={task} onOpen={onRead} styles={styles} />)}
+
       <SectionHeader label="About" action={writing && !running ? { label: brief.data ? "Rewrite" : "Write description", onPress: () => change(describe({ repoKey })) } : undefined} styles={styles} />
       {brief.data ? (
         <>
@@ -188,27 +213,25 @@ function Overview({ project, writing, change, onOpenArea, onShow, onRead, styles
           styles={styles}
         />
       ) : null}
-
-      {facts.error ? <StateView state="error" text={errorText(facts.error)} styles={styles} /> : null}
-      {facts.data ? (
-        <>
-          <AreasSection facts={facts.data.facts} lines={facts.data.areaLines} busy={facts.data.busy} limit={OVERVIEW_ROWS} onOpenArea={onOpenArea} onShowAll={() => onShow("areas")} styles={styles} />
-          <BusySection busy={facts.data.busy} files={facts.data.busy.files} limit={OVERVIEW_ROWS} showArea onOpenArea={onOpenArea} styles={styles} />
-        </>
-      ) : null}
-
-      <SectionHeader label="Recent work" count={total} action={total > OVERVIEW_ROWS ? { label: "Show all", onPress: () => onShow("tasks") } : undefined} styles={styles} />
-      {tasks.error ? <StateView state="error" text={errorText(tasks.error)} styles={styles} /> : null}
-      {tasks.data && total === 0 ? (
-        <StateView
-          state="empty"
-          text={running ? "No conversations recorded here yet. Adding past conversations…" : "No conversations recorded here yet."}
-          actions={running ? [] : [{ label: "Add past conversations", onPress: () => change(generate({ repoKey, generate: false })) }]}
-          styles={styles}
-        />
-      ) : null}
-      {tasks.data?.tasks.map((task) => <TaskRow key={task.id} task={task} onOpen={onRead} styles={styles} />)}
     </>
+  );
+}
+
+// One code file opened from the pulse: its path to copy, and what it imports, uses it, and tests it.
+function FileReader({ repoKey, path, onClose, styles }: { repoKey: string; path: string; onClose(): void; styles: Styles }) {
+  const getConnections = useRpc(fileConnectionsRpc);
+  const connections = useQuery({ queryKey: knowledgeKey("connections", repoKey).concat(path), queryFn: () => getConnections({ repoKey, path }) });
+  return (
+    <ReaderSheet
+      title={path}
+      text={connections.data ? path : undefined}
+      plain
+      meta="Code file"
+      error={connections.error ? errorText(connections.error) : undefined}
+      footer={connections.data ? <Connections connections={connections.data} styles={styles} /> : undefined}
+      onClose={onClose}
+      styles={styles}
+    />
   );
 }
 
@@ -219,8 +242,8 @@ const lastRepoKeys = new Map<string, string>();
 // Project knowledge for one project: what it is, what agents get, and its documents, code, and past
 // work to search and read. On the global screen the user picks the project, remembered for its host; a
 // workspace tab passes its own as `fixedRepoKey`.
-export function KnowledgeView(props: { styles: Styles; fixedRepoKey: string } | { styles: Styles; hostId: string; initialRepoKey?: string }) {
-  const { styles } = props;
+export function KnowledgeView(props: ({ fixedRepoKey: string } | { hostId: string; initialRepoKey?: string }) & { styles: Styles; navigation: Navigation }) {
+  const { styles, navigation } = props;
   const fixedRepoKey = "fixedRepoKey" in props ? props.fixedRepoKey : undefined;
   const hostId = "hostId" in props ? props.hostId : null;
   const listProjects = useRpc(listProjectsRpc);
@@ -394,7 +417,7 @@ export function KnowledgeView(props: { styles: Styles; fixedRepoKey: string } | 
           ))
         )
       ) : (
-        <Overview project={project} writing={writing} change={change} onOpenArea={setArea} onShow={show} onRead={setReading} styles={styles} />
+        <Overview project={project} hostKey={hostId ?? "workspace"} navigation={navigation} writing={writing} change={change} onShow={show} onRead={setReading} styles={styles} />
       )}
       {reading ? <EntryReader repoKey={project.repoKey} target={reading} pins={pins} onClose={() => setReading(null)} styles={styles} /> : null}
       {note ? (
@@ -408,11 +431,11 @@ export function KnowledgeView(props: { styles: Styles; fixedRepoKey: string } | 
   );
 }
 
-export function KnowledgeScreen({ theme, layout, host, params }: PluginScreenProps) {
+export function KnowledgeScreen({ theme, layout, host, params, navigation }: PluginScreenProps) {
   const styles = useStyles(theme, layout.compact);
   return (
     <Page styles={styles}>
-      <KnowledgeView styles={styles} hostId={host.id} initialRepoKey={params.repoKey} />
+      <KnowledgeView styles={styles} navigation={navigation} hostId={host.id} initialRepoKey={params.repoKey} />
     </Page>
   );
 }
@@ -421,7 +444,7 @@ export function KnowledgeScreen({ theme, layout, host, params }: PluginScreenPro
 // belongs to (worktrees and subfolders included), and the view shows that one, with no chooser.
 // The tab can be narrow when split, and panels are told only whether the window is compact, so it
 // always uses the phone layout.
-export function WorkspaceKnowledgePanel({ theme, workspaceId }: PluginWorkspacePanelProps) {
+export function WorkspaceKnowledgePanel({ theme, workspaceId, navigation }: PluginWorkspacePanelProps) {
   const styles = useStyles(theme, true);
   const projectFor = useRpc(projectForWorkspaceRpc);
   const owner = useQuery({ queryKey: ["contextualise", "knowledge", "project-for", workspaceId], queryFn: () => projectFor({ workspaceId }) });
@@ -430,7 +453,7 @@ export function WorkspaceKnowledgePanel({ theme, workspaceId }: PluginWorkspaceP
       {owner.error ? <StateView state="error" text={errorText(owner.error)} styles={styles} /> : null}
       {owner.isPending ? <StateView state="loading" styles={styles} /> : null}
       {owner.data && owner.data.repoKey === null ? <StateView state="empty" text="This folder gets no project knowledge (it is your home folder, a drive root, or plugin data)." styles={styles} /> : null}
-      {owner.data?.repoKey ? <KnowledgeView styles={styles} fixedRepoKey={owner.data.repoKey} /> : null}
+      {owner.data?.repoKey ? <KnowledgeView styles={styles} navigation={navigation} fixedRepoKey={owner.data.repoKey} /> : null}
     </Page>
   );
 }

@@ -3,7 +3,7 @@ import type { Server } from "node:http";
 import { dirname, join } from "node:path";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { type SnapshotSettings, splitGlobs } from "../../shared/contracts";
-import { areaRpc, BRIEF_ID, browseKnowledgeRpc, describeProjectRpc, explainAreaRpc, generateKnowledgeRpc, KIND_LABELS, knowledgeOverviewRpc, knowledgeUsageRpc, projectForWorkspaceRpc, type SearchHit, listProjectsRpc, listTasksRpc, memoriseStatusRpc, pinEntryRpc, projectFactsRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc, setProjectEnabledRpc } from "../../shared/knowledge";
+import { areaRpc, BRIEF_ID, browseKnowledgeRpc, describeProjectRpc, explainAreaRpc, fileConnectionsRpc, generateKnowledgeRpc, KIND_LABELS, knowledgeAgentsNowRpc, knowledgeChangesRpc, knowledgeOverviewRpc, knowledgePulseRpc, knowledgeUsageRpc, projectForWorkspaceRpc, type SearchHit, listProjectsRpc, listTasksRpc, memoriseStatusRpc, pinEntryRpc, projectFactsRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc, setProjectEnabledRpc } from "../../shared/knowledge";
 import type { PaseoApi } from "../paseo-types";
 import { capTitle } from "../rows";
 import { requestedTool } from "../vendor-fetch";
@@ -17,6 +17,8 @@ import { MemoriseLink, memorySuggestions } from "./memorise";
 import { ProjectPrefsStore } from "./prefs";
 import { UsageLog } from "./usage";
 import { overviewFor, withoutMarkers } from "./overview";
+import { type LiveAgent, needsYou } from "../agent-state";
+import { waitingAgents } from "./pulse";
 import { unavailableSection, withoutSection, withSection } from "./section";
 import { KnowledgeService } from "./service";
 import { SymbolReader } from "./symbols";
@@ -274,6 +276,48 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     }
   });
   server.handle(knowledgeUsageRpc, async ({ repoKey }) => usage.lastDays((await project(repoKey)).key));
+  // The live agents working in a project: not archived, not Paseo's own, and in a folder of the
+  // project. An agent whose folder cannot be resolved (gone, unreadable, git refusing it) is not
+  // counted here and is logged; it cannot fail the answer for every project.
+  const liveAgentsIn = async (paseo: PaseoApi, repoKey: string): Promise<LiveAgent[]> => {
+    const found: LiveAgent[] = [];
+    for (let cursor: string | undefined; ; ) {
+      const page = await paseo.agents.list({ filter: { includeArchived: false }, page: { limit: 100, cursor } });
+      for (const { agent } of page.entries as { agent: LiveAgent & { cwd?: string; internal?: boolean; archivedAt?: string | null } }[]) {
+        if (agent.internal || agent.archivedAt || !agent.cwd) continue;
+        const repo = await base.repoFor(agent.cwd).catch((error: unknown) => {
+          console.error(`[contextualise] could not tell which project agent ${agent.id} works in: ${String(error)}`);
+          return null;
+        });
+        if (repo?.key === repoKey) found.push(agent);
+      }
+      if (!page.pageInfo.hasMore || !page.pageInfo.nextCursor) break;
+      cursor = page.pageInfo.nextCursor;
+    }
+    return found;
+  };
+  server.handle(knowledgeAgentsNowRpc, async ({ repoKey }, { paseo }) => {
+    remember(paseo);
+    const repo = await project(repoKey);
+    let agents: LiveAgent[];
+    try {
+      agents = await liveAgentsIn(paseo, repo.key);
+    } catch (error) {
+      return { available: false, problem: `Could not read Paseo's agents: ${error instanceof Error ? error.message : String(error)}`, running: 0, needsYou: 0, finished: 0, waiting: [] };
+    }
+    const reasons = agents.map(needsYou);
+    return {
+      available: true,
+      problem: null,
+      running: agents.filter((agent) => agent.status === "running").length,
+      needsYou: reasons.filter((reason) => reason === "permission" || reason === "error").length,
+      finished: reasons.filter((reason) => reason === "finished").length,
+      waiting: waitingAgents(agents),
+    };
+  });
+  server.handle(knowledgePulseRpc, async ({ repoKey, days, utcOffsetMinutes }) => service.pulse(await project(repoKey), days, utcOffsetMinutes));
+  server.handle(knowledgeChangesRpc, async ({ repoKey, days, utcOffsetMinutes }) => service.changes(await project(repoKey), days, utcOffsetMinutes));
+  server.handle(fileConnectionsRpc, async ({ repoKey, path }) => service.connections(await project(repoKey), path));
   // The same overview as the agent hook's, without its refresh or its count of agents given knowledge.
   server.handle(knowledgeOverviewRpc, async ({ repoKey }, { paseo }) => {
     remember(paseo);

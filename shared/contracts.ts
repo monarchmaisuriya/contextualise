@@ -193,6 +193,11 @@ export const removeNoteRpc = defineRpc({
   output: tagOutcomeSchema,
 });
 
+// What an agent is doing now, from the daemon: Paseo's status, and why it waits for M (a permission
+// request, an error, or a finished turn not looked at yet). Absent for archived and missing agents.
+export const agentLiveSchema = z.object({ status: z.string().nullable(), needsYou: z.enum(["permission", "error", "finished"]).nullable(), updatedAt: z.string().nullable() });
+export type AgentLive = z.infer<typeof agentLiveSchema>;
+
 export const agentMemberSchema = z.object({
   agentId: z.string(),
   workspaceId: z.string(),
@@ -203,6 +208,7 @@ export const agentMemberSchema = z.object({
   workspaceName: z.string().nullable(),
   // "missing": the daemon no longer knows the agent. It stays in the tag until M removes it.
   state: z.enum(["active", "archived", "missing"]),
+  live: agentLiveSchema.optional(),
 });
 export type AgentMember = z.infer<typeof agentMemberSchema>;
 
@@ -258,6 +264,7 @@ export const pinnedAgentSchema = z.object({
   workspaceId: z.string().nullable(),
   workspaceName: z.string().nullable(),
   state: z.enum(["active", "archived", "missing"]),
+  live: agentLiveSchema.optional(),
 });
 export type PinnedAgent = z.infer<typeof pinnedAgentSchema>;
 
@@ -275,6 +282,7 @@ export const agentInfoSchema = z.object({
   workspaceId: z.string().nullable(),
   workspaceName: z.string().nullable(),
   state: z.enum(["active", "archived", "missing"]),
+  live: agentLiveSchema.optional(),
 });
 export type AgentInfo = z.infer<typeof agentInfoSchema>;
 
