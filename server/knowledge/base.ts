@@ -181,6 +181,11 @@ export class KnowledgeBase {
   }
 
   // Every repository that has an index, including ones not opened since the plugin started.
+  // Whether a re-index of this project is running now.
+  isIndexing(repoKey: string): boolean {
+    return this.running.has(repoKey);
+  }
+
   async projects(): Promise<Omit<Project, "enabled" | "pins" | "generation">[]> {
     const dir = await this.dir();
     for (const name of await readdir(dir)) {

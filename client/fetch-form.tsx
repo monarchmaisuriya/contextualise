@@ -6,13 +6,16 @@ import { Text, View } from "react-native";
 import { FETCH_PROVIDER_LABELS, type FetchPreference, fetchItemRpc, fetchRouteRpc, parseItemRef, parseTagName, VENDOR_LABELS } from "../shared/contracts";
 import { errorText } from "./errors";
 import { ICONS, VENDOR_ICONS } from "./icons";
-import { Button, Chip, type Styles, useTagChange } from "./kit";
+import { Button, Chip, Segmented, type Styles, useTagChange } from "./kit";
 
-const AGENT_CHOICES: ReadonlyArray<{ value: FetchPreference | undefined; label: string }> = [
-  { value: undefined, label: "Default" },
+const AGENT_CHOICES: ReadonlyArray<{ value: FetchPreference | "default"; label: string }> = [
+  { value: "default", label: "Default" },
   { value: "claude", label: "Claude" },
   { value: "codex", label: "Codex" },
 ];
+
+// Form fields stack one per line and take the full width; the kit's input grows sideways in a row.
+export const FULL_WIDTH_FIELD = { flex: 0, minWidth: 0, width: "100%" as const };
 
 function validRef(text: string): boolean {
   try {
@@ -52,30 +55,28 @@ export function FetchForm({ tagNames, styles, notifyAgentId, onDone, onCancel }:
   const blocked = fetching.isPending || !validRef(trimmed) || Boolean(route.error) || tag.trim() === "";
   return (
     <View style={{ gap: 8 }}>
-      <View style={styles.wrap}>
-        <TextInput style={styles.input} value={ref} onChangeText={setRef} placeholder="PROJ-123 or a link" autoCapitalize="none" autoCorrect={false} accessibilityLabel="Item to fetch" onSubmitEditing={() => !blocked && fetching.mutate(undefined)} />
-        <Button label={fetching.isPending ? "Starting" : "Fetch"} kind="primary" styles={styles} onPress={() => fetching.mutate(undefined)} disabled={blocked} />
-        {onCancel ? <Button label="Cancel" styles={styles} onPress={onCancel} /> : null}
-      </View>
+      <TextInput style={[styles.input, FULL_WIDTH_FIELD]} value={ref} onChangeText={setRef} placeholder="PROJ-123 or a link" autoCapitalize="none" autoCorrect={false} accessibilityLabel="Item to fetch" onSubmitEditing={() => !blocked && fetching.mutate(undefined)} />
       <View style={styles.inline}>
-        <Icon name={route.error ? ICONS.failed : route.data ? VENDOR_ICONS[route.data.vendor] : ICONS.info} size={13} color={route.error ? styles.colors.statusDanger : styles.colors.foregroundMuted} />
-        <Text style={[route.error ? styles.danger : styles.faint, styles.grow]}>{hint}</Text>
+        <Icon name={route.error ? ICONS.failed : route.data ? VENDOR_ICONS[route.data.vendor] : ICONS.info} size={14} color={route.error ? styles.colors.statusDanger : styles.colors.foregroundMuted} />
+        <Text style={[route.error ? styles.danger : styles.sm, styles.grow]}>{hint}</Text>
       </View>
       {tagNames.length > 1 ? (
-        <View style={styles.wrap}>
-          <Text style={styles.faint}>Into</Text>
+        <View style={[styles.wrap, { alignItems: "center" }]}>
+          <Text style={styles.sm}>Into</Text>
           {tagNames.map((name) => (
             <Chip key={name} label={name} on={name === tag} onPress={() => setTag(name)} accessibilityLabel={`Fetch into ${name}`} styles={styles} />
           ))}
         </View>
       ) : tagNames.length === 0 ? (
-        <TextInput style={styles.input} value={tag} onChangeText={setTag} placeholder="Into tag, for example auth-rewrite" accessibilityLabel="Tag to fetch into" />
+        <TextInput style={[styles.input, FULL_WIDTH_FIELD]} value={tag} onChangeText={setTag} placeholder="Into tag, for example auth-rewrite" accessibilityLabel="Tag to fetch into" />
       ) : null}
-      <View style={styles.wrap}>
-        <Text style={styles.faint}>With</Text>
-        {AGENT_CHOICES.map((choice) => (
-          <Chip key={choice.label} label={choice.label} on={choice.value === provider} onPress={() => setProvider(choice.value)} accessibilityLabel={`Fetch with ${choice.label}`} styles={styles} />
-        ))}
+      <View style={styles.row}>
+        <Text style={styles.sm}>With</Text>
+        <Segmented options={AGENT_CHOICES} value={provider ?? "default"} onChange={(value) => setProvider(value === "default" ? undefined : value)} label="Fetch with" styles={styles} />
+      </View>
+      <View style={styles.row}>
+        <Button label={fetching.isPending ? "Starting" : "Fetch"} kind="primary" styles={styles} onPress={() => fetching.mutate(undefined)} disabled={blocked} />
+        {onCancel ? <Button label="Cancel" styles={styles} onPress={onCancel} /> : null}
       </View>
     </View>
   );

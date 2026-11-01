@@ -202,6 +202,18 @@ export const knowledgeUsageRpc = defineRpc({
   output: knowledgeUsageSchema,
 });
 
+// The overview a new agent in the project gets, as the agent hook would build it from the current index (the hook re-reads changed files first), without its
+// markers. "off": knowledge or the project is switched off; "unavailable": the agent gets a one-line
+// notice instead; text is null when the overview is set to 0 lines.
+export const knowledgeOverviewSchema = z.object({ state: z.enum(["off", "unavailable", "given"]), text: z.string().nullable(), lines: z.number().int().min(0) });
+export type KnowledgeOverview = z.infer<typeof knowledgeOverviewSchema>;
+
+export const knowledgeOverviewRpc = defineRpc({
+  name: "knowledge.overview",
+  input: projectInput,
+  output: knowledgeOverviewSchema,
+});
+
 // The project a workspace's folder belongs to, for its Project knowledge tab, as the server resolves
 // it: worktrees and subfolders map to their project. Null when the folder gets no knowledge.
 export const projectForWorkspaceRpc = defineRpc({

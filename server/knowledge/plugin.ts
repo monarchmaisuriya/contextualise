@@ -3,7 +3,7 @@ import type { Server } from "node:http";
 import { dirname, join } from "node:path";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { type SnapshotSettings, splitGlobs } from "../../shared/contracts";
-import { areaRpc, BRIEF_ID, browseKnowledgeRpc, describeProjectRpc, explainAreaRpc, generateKnowledgeRpc, KIND_LABELS, knowledgeUsageRpc, projectForWorkspaceRpc, type SearchHit, listProjectsRpc, listTasksRpc, memoriseStatusRpc, pinEntryRpc, projectFactsRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc, setProjectEnabledRpc } from "../../shared/knowledge";
+import { areaRpc, BRIEF_ID, browseKnowledgeRpc, describeProjectRpc, explainAreaRpc, generateKnowledgeRpc, KIND_LABELS, knowledgeOverviewRpc, knowledgeUsageRpc, projectForWorkspaceRpc, type SearchHit, listProjectsRpc, listTasksRpc, memoriseStatusRpc, pinEntryRpc, projectFactsRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc, setProjectEnabledRpc } from "../../shared/knowledge";
 import type { PaseoApi } from "../paseo-types";
 import { capTitle } from "../rows";
 import { requestedTool } from "../vendor-fetch";
@@ -16,7 +16,8 @@ import { Generator } from "./generate";
 import { MemoriseLink, memorySuggestions } from "./memorise";
 import { ProjectPrefsStore } from "./prefs";
 import { UsageLog } from "./usage";
-import { buildSection, unavailableSection, withoutSection, withSection } from "./section";
+import { overviewFor, withoutMarkers } from "./overview";
+import { unavailableSection, withoutSection, withSection } from "./section";
 import { KnowledgeService } from "./service";
 import { SymbolReader } from "./symbols";
 import { buildTask, type TimelineEntry } from "./task-log";
@@ -173,23 +174,23 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       await markRoots(paseo);
       const repo = await base.repoFor(config.cwd);
       if (!repo) return { ...request, config: stripped };
-      const projectPrefs = await prefs.get(repo.key);
-      if (!projectPrefs.enabled) return { ...request, config: stripped };
-      const { tokens, port, problem } = await runtime;
-      if (problem) return { ...request, config: { ...stripped, systemPrompt: withSection(stripped.systemPrompt, unavailableSection(problem)) } };
-      const updating = (await base.refresh(repo, HOOK_WAIT_MS)) === "updating";
-      // Counting is advisory: a failed count is logged and never stops the agent.
-      await usage.recordGiven(repo.key).catch((error: unknown) => console.error(`[contextualise] could not count an agent given knowledge in ${repo.key}: ${String(error)}`));
-      const section = buildSection({
+      const map = await overviewFor({
         repoKey: repo.key,
-        store: await base.open(repo),
-        maxLines: values.knowledgeMapLines,
-        memoriseAvailable: await memoriseAvailable(),
-        updating,
-        parts: values.knowledgeMapParts,
-        recentTasks: values.knowledgeRecentTasks,
-        pins: projectPrefs.pins,
+        settings: values,
+        prefs: await prefs.get(repo.key),
+        problem: async () => (await runtime).problem,
+        open: async () => {
+          const updating = (await base.refresh(repo, HOOK_WAIT_MS)) === "updating";
+          // Counting is advisory: a failed count is logged and never stops the agent.
+          await usage.recordGiven(repo.key).catch((error: unknown) => console.error(`[contextualise] could not count an agent given knowledge in ${repo.key}: ${String(error)}`));
+          return { store: await base.open(repo), updating };
+        },
+        memoriseAvailable,
       });
+      if (map.state === "off") return { ...request, config: stripped };
+      const section = map.text;
+      if (map.state === "unavailable") return { ...request, config: { ...stripped, systemPrompt: section ? withSection(stripped.systemPrompt, section) : stripped.systemPrompt } };
+      const { tokens, port } = await runtime;
       return {
         ...request,
         config: {
@@ -273,6 +274,20 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     }
   });
   server.handle(knowledgeUsageRpc, async ({ repoKey }) => usage.lastDays((await project(repoKey)).key));
+  // The same overview as the agent hook's, without its refresh or its count of agents given knowledge.
+  server.handle(knowledgeOverviewRpc, async ({ repoKey }, { paseo }) => {
+    remember(paseo);
+    const repo = await project(repoKey);
+    const map = await overviewFor({
+      repoKey: repo.key,
+      settings: await deps.settings(),
+      prefs: await prefs.get(repo.key),
+      problem: async () => (await runtime).problem,
+      open: async () => ({ store: await base.open(repo), updating: base.isIndexing(repo.key) }),
+      memoriseAvailable,
+    });
+    return { ...map, text: map.text === null ? null : withoutMarkers(map.text) };
+  });
   server.handle(describeProjectRpc, async ({ repoKey }, { paseo }) => {
     generator.startDescribe(remember(paseo), await project(repoKey));
     return { started: true };

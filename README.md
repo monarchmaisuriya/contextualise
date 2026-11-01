@@ -27,7 +27,7 @@ Every agent's composer has a **Tags** pill next to Tasks and Subagents. Its labe
 
 Tags share names with Paseo's workspace labels. A workspace labeled "Auth Rewrite" belongs to the tag `auth rewrite` automatically; case and spacing do not matter. Contextualise reads workspace labels and never changes them.
 
-The **Tags** screen (sidebar footer, or "Open tags" in the Command Center) lists every tag with its labeled workspaces, tagged agents, links, and fetched items. One row at the top filters (the box says how many tags, agents, and items there are), shows the three sorts side by side (recent, name, size; on a phone they get a line of their own), and expands or collapses every tag. Each tag has **Preview**, which shows exactly what Attach > Tag sends (with a Copy button), and a ⋮ button for **Fetch item** and **Add link**. Tap an agent, link, or workspace to open it; × removes an agent or link from the tag. "Tag this agent..." in the Command Center opens it for one agent, with the same chips as the pill. "Pin this agent" and "Unpin this agent" in the Command Center do the same as the pill's Pin button; pinned agents are listed at the top of the Tags screen, where a pinned agent Paseo no longer has shows as missing until you unpin it.
+The **Tags** screen (sidebar footer, or "Open tags" in the Command Center) lists tags on the left and shows the chosen tag on the right; on a phone the list comes first and a tag opens on its own page. The list has a filter (it says how many tags, agents, and items there are), Recent, Name, and Size sorting, and the agents you pinned. A tag shows its fetched items, agents, links, and labeled workspaces as plain rows, with **Preview** (exactly what Attach > Tag sends, with Copy), **Fetch item**, and **Add link** as buttons; the forms open in place. Press an item to read it, an agent, link, or workspace to open it; the icons at the end of a row refresh or remove it. "Tag this agent..." in the Command Center opens the same screen for one agent, with its tag editor on top. "Pin this agent" and "Unpin this agent" in the Command Center do the same as the editor's Pin button; a pinned agent Paseo no longer has shows as missing until you unpin it.
 
 ## Fetching Jira, Sentry, Slack, and Notion items
 
@@ -125,11 +125,10 @@ These are rebuilt whenever files change. On a 7,000-file Python repository the f
 
 **Where to look.** Project knowledge in the sidebar footer (or "Open project knowledge" in the Command Center) shows each project, opening on the one you looked at last; tap the project name to pick another. Each workspace also has a Project knowledge tab for its own project ("Open project knowledge for this workspace" in the Command Center, or the new-tab menu). Both show:
 
-- **Overview:** the project description (the written overview, or the README's opening), its size and languages, its most used libraries, a diagram of how the main areas connect, area cards, the files busy lately, design documents, decisions, and team rules by heading, and recent work.
-- **An area's page:** its diagram of the areas it uses and that use it, its key names, main files, busy files, documents, recent work, and its explanation.
-- **Areas, Documents, Code, and Past work** list everything of each, a page at a time; search covers all of it.
-- A switch to turn the project off, pins (pinned entries always appear in the map), and a ⋮ menu with Re-index, Add past conversations, and Summarise past conversations.
-- **How much it is used:** "Last 7 days: 12 of 15 agents used project knowledge (30 searches, 18 reads)". Only counts are kept, per project and day, for 30 days: no queries, paths, or agent ids.
+- **Overview:** five sections. About (the written description, or the README's opening); What agents get (how many agents used project knowledge lately, and Preview, which shows the exact overview a new agent gets); the main areas; the files busy lately; and recent work. One line under the project name sums up its files, areas, and languages. Usage keeps only counts, per project and day, for 30 days: no queries, paths, or agent ids.
+- **An area's page:** its explanation, the areas it uses and that use it, its key names, main files, busy files, documents, and recent work.
+- **Areas, Documents, Code, and Past work** list everything of each, a page at a time; Areas also has the diagram of how they connect, and Documents can be narrowed to design documents, decisions, rules, or other docs. Search covers all of it. Every entry opens in a reader with Copy and Pin.
+- The project name (to switch projects), a switch to turn the project off, and a ⋮ menu with Re-index, Add past conversations, and Summarise past conversations.
 
 Diagrams are drawn by Paseo's own Markdown renderer (Mermaid), so they follow the theme and open full screen. The project's documents render as Markdown; text an agent wrote stays plain text, so it cannot carry links or images.
 
@@ -181,7 +180,7 @@ Project knowledge is stored in `<PASEO_HOME>/plugin-data/contextualise/knowledge
 
 ## Settings
 
-Settings > Contextualise:
+Settings > Contextualise opens on eight switches and choices: knowledge on, include code, write summaries, search without asking, the Tags button and what it shows, which agent saves items, and whether the conversation is told. Everything else is under **More settings**, which stays open while a typed value waits to be saved. All of them:
 
 | Section | Setting | Default |
 | --- | --- | --- |

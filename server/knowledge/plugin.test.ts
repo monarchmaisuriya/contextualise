@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { snapshotSettingsSchema, type SnapshotSettings } from "../../shared/contracts";
+import { KnowledgeBase } from "./base";
 import { KNOWLEDGE_SERVER } from "./mcp";
 import { contributeKnowledge } from "./plugin";
-import { SECTION_START } from "./section";
+import { SECTION_END, SECTION_START } from "./section";
 import { KnowledgeStore } from "./store";
 
 type Handler = (...args: never[]) => unknown;
@@ -224,6 +225,33 @@ describe("contributeKnowledge", () => {
     expect(await describe({ repoKey: found.repoKey }, { paseo })).toEqual({ started: true });
     // Summaries are off in this test, so the job ends at once and says so.
     await vi.waitFor(async () => expect((await projects({}, { paseo })).projects[0].generation).toMatchObject({ state: "done", message: "summaries are off (Settings > Contextualise > Conversation summaries)" }));
+  });
+
+  it("previews exactly the section an agent is given, without markers, refreshing and counting nothing", async () => {
+    const injected = (await create(top, { systemPrompt: "x" })).config.systemPrompt as string;
+    const call = (name: string, input: unknown) => (rpcs.get(name) as (input: unknown, context: unknown) => Promise<unknown>)(input, { paseo });
+    const { projects } = (await call("knowledge.projects", {})) as { projects: { repoKey: string }[] };
+    const repoKey = projects[0].repoKey;
+    const section = injected.slice(injected.indexOf(SECTION_START) + SECTION_START.length + 1, injected.indexOf(SECTION_END) - 1);
+    const refresh = vi.spyOn(KnowledgeBase.prototype, "refresh");
+    expect(await call("knowledge.overview", { repoKey })).toEqual({ state: "given", text: section, lines: section.split("\n").length });
+    expect(refresh).not.toHaveBeenCalled();
+    refresh.mockRestore();
+    expect(await call("knowledge.usage", { repoKey })).toMatchObject({ agentsGiven: 1 });
+  });
+
+  it("previews off when knowledge or the project is off, and no text at 0 lines", async () => {
+    await create(top);
+    const call = (name: string, input: unknown) => (rpcs.get(name) as (input: unknown, context: unknown) => Promise<unknown>)(input, { paseo });
+    const { projects } = (await call("knowledge.projects", {})) as { projects: { repoKey: string }[] };
+    const repoKey = projects[0].repoKey;
+    values = { ...values, knowledgeMapLines: 0 };
+    expect(await call("knowledge.overview", { repoKey })).toEqual({ state: "given", text: null, lines: 0 });
+    values = { ...values, knowledgeEnabled: false };
+    expect(await call("knowledge.overview", { repoKey })).toEqual({ state: "off", text: null, lines: 0 });
+    values = { ...values, knowledgeEnabled: true };
+    await call("knowledge.project-enabled", { repoKey, enabled: false });
+    expect(await call("knowledge.overview", { repoKey })).toEqual({ state: "off", text: null, lines: 0 });
   });
 
   it("records a task when an agent's turn ends, shown to the next agent", async () => {

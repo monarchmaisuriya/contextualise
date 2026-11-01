@@ -1,5 +1,6 @@
 import type { PluginButtonContentProps, PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
 import { settingsRpc } from "@getpaseo/plugin";
+import { View } from "react-native";
 import { listTagsRpc, snapshotSettings, snapshotSettingsSchema } from "../shared/contracts";
 import { AgentTags } from "./agent-tags";
 import { Button, useStyles } from "./kit";
@@ -30,7 +31,12 @@ export function followAgentPills(client: PluginClientContext, openTagsFor: (agen
         }}
       />
     );
-    return <AgentTags agentId={agentId} fallbackWorkspaceId={workspaceId} styles={styles} footer={footer} />;
+    // The popover is the editor's only frame, so it gets the padding a card used to give it.
+    return (
+      <View style={{ padding: 12 }}>
+        <AgentTags agentId={agentId} fallbackWorkspaceId={workspaceId} styles={styles} footer={footer} />
+      </View>
+    );
   }
 
   const label = (agentId: string) => pillLabel(names.get(agentId) ?? [], display.style, display.maxChars);

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { keepsOpen, saveRowKey, withDraft } from "./settings-drafts";
+import { keepsOpen, saveRowKey, withDraft, withoutError } from "./settings-drafts";
 
 test("a typed value equal to the stored one is no change at all", () => {
   expect(withDraft({}, "port", "6800", "6791")).toEqual({ port: "6800" });
@@ -16,4 +16,10 @@ test("a closed section opens while one of its fields holds unsaved text or a pro
   expect(keepsOpen<string>(["port", "routes"], { lines: "30" }, {})).toBe(false);
   expect(keepsOpen(["port", "routes"], { port: "6800" }, {})).toBe(true);
   expect(keepsOpen(["port", "routes"], {}, { routes: "Expected a JSON list" })).toBe(true);
+});
+
+test("editing a field clears its old problem, so a reverted field cannot hold a section open", () => {
+  const errors = withoutError({ port: "Enter a whole number" }, "port");
+  expect(errors).toEqual({});
+  expect(keepsOpen<string>(["port"], withDraft({ port: "abc" }, "port", "6791", "6791"), errors)).toBe(false);
 });
