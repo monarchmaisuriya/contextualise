@@ -28,6 +28,26 @@ export function IconButton({ icon, label, onPress, styles, disabled }: { icon: s
   );
 }
 
+// Paseo's own switch, drawn the same way: React Native's Switch takes the platform's thumb colour
+// (teal on the web and Android), which no Paseo theme uses. Off is a white thumb as in Paseo, on
+// `border`: Paseo's off track is surface3, which plugins are not given, and Paseo itself fills
+// surface3 with border for themes that plugins contribute.
+export function Toggle({ value, onValueChange, label, styles }: { value: boolean; onValueChange(value: boolean): void; label: string; styles: Styles }) {
+  return (
+    <Pressable
+      style={{ width: 34, height: 20, borderRadius: 10, padding: 2, justifyContent: "center", backgroundColor: value ? styles.colors.accent : styles.colors.border }}
+      onPress={() => onValueChange(!value)}
+      hitSlop={12}
+      accessibilityRole="switch"
+      accessibilityState={{ checked: value }}
+      aria-checked={value}
+      accessibilityLabel={label}
+    >
+      <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: value ? styles.colors.accentForeground : "#ffffff", transform: [{ translateX: value ? 14 : 0 }] }} />
+    </Pressable>
+  );
+}
+
 export function Chip({ label, icon, on, onPress, styles, accessibilityLabel }: { label: string; icon?: string; on?: boolean; onPress(): void; styles: Styles; accessibilityLabel?: string }) {
   return (
     <Pressable style={[on ? styles.chipOn : styles.chip, styles.inline, { gap: 4 }]} onPress={onPress} hitSlop={8} accessibilityRole="button" accessibilityState={{ selected: Boolean(on) }} accessibilityLabel={accessibilityLabel ?? label}>

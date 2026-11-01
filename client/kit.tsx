@@ -52,7 +52,7 @@ export function useStyles(theme: Theme, compact: boolean) {
 export type Styles = ReturnType<typeof useStyles>;
 
 export { plural };
-export { Button, Chip, CopyButton, IconButton, SearchField, Segmented } from "./parts/controls";
+export { Button, Chip, CopyButton, IconButton, SearchField, Segmented, Toggle } from "./parts/controls";
 export { ListRow, type ListRowProps, Page, Prose, SectionHeader } from "./parts/list";
 export { ActionSheet, ReaderSheet, type ReaderSheetProps, type SheetAction, StateView, useActionSheet, type ViewState } from "./parts/sheets";
 

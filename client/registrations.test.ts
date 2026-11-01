@@ -1,4 +1,5 @@
 import { expect, test, vi } from "vitest";
+import { pinAgentRpc } from "../shared/contracts";
 
 // The app (not the daemon) checks client registrations, so a bad name only shows up as a failed
 // plugin in Paseo. This runs the real index.client.tsx against a fake client that applies the
@@ -20,6 +21,7 @@ test("every name the plugin registers in the app is one Paseo accepts", async ()
     return () => {};
   };
   const pills: { agentId: string; id: string; label?: string }[] = [];
+  const registered = new Map<string, unknown>();
   const subscription = {
     subscribe: (observer: { snapshot(s: unknown): void }) => {
       observer.snapshot({ entries: [{ agent: { id: "a1", workspaceId: "w1" } }, { agent: { id: "a2", workspaceId: "w1", archivedAt: "t" } }] });
@@ -43,7 +45,14 @@ test("every name the plugin registers in the app is one Paseo accepts", async ()
         return { update: (patch: { label?: string }) => Object.assign(pill, patch), remove: () => {} };
       },
     },
-    { get: (target, prop: string) => (target as Record<string, unknown>)[prop] ?? ((c: { id: string }) => accept(prop, c.id)) },
+    {
+      get: (target, prop: string) =>
+        (target as Record<string, unknown>)[prop] ??
+        ((c: { id: string }) => {
+          registered.set(c.id, c);
+          return accept(prop, c.id);
+        }),
+    },
   );
   const { default: contribute } = await import("../index.client");
   const cleanup = contribute(client as never);
@@ -54,5 +63,11 @@ test("every name the plugin registers in the app is one Paseo accepts", async ()
   expect([...(seen.get("slash command name") ?? [])]).toEqual(["tag", "untag", "tag-link", "tag-fetch"]);
   expect([...(seen.get("addWorkspacePanel") ?? [])]).toEqual(["knowledge"]);
   expect(pills).toEqual([{ agentId: "a1", id: "tags", label: "1 tag", visible: true }]);
+  // Pin and Unpin each set their own state, so selecting one twice never flips it back.
+  for (const [id, pinned] of [["pin-agent", true], ["unpin-agent", false], ["pin-agent", true]] as const) {
+    const rpc = vi.fn(async () => ({}));
+    await (registered.get(id) as { onSelect(context: unknown): Promise<void> }).onSelect({ agent: { id: "a1", workspaceId: "w1" }, rpc });
+    expect(rpc).toHaveBeenCalledWith(pinAgentRpc, { agentId: "a1", pinned });
+  }
   cleanup();
 });

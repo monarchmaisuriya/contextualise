@@ -1,10 +1,11 @@
 import { type PluginSurfaceProps, useRpc, useSettings } from "@getpaseo/plugin/client";
-import { SettingsAction, SettingsCard, SettingsInput, SettingsRow, SettingsSection, SettingsSelect, SettingsSwitch, TextInput } from "@getpaseo/plugin/client/ui";
+import { copyText, SettingsAction, SettingsCard, SettingsInput, SettingsRow, SettingsSection, SettingsSelect, SettingsSwitch, TextInput, useToast } from "@getpaseo/plugin/client/ui";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Pressable, Text } from "react-native";
 import { type FetchPreference, KNOWLEDGE_MAP_PARTS, type KnowledgeMapPart, MAX_CUSTOM_ROUTES, SYMBOL_LANGUAGES, type SymbolLanguage, type SnapshotSettings, snapshotSettings } from "../shared/contracts";
 import { memoriseStatusRpc } from "../shared/knowledge";
+import { errorText } from "./errors";
 import { memoriseNote } from "./memorise-note";
 import { keepsOpen, saveRowKey, withDraft, withoutError } from "./settings-drafts";
 import { tagsChanged } from "./tag-events";
@@ -146,6 +147,7 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
   const memoriseStatus = useRpc(memoriseStatusRpc);
   const memorise = useQuery({ queryKey: ["contextualise", "knowledge", "memorise"], queryFn: () => memoriseStatus({}) });
   const note = memorise.data ? memoriseNote(memorise.data.state) : null;
+  const toast = useToast();
   const [drafts, setDrafts] = useState<Partial<Record<DraftKey, string>>>({});
   const [errors, setErrors] = useState<Partial<Record<DraftKey, string>>>({});
   const [lastEdited, setLastEdited] = useState<DraftKey | null>(null);
@@ -231,7 +233,7 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
 
   return (
     <>
-      <SettingsSection title="Project knowledge" info={note ? `${note.text}${note.command ? ` Run: ${note.command}` : ""}` : undefined}>
+      <SettingsSection title="Project knowledge">
         <SettingsCard>
           <SettingsSwitch
             label="Give new agents knowledge of the project"
@@ -261,6 +263,17 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
             disabled={settings.saving || !values.knowledgeEnabled}
             onValueChange={(value) => persist({ ...values, knowledgeAutoApproveTools: value })}
           />
+          {/* In the card, not an info tooltip, so the command can be copied on a phone too. */}
+          {note?.command ? (
+            <SettingsAction
+              label={note.text}
+              hint={note.command}
+              actionLabel="Copy command"
+              onPress={() => void copyText(note.command ?? "").then(() => toast.show("Copied", { variant: "success" }), (error: unknown) => toast.error(errorText(error)))}
+            />
+          ) : note ? (
+            <SettingsRow label={note.text} />
+          ) : null}
         </SettingsCard>
       </SettingsSection>
       <SettingsSection title="Tags and attachments">

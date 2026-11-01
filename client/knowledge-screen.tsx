@@ -2,12 +2,12 @@ import { type PluginScreenProps, type PluginWorkspacePanelProps, useRpc, useSett
 import { Icon, useToast } from "@getpaseo/plugin/client/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Pressable, Switch, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { snapshotSettings } from "../shared/contracts";
 import { BRIEF_ID, browseKnowledgeRpc, describeProjectRpc, explainAreaRpc, generateKnowledgeRpc, KIND_LABELS, type KnowledgeKind, knowledgeOverviewRpc, knowledgeUsageRpc, listProjectsRpc, listTasksRpc, pinEntryRpc, type Project, projectForWorkspaceRpc, readKnowledgeRpc, reindexRpc, type SearchHit, searchKnowledgeRpc, setProjectEnabledRpc } from "../shared/knowledge";
 import { errorText } from "./errors";
 import { ICONS } from "./icons";
-import { ActionSheet, ago, Button, IconButton, ListRow, Page, plural, Prose, ReaderSheet, SearchField, SectionHeader, Segmented, StateView, type Styles, useActionSheet, usePagedList, useStyles } from "./kit";
+import { ActionSheet, ago, Button, IconButton, ListRow, Page, plural, Prose, ReaderSheet, SearchField, SectionHeader, Segmented, StateView, type Styles, Toggle, useActionSheet, usePagedList, useStyles } from "./kit";
 import { entryMeta, glanceLine, readerBody } from "./knowledge/text";
 import { memoriseNote } from "./memorise-note";
 import { AreaPage, AreasSection, AreasView, BusySection, EntryBody, type ReadTarget, TaskRow, useFacts } from "./project-map";
@@ -211,13 +211,17 @@ function Overview({ project, writing, change, onOpenArea, onShow, onRead, styles
   );
 }
 
-// The project last shown on the global screen, so opening it again returns there.
-let lastRepoKey: string | null = null;
+// The project last shown on the global screen, per host, so opening it again returns there. Hosts
+// index different folders, so one host's choice means nothing on another.
+const lastRepoKeys = new Map<string, string>();
 
 // Project knowledge for one project: what it is, what agents get, and its documents, code, and past
-// work to search and read. On the global screen the user picks the project; a workspace tab passes
-// its own as `fixedRepoKey`.
-export function KnowledgeView({ styles, fixedRepoKey, initialRepoKey }: { styles: Styles; fixedRepoKey?: string; initialRepoKey?: string }) {
+// work to search and read. On the global screen the user picks the project, remembered for its host; a
+// workspace tab passes its own as `fixedRepoKey`.
+export function KnowledgeView(props: { styles: Styles; fixedRepoKey: string } | { styles: Styles; hostId: string; initialRepoKey?: string }) {
+  const { styles } = props;
+  const fixedRepoKey = "fixedRepoKey" in props ? props.fixedRepoKey : undefined;
+  const hostId = "hostId" in props ? props.hostId : null;
   const listProjects = useRpc(listProjectsRpc);
   const projects = useQuery({ queryKey: PROJECTS_QUERY, queryFn: () => listProjects({}), refetchInterval: (query) => {
       const listed = query.state.data?.projects ?? [];
@@ -226,7 +230,7 @@ export function KnowledgeView({ styles, fixedRepoKey, initialRepoKey }: { styles
       return waiting ? 3_000 : false;
     },
   });
-  const [repoKey, setRepoKey] = useState<string | null>(fixedRepoKey ?? initialRepoKey ?? lastRepoKey);
+  const [repoKey, setRepoKey] = useState<string | null>(fixedRepoKey ?? ("initialRepoKey" in props ? props.initialRepoKey : undefined) ?? (hostId === null ? null : (lastRepoKeys.get(hostId) ?? null)));
   const [choosing, setChoosing] = useState(false);
   const [query, setQuery] = useState("");
   // The view, an area opened from it, and, under Documents, one kind. Search narrows to the kind.
@@ -250,8 +254,8 @@ export function KnowledgeView({ styles, fixedRepoKey, initialRepoKey }: { styles
     else if (all.length > 0 && !all.some((project) => project.repoKey === repoKey)) setRepoKey(all[0].repoKey);
   }, [all, repoKey, fixedRepoKey]);
   useEffect(() => {
-    if (repoKey && !fixedRepoKey) lastRepoKey = repoKey;
-  }, [repoKey, fixedRepoKey]);
+    if (repoKey && hostId !== null) lastRepoKeys.set(hostId, repoKey);
+  }, [repoKey, hostId]);
   useEffect(() => {
     setArea(null);
     setReading(null);
@@ -324,12 +328,7 @@ export function KnowledgeView({ styles, fixedRepoKey, initialRepoKey }: { styles
           </Text>
         ) : null}
         <View style={styles.grow} />
-        <Switch
-          value={project.enabled}
-          onValueChange={(enabled) => change(setProjectEnabled({ repoKey: project.repoKey, enabled }))}
-          trackColor={{ true: styles.colors.accent, false: styles.colors.surface2 }}
-          accessibilityLabel={`Project knowledge for ${project.name}`}
-        />
+        <Toggle value={project.enabled} onValueChange={(enabled) => change(setProjectEnabled({ repoKey: project.repoKey, enabled }))} label={`Project knowledge for ${project.name}`} styles={styles} />
         {menu.button}
       </View>
       {menu.sheet}
@@ -408,11 +407,11 @@ export function KnowledgeView({ styles, fixedRepoKey, initialRepoKey }: { styles
   );
 }
 
-export function KnowledgeScreen({ theme, layout, params }: PluginScreenProps) {
+export function KnowledgeScreen({ theme, layout, host, params }: PluginScreenProps) {
   const styles = useStyles(theme, layout.compact);
   return (
     <Page styles={styles}>
-      <KnowledgeView styles={styles} initialRepoKey={params.repoKey} />
+      <KnowledgeView styles={styles} hostId={host.id} initialRepoKey={params.repoKey} />
     </Page>
   );
 }
