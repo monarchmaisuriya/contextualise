@@ -20,3 +20,10 @@ export function saveRowKey<Key extends string>(lastEdited: Key | null, drafts: P
 export function keepsOpen<Key extends string>(keys: readonly Key[], drafts: Partial<Record<Key, string>>, errors: Partial<Record<Key, string>>): boolean {
   return keys.some((key) => drafts[key] !== undefined || errors[key] !== undefined);
 }
+
+// A field's old problem goes once the field is edited again; the next Save checks it afresh.
+export function withoutError<Key extends string>(errors: Partial<Record<Key, string>>, key: Key): Partial<Record<Key, string>> {
+  const next = { ...errors };
+  delete next[key];
+  return next;
+}

@@ -2,6 +2,23 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.19.0 - 2026-11-01
+
+### Changed
+
+- Every screen now looks and behaves like Paseo's own: full-width flat rows instead of cards, one 14 px text size with 16 for the one heading and 12 for hints, Paseo's search field, a segmented control instead of rows of chips, a spinner while loading, and green only on links, the one main button, and switches. Touch targets on phones are at least 44 points.
+- Tags: a list of tags beside the chosen tag (on a phone, the list first and the tag on its own page). Preview, Fetch item, and Add link are buttons on the tag; forms open in place; items open in a reader. The tag editor in the message box has one field that filters and adds, labeled Pin and Unpin, and no card.
+- Project knowledge: one header line (name to switch projects, a switch, a menu), then five sections: About, What agents get, main areas, busy files, and recent work. The diagram and language bar moved to Areas, and design documents, decisions, and rules to Documents. Every entry opens in a reader with Copy and Pin. An area's page is a set of plain sections.
+- Settings open on eight controls; the rest are under More settings, grouped, with one-sentence hints.
+
+### Added
+
+- What agents get > Preview shows the exact overview a new agent gets in the project, as of the current index, from the same code that builds it for agents.
+
+### Fixed
+
+- A setting typed in error and then typed back no longer keeps More settings open.
+
 ## 0.18.0 - 2026-11-01
 
 ### Changed

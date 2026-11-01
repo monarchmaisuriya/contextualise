@@ -1,6 +1,8 @@
 import type { PluginTimelineItemProps } from "@getpaseo/plugin/client";
 import { Pressable, Text, View } from "react-native";
 import type { Receipt } from "../shared/contracts";
+import { TYPE } from "./parts/rules";
+import { plural } from "./plural";
 
 function counts(entry: Receipt["entries"][number]): string {
   const parts = [
@@ -10,7 +12,7 @@ function counts(entry: Receipt["entries"][number]): string {
   ] as const;
   return parts
     .filter(([n]) => n > 0)
-    .map(([n, word]) => `${n} ${word}${n === 1 ? "" : "s"}`)
+    .map(([n, word]) => plural(n, word))
     .join(", ");
 }
 
@@ -24,13 +26,13 @@ export function ReceiptRow({ theme, item, agentId, openTags }: PluginTimelineIte
   return (
     <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8, paddingVertical: 4 }}>
       {item.data.entries.map((entry) => (
-        <Text key={entry.name} style={{ color: entry.changed ? theme.colors.foreground : theme.colors.foregroundMuted, fontSize: 13 }}>
+        <Text key={entry.name} style={{ color: entry.changed ? theme.colors.foreground : theme.colors.foregroundMuted, fontSize: TYPE.base }}>
           {describe(item.data.action, entry)}
           {counts(entry) ? <Text style={{ color: theme.colors.foregroundMuted }}> · {counts(entry)}</Text> : null}
         </Text>
       ))}
-      <Pressable onPress={() => openTags(agentId)} accessibilityRole="link" accessibilityLabel="Open tags">
-        <Text style={{ color: theme.colors.accent, fontSize: 13 }}>Open tags</Text>
+      <Pressable onPress={() => openTags(agentId)} hitSlop={8} accessibilityRole="link" accessibilityLabel="Open tags">
+        <Text style={{ color: theme.colors.accent, fontSize: TYPE.base }}>Open tags</Text>
       </Pressable>
     </View>
   );

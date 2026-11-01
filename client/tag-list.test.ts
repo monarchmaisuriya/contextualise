@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { TagSummary } from "../shared/contracts";
-import { filterTags, filterPlaceholder, sortTags } from "./tag-list";
+import { filterPlaceholder, filterTags, popoverTags, selectedTag, sortTags } from "./tag-list";
 
 const tag = (name: string, agents: number, notes = 0): TagSummary => ({
   key: name,
@@ -29,4 +29,27 @@ test("the filter matches tag names, agent titles, and item titles", () => {
 test("the filter box says what there is to filter", () => {
   expect(filterPlaceholder([tag("a", 2, 1), tag("b", 1)])).toBe("Filter 2 tags, 3 agents, 1 item");
   expect(filterPlaceholder([tag("a", 0)])).toBe("Filter 1 tag");
+});
+
+test("a chosen tag stays selected; otherwise desktop shows the first listed tag and a phone the list", () => {
+  const tags = [tag("a", 1), tag("b", 1)];
+  expect(selectedTag(tags, tags, "b", false)?.name).toBe("b");
+  expect(selectedTag(tags, tags, "b", true)?.name).toBe("b");
+  expect(selectedTag(tags, [tags[1]], "a", false)?.name).toBe("a");
+  expect(selectedTag(tags, [tags[1]], null, false)?.name).toBe("b");
+  expect(selectedTag(tags, tags, "gone", false)?.name).toBe("a");
+  expect(selectedTag(tags, tags, null, true)).toBeUndefined();
+  expect(selectedTag(tags, tags, "gone", true)).toBeUndefined();
+  expect(selectedTag([], [], null, false)).toBeUndefined();
+});
+
+test("the popover field filters other tags by the name being typed and never hides the agent's own", () => {
+  const tags = [tag("auth", 1), tag("billing", 0), tag("bills", 0), tag("api", 0)];
+  const mineOf = (typed: string) => popoverTags(tags, "auth-0", typed);
+  expect(mineOf("").mine.map((t) => t.name)).toEqual(["auth"]);
+  expect(mineOf("").others.map((t) => t.name)).toEqual(["billing", "bills", "api"]);
+  expect(mineOf("BIL").others.map((t) => t.name)).toEqual(["billing", "bills"]);
+  expect(mineOf("api, bill").others.map((t) => t.name)).toEqual(["billing", "bills"]);
+  expect(mineOf("zzz").mine.map((t) => t.name)).toEqual(["auth"]);
+  expect(popoverTags(Array.from({ length: 30 }, (_, i) => tag(`t${i}`, 0)), "x", "").others).toHaveLength(24);
 });

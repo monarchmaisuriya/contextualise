@@ -8,6 +8,6 @@ import { expect, test } from "vitest";
 // the server's tags.list and agents.describe carry the names instead.
 test("no client code uses Paseo's panel-only state hooks", () => {
   const root = join(__dirname, "..");
-  const files = [join(root, "index.client.tsx"), ...readdirSync(__dirname).filter((name) => /\.tsx?$/.test(name) && !name.includes(".test.")).map((name) => join(__dirname, name))];
+  const files = [join(root, "index.client.tsx"), ...readdirSync(__dirname, { recursive: true, encoding: "utf8" }).filter((name) => /\.tsx?$/.test(name) && !name.includes(".test.")).map((name) => join(__dirname, name))];
   for (const file of files) expect(readFileSync(file, "utf8"), file).not.toMatch(/\buse(Agent|Workspace)\s*\(|import[^;]*\buse(Agent|Workspace)\b/);
 });

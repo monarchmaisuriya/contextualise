@@ -27,3 +27,22 @@ export function filterPlaceholder(tags: readonly TagSummary[]): string {
   const items = tags.reduce((sum, tag) => sum + tag.notes.length, 0);
   return `Filter ${[plural(tags.length, "tag"), agents > 0 ? plural(agents, "agent") : null, items > 0 ? plural(items, "item") : null].filter(Boolean).join(", ")}`;
 }
+
+// The tag whose detail shows. A chosen tag stays chosen while it exists, even when the filter hides
+// it; with none chosen, a desktop window shows the first listed tag and a phone shows the list.
+export function selectedTag(all: readonly TagSummary[], shown: readonly TagSummary[], chosen: string | null, compact: boolean): TagSummary | undefined {
+  const kept = chosen === null ? undefined : all.find((tag) => tag.key === chosen);
+  return kept ?? (compact ? undefined : shown[0]);
+}
+
+const OTHER_TAGS_SHOWN = 24;
+
+// The popover's one field both names tags to add ("auth, billing") and filters the tags offered:
+// only the part after the last comma filters, so the next name narrows the chips as it is typed.
+// The agent's own tags never filter away, so removing one is always a press away.
+export function popoverTags(tags: readonly TagSummary[], agentId: string, typed: string): { mine: TagSummary[]; others: TagSummary[] } {
+  const wanted = (typed.split(",").pop() ?? "").trim().toLowerCase();
+  const mine = tags.filter((tag) => tag.agents.some((member) => member.agentId === agentId));
+  const others = tags.filter((tag) => !mine.includes(tag) && tag.name.toLowerCase().includes(wanted)).slice(0, OTHER_TAGS_SHOWN);
+  return { mine, others };
+}
