@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import type { Project } from "../../shared/knowledge";
 import { type ProjectRoot, projectName, projectRoot } from "./git";
-import { storedFacts, updateFacts } from "./facts";
+import { factsAreCurrent, updateFacts } from "./facts";
 import { type IndexChange, type IndexerOptions, indexRepo } from "./indexer";
 import { cleanTitle } from "../rows";
 import { ProjectKeys } from "./projects";
@@ -142,8 +142,9 @@ export class KnowledgeBase {
       run = (async () => {
         const store = await this.open(repo);
         const changes = await indexRepo(repo, store, { symbols: this.deps.symbols, ...(await this.deps.indexOptions()) });
-        // The project's structure follows its files: rebuilt when any changed, or made by another version.
-        if (changes.length > 0 || !storedFacts(store)) await updateFacts(repo, store);
+        // The project's structure follows its files: rebuilt when any changed, when files were indexed
+        // after it was built (a refresh that stopped), or when another version made it.
+        if (changes.length > 0 || !factsAreCurrent(store)) await updateFacts(repo, store, { pruneExplanations: true });
         this.problems.delete(repo.key);
         this.freshUntil.set(repo.key, this.now() + FRESH_MS);
         if (changes.length > 0 && this.deps.onChanges) {

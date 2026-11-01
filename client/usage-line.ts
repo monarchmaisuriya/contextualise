@@ -9,6 +9,7 @@ export function usageLine(usage: KnowledgeUsage): string | null {
     plural(usage.calls.knowledge_read, "read"),
     plural(usage.calls.knowledge_outline, "outline"),
     plural(usage.calls.knowledge_history, "history lookup"),
+    plural(usage.calls.knowledge_impact, "impact check"),
   ].filter((part) => !part.startsWith("0 "));
   return `Last ${usage.days} days: ${usage.agentsUsed} of ${plural(usage.agentsGiven, "agent")} used project knowledge${calls.length > 0 ? ` (${calls.join(", ")})` : ""}.`;
 }

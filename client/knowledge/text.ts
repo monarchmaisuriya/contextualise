@@ -1,4 +1,4 @@
-import { KIND_LABELS, type KnowledgeEntry, type ProjectFacts } from "../../shared/knowledge";
+import { type FileConnections, KIND_LABELS, type KnowledgeEntry, type ProjectFacts } from "../../shared/knowledge";
 import { plural } from "../plural";
 
 const GLANCE_LANGUAGES = 2;
@@ -37,3 +37,16 @@ export function readerBody(entry: Pick<KnowledgeEntry, "kind" | "path" | "body">
   if (entry.kind !== "code") return { text: entry.body, plain: false };
   return { text: `\`\`\`${FENCE_LANGUAGE[entry.path.split(".").pop() ?? ""] ?? ""}\n${entry.body}\n\`\`\``, plain: false };
 }
+
+// A code file's connections as the reader lists them: each group's files, or "None found".
+export function connectionGroups(connections: FileConnections): { label: string; lines: string[] }[] {
+  const lines = (files: FileConnections["imports"]) => (files.total === 0 ? ["None found"] : [...files.paths, ...(files.total > files.paths.length ? [`and ${files.total - files.paths.length} more`] : [])]);
+  return [
+    { label: "Imports", lines: lines(connections.imports) },
+    { label: "Used by", lines: lines(connections.usedBy) },
+    { label: "Tests", lines: lines(connections.tests) },
+  ];
+}
+
+export const CONNECTIONS_NOTE = "From the imports Contextualise can follow in TypeScript, JavaScript, Python, and Go; dynamic imports and path aliases are not seen.";
+export const CONNECTIONS_UPDATING = "The index is still being refreshed, so these may be incomplete.";

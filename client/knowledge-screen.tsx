@@ -10,7 +10,7 @@ import { ICONS } from "./icons";
 import { ActionSheet, ago, Button, IconButton, ListRow, Page, plural, Prose, ReaderSheet, SearchField, SectionHeader, Segmented, StateView, type Styles, Toggle, useActionSheet, usePagedList, useStyles } from "./kit";
 import { entryMeta, glanceLine, readerBody } from "./knowledge/text";
 import { memoriseNote } from "./memorise-note";
-import { AreaPage, AreasSection, AreasView, BusySection, EntryBody, type ReadTarget, TaskRow, useFacts } from "./project-map";
+import { AreaPage, AreasSection, AreasView, BusySection, Connections, EntryBody, type ReadTarget, TaskRow, useFacts } from "./project-map";
 import { overviewLine, usageLine } from "./usage-line";
 
 const PROJECTS_QUERY = ["contextualise", "knowledge", "projects"];
@@ -109,6 +109,7 @@ function EntryReader({ repoKey, target, pins, onClose, styles }: { repoKey: stri
       meta={entry.data ? entryMeta(entry.data) : undefined}
       error={entry.error ? errorText(entry.error) : undefined}
       pin={{ pinned: pins.isPinned(target.id), onChange: (pinned) => pins.setPinned(target.id, pinned) }}
+      footer={entry.data?.connections ? <Connections connections={entry.data.connections} styles={styles} /> : undefined}
       onClose={onClose}
       styles={styles}
     />

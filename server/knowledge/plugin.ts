@@ -257,7 +257,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   });
   server.handle(readKnowledgeRpc, async ({ repoKey, id }, { paseo }) => {
     remember(paseo);
-    return service.read(await project(repoKey), id);
+    return service.read(await project(repoKey), id, { connections: true });
   });
   server.handle(listTasksRpc, async ({ repoKey, limit, offset }) => service.tasks(await project(repoKey), limit, offset));
   server.handle(projectFactsRpc, async ({ repoKey }) => service.facts(await project(repoKey)));

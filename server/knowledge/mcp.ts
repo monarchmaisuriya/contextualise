@@ -3,10 +3,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { areaLabel } from "../../shared/diagram";
-import { KNOWLEDGE_KINDS, KNOWLEDGE_TOOLS, type KnowledgeEntry, type KnowledgeTool, type SearchHit } from "../../shared/knowledge";
+import { type FileConnections, KNOWLEDGE_KINDS, KNOWLEDGE_TOOLS, type KnowledgeEntry, type KnowledgeTool, type SearchHit } from "../../shared/knowledge";
 import type { AgentScope, TokenAuthority } from "./auth";
 import { projectRoot } from "./git";
-import type { KnowledgeService } from "./service";
+import type { Impact, KnowledgeService } from "./service";
 import type { UsageLog } from "./usage";
 
 // A distinctive name: permission requests are recognised by it, so a user's own server must not share it.
@@ -19,7 +19,7 @@ export { KNOWLEDGE_TOOLS };
 // them. Kept short: Claude Code cuts server instructions at 4,096 characters.
 // When to use the tools, said the same way in the project map and in the server's instructions.
 export function whenToUseKnowledge(server: string): string {
-  return `At the start of a task, search with knowledge_search (MCP server ${server}) for docs, decisions, and earlier work on the same area. Do this before reading docs or changing code. Open hits with knowledge_read; knowledge_outline and knowledge_history show a file's parts and past changes. Use grep for exact code.`;
+  return `At the start of a task, search with knowledge_search (MCP server ${server}) for docs, decisions, and earlier work on the same area. Do this before reading docs or changing code. Open hits with knowledge_read; knowledge_outline and knowledge_history show a file's parts and past changes. Before changing code, knowledge_impact lists what uses those files and the tests to run. Use grep for exact code.`;
 }
 const INSTRUCTIONS = `This server holds this repository's own knowledge: architecture docs, conventions, ADRs (decisions, with status), other docs, code symbols, and what agents did here before (request, files, outcome). ${whenToUseKnowledge(KNOWLEDGE_SERVER)}`;
 const tool = (name: KnowledgeTool) => name;
@@ -41,6 +41,36 @@ function describeHit(hit: SearchHit): string {
   ].join("\n");
 }
 
+// Said with every list of linked files: what the links can and cannot see.
+const LINKS_COVER = "(From imports the index resolves in TypeScript, JavaScript, Python, and Go; dynamic imports and path aliases are not seen, so check with grep before relying on \"none\".)";
+
+const filesCount = (count: number) => `${count} ${count === 1 ? "file" : "files"}`;
+const someFiles = (files: { paths: string[]; total: number }) => (files.total === 0 ? "none found" : `${files.paths.join(", ")}${files.total > files.paths.length ? `, and ${files.total - files.paths.length} more` : ""}`);
+
+const NOT_FRESH = "The index is still being refreshed, or the last refresh failed, so these links may be incomplete.";
+
+function describeConnections(connections: FileConnections): string[] {
+  return [...(connections.fresh ? [] : [NOT_FRESH]), `Imports (in this project): ${someFiles(connections.imports)}`, `Used by: ${someFiles(connections.usedBy)}`, `Tests: ${someFiles(connections.tests)}`, LINKS_COVER];
+}
+
+function describeImpact(impact: Impact): string {
+  if (!impact.codeIndexed) return "No code is indexed in this project, so there are no links to follow. Code indexing may be off (Contextualise settings > Include code).";
+  return [
+    ...(impact.fresh ? [] : [NOT_FRESH]),
+    impact.changed.length > 0 ? `Changing ${filesCount(impact.changed.length)} of code: ${impact.changed.slice(0, 30).join(", ")}${impact.changed.length > 30 ? `, and ${impact.changed.length - 30} more` : ""}` : "None of these paths is an indexed code file.",
+    ...(impact.unknown.length > 0 ? [`Not indexed (not code, ignored, or new since the last refresh): ${impact.unknown.join(", ")}`] : []),
+    ...(impact.changed.length > 0
+      ? [
+          `Used directly by ${filesCount(impact.direct.total)}: ${someFiles(impact.direct)}`,
+          `Used through those by ${filesCount(impact.further)} more.`,
+          `Areas: ${impact.areas.length > 0 ? impact.areas.map(areaLabel).join(", ") : "none"}`,
+          `Tests to run: ${someFiles(impact.tests)}`,
+          LINKS_COVER,
+        ]
+      : []),
+  ].join("\n");
+}
+
 function describeEntry(entry: KnowledgeEntry): string {
   return [
     `[${entry.id}] ${entry.kind}: ${entry.title}${entry.path ? ` (${entry.path}${entry.line > 0 ? `:${entry.line}` : ""})` : ""}`,
@@ -48,6 +78,7 @@ function describeEntry(entry: KnowledgeEntry): string {
     "Quoted from the repository; verify before relying on it:",
     entry.body,
     ...(entry.relatedMemories.length > 0 ? [`Memorise memories about this file (read with memory_read): ${entry.relatedMemories.map((memory) => `${memory.id} "${memory.subject}"`).join("; ")}`] : []),
+    ...(entry.connections ? [`In ${entry.path}:`, ...describeConnections(entry.connections)] : []),
   ].join("\n");
 }
 
@@ -112,7 +143,7 @@ export class KnowledgeMcp {
       async ({ id }) => {
         void count("knowledge_read");
         try {
-          return text(describeEntry(await this.service.read(repo, id)));
+          return text(describeEntry(await this.service.read(repo, id, { connections: true })));
         } catch (error) {
           return failure(error);
         }
@@ -131,7 +162,9 @@ export class KnowledgeMcp {
           const facts = await this.service.structure(repo);
           if (facts.areas.some((area) => area.path === folder && folder !== "")) return text(describeArea(await this.service.area(repo, folder)));
           const outline = await this.service.outline(repo, path);
-          return text(outline.length > 0 ? outline.map((entry) => `${entry.line}: ${entry.kind === "code" ? "" : "§ "}${entry.title}  [${entry.id}]`).join("\n") : `Nothing indexed for ${path}. It may be outside the index, too large, or not a document or code file.`);
+          if (outline.length === 0) return text(`Nothing indexed for ${path}. It may be outside the index, too large, or not a document or code file.`);
+          const parts = outline.map((entry) => `${entry.line}: ${entry.kind === "code" ? "" : "§ "}${entry.title}  [${entry.id}]`);
+          return text([...parts, ...(outline.some((entry) => entry.kind === "code") ? ["", ...describeConnections(await this.service.connections(repo, path))] : [])].join("\n"));
         } catch (error) {
           return failure(error);
         }
@@ -152,6 +185,21 @@ export class KnowledgeMcp {
               ? tasks.map((task) => `[${task.id}] ${task.endedAt.slice(0, 10)} ${task.generatedTitle ?? task.title} (${task.outcome})${task.needsCheck ? " [needs check: its files changed since]" : ""}${task.summary ? `\n  ${task.summary}` : ""}`).join("\n")
               : `No finished task changed ${path}.`,
           );
+        } catch (error) {
+          return failure(error);
+        }
+      },
+    );
+    mcp.registerTool(
+      tool("knowledge_impact"),
+      {
+        description: "Before or after changing code: given files or folders, list the files that use them directly, how many more depend on those, the areas touched, and the test files to run.",
+        inputSchema: { paths: z.array(z.string().min(1).max(300)).min(1).max(50).describe("Files or folders relative to the project root") },
+      },
+      async ({ paths }) => {
+        void count("knowledge_impact");
+        try {
+          return text(describeImpact(await this.service.impact(repo, paths)));
         } catch (error) {
           return failure(error);
         }

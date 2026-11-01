@@ -2,6 +2,22 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.20.0 - 2026-11-01
+
+### Added
+
+- A fifth knowledge tool, `knowledge_impact`: given files or folders an agent is about to change, it lists the files that use them directly, how many more use those, the areas touched, and the test files to run.
+- `knowledge_read` and `knowledge_outline` on code, and the Project knowledge reader, now say what the file imports in the project, which files import it, and which test files cover it. Links come from the imports already read for TypeScript, JavaScript, Python, and Go; a Go import or test covers the whole package; a test covers what it imports, and its subject by name (`x_test.go`, `test_x.py`, `x.test.ts`, `__tests__/x.ts`, Mocha's `test/x.js`). Test helpers in test folders are not listed as tests. Every answer says that dynamic imports and path aliases are not seen, and when the index is still being refreshed.
+- The map's one line on when to use the tools now mentions `knowledge_impact` before changing code.
+
+### Fixed
+
+- A project's areas and links are rebuilt when files were indexed after they were built, even when a refresh stopped between the two steps. Before, they could stay out of date until another file changed.
+
+### Changed
+
+- Every index rebuilds its areas once after the update, to add the links between files. No files are read again.
+
 ## 0.19.1 - 2026-11-01
 
 ### Fixed

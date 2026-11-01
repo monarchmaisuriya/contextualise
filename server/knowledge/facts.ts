@@ -7,7 +7,8 @@ import { SKIPPED_FOLDERS } from "./sources";
 import type { KnowledgeStore } from "./store";
 import type { CodeImport, CodeSymbol } from "./symbols";
 
-export const FACTS_VERSION = 1;
+// 2: links between files are kept with the facts, so indexes made before them rebuild once.
+export const FACTS_VERSION = 2;
 // A folder holding more than this share of the code, with at least SPLIT_MIN_CHILDREN subfolders
 // of code, is a container ("apps/", "packages/", "src/"), and its subfolders are the areas.
 const SPLIT_SHARE = 0.4;
@@ -48,6 +49,23 @@ function areaFolders(path: string): string[] {
   const folders = path.split("/").slice(0, -1);
   const cut = folders.findIndex((folder) => NOT_AREAS.has(folder.toLowerCase()));
   return cut === -1 ? folders : folders.slice(0, cut);
+}
+
+// A file named as a test, or where test runners look by default (Jest: in __tests__; Mocha: script
+// files in the top-level test folder): one that can be a test to run, unlike helpers and fixtures
+// that live in test folders.
+function isTestNamed(path: string): boolean {
+  const folders = path.split("/");
+  const name = folders.pop() ?? "";
+  if (TEST_FILE.test(name)) return true;
+  const isScript = SCRIPT_EXTENSIONS.includes(extname(name).toLowerCase());
+  return isScript && (folders.at(-1) === "__tests__" || (folders.length === 1 && folders[0] === "test"));
+}
+
+// A Go package as a link target: its folder with a trailing slash ("/" for the module root). A Go
+// import uses the whole package, so links go to the package, not to each of its files.
+export function goPackage(folder: string): string {
+  return `${folder === "." ? "" : folder}/`;
 }
 
 export function isTestFile(path: string): boolean {
@@ -167,7 +185,44 @@ function resolvePython(from: string, entry: CodeImport, roots: readonly string[]
   return [];
 }
 
+// One file using another: `imports` for a resolved project import, `tests` from a test file to the
+// file it covers (by import or by naming convention).
+export interface FileLink {
+  from: string;
+  to: string;
+  kind: "imports" | "tests";
+}
+
 export function buildFacts(input: FactsInput): ProjectFacts {
+  return analyseCode(input).facts;
+}
+
+// What a test covers by naming convention: x_test.go -> its package; test_x.py or x_test.py -> x.py
+// beside it, else the only x.py in the project; x.test.ts, x.spec.ts, or __tests__/x.ts -> x.<script>
+// beside it, or one folder up from __tests__.
+function testSubjects(test: string, code: ReadonlySet<string>, pythonByName: ReadonlyMap<string, string[]>, goPackages: ReadonlySet<string>): string[] {
+  const folder = posix.dirname(test) === "." ? "" : posix.dirname(test);
+  const join = (dir: string, name: string) => (dir === "" ? name : `${dir}/${name}`);
+  const name = posix.basename(test);
+  const go = /^(.+)_test\.go$/.exec(name);
+  if (go) return goPackages.has(goPackage(folder)) ? [goPackage(folder)] : [];
+  const python = /^test_(.+)\.py$/.exec(name) ?? /^(.+)_test\.py$/.exec(name);
+  if (python) {
+    const beside = join(folder, `${python[1]}.py`);
+    if (code.has(beside) && !isTestFile(beside)) return [beside];
+    const named = pythonByName.get(`${python[1]}.py`) ?? [];
+    return named.length === 1 ? named : [];
+  }
+  const inTests = posix.basename(folder) === "__tests__";
+  const script = /^(.+)\.(test|spec)\.[cm]?[jt]sx?$/.exec(name) ?? (inTests ? /^(.+)\.[cm]?[jt]sx?$/.exec(name) : null);
+  if (!script) return [];
+  const folders = inTests ? [folder, posix.dirname(folder) === "." ? "" : posix.dirname(folder)] : [folder];
+  for (const dir of folders) for (const extension of SCRIPT_EXTENSIONS) if (join(dir, `${script[1]}${extension}`) !== test && code.has(join(dir, `${script[1]}${extension}`))) return [join(dir, `${script[1]}${extension}`)];
+  return [];
+}
+
+// The project's facts, and the links between its code files that the facts are built from.
+export function analyseCode(input: FactsInput): { facts: ProjectFacts; fileLinks: FileLink[] } {
   const files = input.files.filter((file) => LANGUAGES[extname(file.path).toLowerCase()]);
   const placed = placeAreas(files.map((file) => file.path));
   const sizes = new Map<string, number>();
@@ -185,6 +240,7 @@ export function buildFacts(input: FactsInput): ProjectFacts {
   const goModule = /^module\s+(\S+)/m.exec(input.manifests.get("go.mod") ?? "")?.[1] ?? null;
   const goFolders = new Map<string, string>();
   for (const file of files) if (file.path.endsWith(".go") && !goFolders.has(posix.dirname(file.path))) goFolders.set(posix.dirname(file.path), file.path);
+  const goPackages = new Set(files.filter((file) => file.path.endsWith(".go") && !isTestFile(file.path)).map((file) => goPackage(posix.dirname(file.path))));
   const declared = declaredLibraries(input.manifests);
   const definitions = new Map<string, Map<string, Pick<CodeSymbol, "name" | "kind" | "line">>>();
   const byName = new Map<string, string[]>();
@@ -196,6 +252,7 @@ export function buildFacts(input: FactsInput): ProjectFacts {
   const links = new Map<string, Set<string>>();
   const keyUses = new Map<string, { area: string; path: string; name: string; users: Set<string> }>();
   const importedBy = new Map<string, Set<string>>();
+  const fileImports = new Set<string>();
   const libraryUsers = new Map<string, Set<string>>();
   const useLibrary = (name: string, user: string) => libraryUsers.set(name, (libraryUsers.get(name) ?? new Set()).add(user));
   for (const file of files) {
@@ -208,8 +265,9 @@ export function buildFacts(input: FactsInput): ProjectFacts {
         if (targets.length === 0 && library && !entry.spec.startsWith(".")) useLibrary(library, file.path);
       } else if (language === "Go") {
         const folder = goModule && (entry.spec === goModule || entry.spec.startsWith(`${goModule}/`)) ? entry.spec.slice(goModule.length + 1) : null;
-        const target = folder !== null ? goFolders.get(folder) : undefined;
+        const target = folder !== null ? goFolders.get(folder === "" ? "." : folder) : undefined;
         if (target) targets = [{ target, names: [] }];
+        if (folder !== null && goPackages.has(goPackage(folder))) fileImports.add(`${file.path}\0${goPackage(folder)}`);
         const library = declared.go.find((module) => entry.spec === module || entry.spec.startsWith(`${module}/`));
         if (library) useLibrary(library, file.path);
       } else {
@@ -225,6 +283,7 @@ export function buildFacts(input: FactsInput): ProjectFacts {
       for (const { target, names } of targets) {
         if (target === file.path || !placed.has(target)) continue;
         importedBy.set(target, (importedBy.get(target) ?? new Set()).add(file.path));
+        if (language !== "Go") fileImports.add(`${file.path}\0${target}`);
         const to = areaFor(target);
         if (to === from) continue;
         links.set(`${from}\0${to}`, (links.get(`${from}\0${to}`) ?? new Set()).add(`${file.path}\0${target}`));
@@ -282,7 +341,26 @@ export function buildFacts(input: FactsInput): ProjectFacts {
   const languages: Record<string, number> = {};
   for (const file of files) languages[LANGUAGES[extname(file.path).toLowerCase()]] = (languages[LANGUAGES[extname(file.path).toLowerCase()]] ?? 0) + 1;
   const linkList = [...links.entries()].map(([key, pairs]) => ({ from: key.split("\0")[0], to: key.split("\0")[1], count: pairs.size })).sort((a, b) => b.count - a.count || a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
-  return {
+  const code = new Set(files.map((file) => file.path));
+  const pythonByName = new Map<string, string[]>();
+  for (const path of code) if (path.endsWith(".py") && !isTestFile(path)) pythonByName.set(posix.basename(path), [...(pythonByName.get(posix.basename(path)) ?? []), path]);
+  const fileLinks: FileLink[] = [];
+  const tested = new Set<string>();
+  const addTest = (test: string, subject: string) => {
+    if (tested.has(`${test}\0${subject}`)) return;
+    tested.add(`${test}\0${subject}`);
+    fileLinks.push({ from: test, to: subject, kind: "tests" });
+  };
+  for (const pair of [...fileImports].sort()) {
+    const [from, to] = pair.split("\0");
+    fileLinks.push({ from, to, kind: "imports" });
+    if (isTestNamed(from) && !isTestFile(to)) addTest(from, to);
+  }
+  for (const path of [...code].sort()) {
+    if (!isTestNamed(path)) continue;
+    for (const subject of testSubjects(path, code, pythonByName, goPackages)) if (!isTestFile(subject)) addTest(path, subject);
+  }
+  const facts: ProjectFacts = {
     version: FACTS_VERSION,
     codeFiles: files.filter((file) => !isTestFile(file.path)).length,
     testFiles: files.filter((file) => isTestFile(file.path)).length,
@@ -298,6 +376,7 @@ export function buildFacts(input: FactsInput): ProjectFacts {
       .digest("hex")
       .slice(0, 16),
   };
+  return { facts, fileLinks };
 }
 
 // Dependency lists larger than this are not read: real ones are far smaller.
@@ -306,7 +385,7 @@ const MANIFEST = /(^|\/)(package\.json|go\.mod|pyproject\.toml|requirements[^/]*
 
 // The project's facts from its index and its dependency lists on disk. Dependency lists are read at
 // the root and up to two folders down, outside dependency and build folders.
-export async function projectFacts(repo: ProjectRoot, store: KnowledgeStore): Promise<ProjectFacts> {
+async function analyseProject(repo: ProjectRoot, store: KnowledgeStore): Promise<{ facts: ProjectFacts; fileLinks: FileLink[] }> {
   const allPaths = new Set(store.fileBlobs().keys());
   const manifests = new Map<string, string>();
   for (const path of allPaths) {
@@ -314,10 +393,11 @@ export async function projectFacts(repo: ProjectRoot, store: KnowledgeStore): Pr
     const text = await readProjectFile(repo.top, path, MANIFEST_MAX_BYTES);
     if (text !== null) manifests.set(path, text);
   }
-  return buildFacts({ files: store.codeFiles(), allPaths, manifests });
+  return analyseCode({ files: store.codeFiles(), allPaths, manifests });
 }
 
 // The facts kept in the index, or null when there are none or they were made by another version.
+// The last facts built, which may be older than the index while it is read or after a refresh stopped.
 export function storedFacts(store: KnowledgeStore): ProjectFacts | null {
   const text = store.getMeta("facts");
   if (!text) return null;
@@ -325,11 +405,37 @@ export function storedFacts(store: KnowledgeStore): ProjectFacts | null {
   return parsed.success && parsed.data.version === FACTS_VERSION ? parsed.data : null;
 }
 
-// Rebuilds the facts, and drops written explanations of areas that no longer exist, so search never
-// offers an explanation of a folder that was renamed or removed.
-export async function updateFacts(repo: ProjectRoot, store: KnowledgeStore): Promise<ProjectFacts> {
-  const facts = await projectFacts(repo, store);
+// False when files were indexed after the facts were built: a refresh then builds them again.
+export function factsAreCurrent(store: KnowledgeStore): boolean {
+  return storedFacts(store) !== null && store.getMeta("factsRevision") === store.sourcesRevision();
+}
+
+const building = new WeakMap<KnowledgeStore, Promise<ProjectFacts>>();
+
+// Facts for readers: the last ones built, or, for an index that has none yet, built now, once at a
+// time. Readers never keep a refresh from rebuilding, and never drop written area explanations,
+// because the index may be half read.
+export async function factsFor(repo: ProjectRoot, store: KnowledgeStore): Promise<ProjectFacts> {
+  const kept = storedFacts(store);
+  if (kept) return kept;
+  let run = building.get(store);
+  if (!run) {
+    run = updateFacts(repo, store, { pruneExplanations: false }).finally(() => building.delete(store));
+    building.set(store, run);
+  }
+  return run;
+}
+
+// Rebuilds the facts and links. After a complete read of the files, also drops written explanations of
+// areas that no longer exist, so search never offers an explanation of a folder that was renamed or
+// removed.
+export async function updateFacts(repo: ProjectRoot, store: KnowledgeStore, { pruneExplanations }: { pruneExplanations: boolean }): Promise<ProjectFacts> {
+  const revision = store.sourcesRevision();
+  const { facts, fileLinks } = await analyseProject(repo, store);
+  store.replaceFileLinks(fileLinks);
   store.setMeta("facts", JSON.stringify(facts));
+  store.setMeta("factsRevision", revision);
+  if (!pruneExplanations) return facts;
   const areas = new Set(facts.areas.map((area) => area.path));
   for (const path of store.indexedSources().keys()) if (path.startsWith(AREA_PREFIX) && !areas.has(path.slice(AREA_PREFIX.length))) store.removeSource(path);
   return facts;

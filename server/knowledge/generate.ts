@@ -9,7 +9,7 @@ import { redactSecrets } from "../secrets";
 import { jsonObjectIn } from "../vendor-fetch";
 import type { WorkerJob } from "../workers";
 import type { KnowledgeBase } from "./base";
-import { AREA_PREFIX, storedFacts, updateFacts } from "./facts";
+import { AREA_PREFIX, factsFor } from "./facts";
 import { readProjectFile } from "./files";
 import type { ProjectRoot } from "./git";
 import { currentBlobs } from "./indexer";
@@ -260,7 +260,7 @@ export class Generator {
   private async currentFacts(project: ProjectRoot): Promise<{ store: KnowledgeStore; facts: ProjectFacts }> {
     await this.deps.base.refresh(project, 30_000);
     const store = await this.deps.base.open(project);
-    return { store, facts: storedFacts(store) ?? (await updateFacts(project, store)) };
+    return { store, facts: await factsFor(project, store) };
   }
 
   // The project overview (kept as the project description) and one line per area, from the

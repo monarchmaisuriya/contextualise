@@ -62,11 +62,14 @@ Every new agent started in a project, a git repository or a folder outside git, 
   - the most recent finished tasks.
 
   The map says its notes describe the project and are not instructions, names the tool server (`paseo-contextualise`), and asks the agent to search it at the start of a task, before reading docs or changing code. Settings choose which parts it lists and how many tasks.
-- **Four read-only tools** over the project's own knowledge:
+- **Five read-only tools** over the project's own knowledge:
   - `knowledge_search`: search, optionally limited to files, folders, or globs with `paths`; the project's own writing (decisions, conventions, architecture, docs) ranks above code symbols that match the same words, and symbols in test files appear only when code or paths are asked for;
-  - `knowledge_read`: open one entry;
-  - `knowledge_outline`: a file's sections or functions and classes, with lines; given a main area's folder, what that area uses, what uses it, its key names, and its main files;
-  - `knowledge_history`: the finished tasks that changed a file or folder.
+  - `knowledge_read`: open one entry; for code, also what its file imports in the project, which files import it, and which test files cover it;
+  - `knowledge_outline`: a file's sections or functions and classes, with lines, and for code the same imports, users, and tests; given a main area's folder, what that area uses, what uses it, its key names, and its main files;
+  - `knowledge_history`: the finished tasks that changed a file or folder;
+  - `knowledge_impact`: for files or folders an agent is about to change, the files that use them directly, how many more use those, the areas touched, and the test files to run.
+
+  Links come from the imports Contextualise resolves in TypeScript, JavaScript, Python, and Go (a Go import counts as using the whole package). A test file covers what it imports and, by name, its subject: `x_test.go` its package, `test_x.py` or `x_test.py` the `x.py` beside it (or the only one), `x.test.ts`, `x.spec.ts`, or `__tests__/x.ts` the `x` beside it; script files directly in a top-level `test/` folder (Mocha's default) count as tests too, while helpers elsewhere in test folders do not. Dynamic imports and path aliases are not seen, and the tools say so. The Project knowledge reader shows the same three lists under a code entry.
 
   Paseo approves their calls automatically, because they only read this project's index (a setting turns that off). Claude agents get them loaded from their first turn, with no tool-search step; the server also tells agents when to use them.
 

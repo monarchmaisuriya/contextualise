@@ -37,7 +37,16 @@ export const searchHitSchema = z.object({
 });
 export type SearchHit = z.infer<typeof searchHitSchema>;
 
-export const knowledgeEntrySchema = searchHitSchema.omit({ snippet: true }).extend({ body: z.string() });
+// Some of a list of files, and how many there are in all.
+const someFilesSchema = z.object({ paths: z.array(z.string()), total: z.number().int().min(0) });
+// A code file's links in the project, from the imports the index resolves: what it imports, the
+// files that import it (tests aside), and the test files that cover it.
+// `fresh` is false while the index is still being refreshed: the lists may then be incomplete.
+export const fileConnectionsSchema = z.object({ fresh: z.boolean(), imports: someFilesSchema, usedBy: someFilesSchema, tests: someFilesSchema });
+export type FileConnections = z.infer<typeof fileConnectionsSchema>;
+
+// `connections` comes with code entries only.
+export const knowledgeEntrySchema = searchHitSchema.omit({ snippet: true }).extend({ body: z.string(), connections: fileConnectionsSchema.optional() });
 export type KnowledgeEntry = z.infer<typeof knowledgeEntrySchema>;
 
 export const taskSummarySchema = z.object({
@@ -183,8 +192,8 @@ export const memoriseStatusRpc = defineRpc({
   output: z.object({ state: memoriseStateSchema }),
 });
 
-// The four tools an agent gets for its project's knowledge, by name.
-export const KNOWLEDGE_TOOLS = ["knowledge_search", "knowledge_read", "knowledge_outline", "knowledge_history"] as const;
+// The tools an agent gets for its project's knowledge, by name.
+export const KNOWLEDGE_TOOLS = ["knowledge_search", "knowledge_read", "knowledge_outline", "knowledge_history", "knowledge_impact"] as const;
 export type KnowledgeTool = (typeof KNOWLEDGE_TOOLS)[number];
 
 // How a project's knowledge tools were used over the last `days` days. `calls` is keyed by tool name.
