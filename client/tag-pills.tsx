@@ -3,6 +3,7 @@ import { settingsRpc } from "@getpaseo/plugin";
 import { View } from "react-native";
 import { listTagsRpc, snapshotSettings, snapshotSettingsSchema } from "../shared/contracts";
 import { AgentTags } from "./agent-tags";
+import { ICONS } from "./icons";
 import { Button, useStyles } from "./kit";
 import { pillLabel, tagNamesByAgent } from "./pill-label";
 import { onTagsChanged } from "./tag-events";
@@ -61,7 +62,7 @@ export function followAgentPills(client: PluginClientContext, openTagsFor: (agen
         agentId: agent.id,
         button: {
           title: "Tags for this agent",
-          icon: "Tags",
+          icon: ICONS.tags,
           label: label(agent.id),
           visible: display.visible,
           behavior: { kind: "popover", Content: (props) => (props.context === "agent" ? <Popover {...props} agentId={props.agentId} /> : null) },

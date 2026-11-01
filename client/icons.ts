@@ -4,6 +4,7 @@ import type { Vendor } from "../shared/contracts";
 // nothing for an unknown one, so names live here only, and a test checks each against the names
 // Paseo 0.13's bundled lucide-react-native exports.
 export const ICONS = {
+  tags: "Tags",
   agent: "Bot",
   workspace: "FolderGit2",
   link: "Link",

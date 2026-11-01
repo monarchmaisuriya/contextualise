@@ -203,19 +203,15 @@ export class KnowledgeStore {
 
   // All words must match; when nothing does, any word may. Title matches rank above body matches, and
   // at an equal match the project's own writing ranks above code symbols (SEARCH_KIND_WEIGHTS).
-  search(text: string, options: { kinds: readonly KnowledgeKind[]; limit: number }): StoredHit[] {
+  // `keep` drops hits the caller cannot use (a path filter, test files); the best `limit` kept hits come back.
+  search(text: string, options: { kinds: readonly KnowledgeKind[]; limit: number; keep?: (hit: StoredHit) => boolean }): StoredHit[] {
     const kinds = options.kinds.filter((kind) => kind !== "task");
     if (options.kinds.length > 0 && kinds.length === 0) return [];
-    for (const join of ["AND", "OR"] as const) {
-      const query = ftsQuery(text, join);
-      if (!query) return [];
-      const filter = kinds.length > 0 ? `AND kind IN (${kinds.map(() => "?").join(", ")})` : "";
-      const rows = this.db
-        .prepare(`SELECT id, kind, path, line, title, snippet(chunks, 5, '', '', ' … ', 24) AS snippet FROM chunks WHERE chunks MATCH ? ${filter} ORDER BY bm25(chunks, 0, 0, 0, 0, 5.0, 1.0) * ${KIND_WEIGHT_SQL} LIMIT ?`)
-        .all(query, ...kinds, options.limit) as unknown as StoredHit[];
-      if (rows.length > 0 || join === "OR") return rows.map((row) => ({ ...row, line: Number(row.line) }));
-    }
-    return [];
+    const filter = kinds.length > 0 ? `AND kind IN (${kinds.map(() => "?").join(", ")})` : "";
+    const statement = this.db.prepare(`SELECT id, kind, path, line, title, snippet(chunks, 5, '', '', ' … ', 24) AS snippet FROM chunks WHERE chunks MATCH ? ${filter} ORDER BY bm25(chunks, 0, 0, 0, 0, 5.0, 1.0) * ${KIND_WEIGHT_SQL} LIMIT ?`);
+    return matching(text, options.limit, options.keep ?? (() => true), (query, count) =>
+      (statement.all(query, ...kinds, count) as unknown as StoredHit[]).map((row) => ({ ...row, line: Number(row.line) })),
+    );
   }
 
   // A file's sections or code symbols in line order.
@@ -267,15 +263,27 @@ export class KnowledgeStore {
     return row ? (JSON.parse(row.record) as TaskRecord) : null;
   }
 
-  searchTasks(text: string, limit: number): { task: TaskRecord; snippet: string }[] {
-    for (const join of ["AND", "OR"] as const) {
-      const query = ftsQuery(text, join);
-      if (!query) return [];
-      const rows = this.db
-        .prepare("SELECT t.record AS record, snippet(tasks_text, 2, '', '', ' … ', 24) AS snippet FROM tasks_text JOIN tasks t ON t.id = tasks_text.id WHERE tasks_text MATCH ? ORDER BY bm25(tasks_text, 0, 5.0, 1.0, 2.0) LIMIT ?")
-        .all(query, limit) as { record: string; snippet: string }[];
-      if (rows.length > 0 || join === "OR") return rows.map((row) => ({ task: JSON.parse(row.record) as TaskRecord, snippet: row.snippet }));
-    }
-    return [];
+  searchTasks(text: string, limit: number, keep: (hit: { task: TaskRecord; snippet: string }) => boolean = () => true): { task: TaskRecord; snippet: string }[] {
+    const statement = this.db.prepare("SELECT t.record AS record, snippet(tasks_text, 2, '', '', ' … ', 24) AS snippet FROM tasks_text JOIN tasks t ON t.id = tasks_text.id WHERE tasks_text MATCH ? ORDER BY bm25(tasks_text, 0, 5.0, 1.0, 2.0) LIMIT ?");
+    return matching(text, limit, keep, (query, count) => (statement.all(query, count) as { record: string; snippet: string }[]).map((row) => ({ task: JSON.parse(row.record) as TaskRecord, snippet: row.snippet })));
   }
+}
+
+// The best `limit` ranked rows that `keep` accepts: all words first, any word when none of those is kept.
+// The window grows until enough rows are kept or every match was read, so a filter that drops most of
+// the top matches still fills the limit.
+function matching<Row>(text: string, limit: number, keep: (row: Row) => boolean, rows: (query: string, count: number) => Row[]): Row[] {
+  for (const join of ["AND", "OR"] as const) {
+    const query = ftsQuery(text, join);
+    if (!query) return [];
+    for (let count = Math.max(limit, 1) * 5; ; count *= 4) {
+      const page = rows(query, count);
+      const kept = page.filter(keep);
+      if (kept.length >= limit || page.length < count) {
+        if (kept.length > 0 || join === "OR") return kept.slice(0, limit);
+        break;
+      }
+    }
+  }
+  return [];
 }

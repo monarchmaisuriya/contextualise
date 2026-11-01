@@ -118,4 +118,13 @@ describe("KnowledgeService search", () => {
     expect(await paths(["code"])).toEqual(["jobs/queue.test.ts", "jobs/queue.ts"]);
     expect(await paths([], ["jobs/"])).toEqual(["jobs/queue.test.ts", "jobs/queue.ts"]);
   });
+
+  it("fills the limit when most of the best matches are left out", async () => {
+    const symbol = (name: string, signature: string) => ({ name, kind: "function" as const, line: 1, signature, params: 0, shape: "s" });
+    for (let index = 0; index < 30; index += 1) store.replaceSource({ path: `jobs/t${index}.test.ts`, kind: "code", blob: `t${index}`, chunks: [], symbols: [symbol("drainQueue", "drainQueue")] });
+    // Longer text ranks lower, so these come after every test-file match.
+    for (const name of ["a", "b", "c"]) store.replaceSource({ path: `jobs/${name}.ts`, kind: "code", blob: name, chunks: [], symbols: [symbol("drainQueue", `drainQueue ${"padding words that make this match rank lower ".repeat(8)}`)] });
+    expect((await service.search(repo, "drain queue", [], 4)).map((hit) => hit.path).sort()).toEqual(["jobs/a.ts", "jobs/b.ts", "jobs/c.ts", "jobs/queue.ts"]);
+    expect((await service.search(repo, "drain queue", [], 4, ["jobs/c.ts"])).map((hit) => hit.path)).toEqual(["jobs/c.ts"]);
+  });
 });

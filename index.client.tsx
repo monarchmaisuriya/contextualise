@@ -30,7 +30,7 @@ import { knowledgeAttachmentSource } from "./shared/knowledge";
 
 // Shown, hidden, and moved under Paseo's Settings > Sidebar.
 function TagsSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
-  return <SidebarRow icon="Tags" active={currentScreen?.screenId === "tags"} onPress={() => openScreen({ screenId: "tags" })} />;
+  return <SidebarRow icon={ICONS.tags} active={currentScreen?.screenId === "tags"} onPress={() => openScreen({ screenId: "tags" })} />;
 }
 
 function KnowledgeSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
@@ -105,7 +105,7 @@ export default function contribute(client: PluginClientContext) {
     client.addCommandCenterItem({
       id: "tag-agent",
       title: "Tag this agent...",
-      icon: "Tags",
+      icon: ICONS.tags,
       keywords: ["tag", "label", "contextualise"],
       context: "agent",
       onSelect({ agent }) {
@@ -117,7 +117,7 @@ export default function contribute(client: PluginClientContext) {
       client.addCommandCenterItem({
         id: pinned ? "pin-agent" : "unpin-agent",
         title: pinned ? "Pin this agent (first in Attach > Agent conversation)" : "Unpin this agent",
-        icon: pinned ? "Pin" : "PinOff",
+        icon: pinned ? ICONS.pin : ICONS.unpin,
         keywords: ["pin", "unpin", "favorite", "contextualise"],
         context: "agent",
         async onSelect({ agent, rpc }) {
@@ -149,7 +149,7 @@ export default function contribute(client: PluginClientContext) {
     client.addCommandCenterItem({
       id: "open-tags",
       title: "Open tags",
-      icon: "Tags",
+      icon: ICONS.tags,
       keywords: ["tag", "label", "contextualise"],
       context: "global",
       onSelect({ openScreen }) {

@@ -2,6 +2,15 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.19.1 - 2026-11-01
+
+### Fixed
+
+- The project knowledge switch now looks like Paseo's own: an accent track with a knob in the theme's accent text colour when on, a white knob when off, at Paseo's size. Before, its knob kept the platform's default teal on the web and Android, so it clashed with every theme, and screen readers were not told whether it was on.
+- Search fills the number of results asked for when most of the best matches are left out (symbols from test files, or files outside the paths asked for). Before, it read a fixed five times the limit and could come back short, or empty.
+- The project knowledge screen remembers the last project per host, so switching between computers no longer carries one computer's choice to another.
+- The Memorise install or update command is in its own settings row with a Copy command button, so it can be copied on a phone too, instead of inside an info tooltip.
+
 ## 0.19.0 - 2026-11-01
 
 ### Changed

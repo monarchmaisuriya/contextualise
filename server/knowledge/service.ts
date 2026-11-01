@@ -55,14 +55,11 @@ export class KnowledgeService {
     const blobs = wantsTasks ? store.fileBlobs() : new Map<string, string>();
     const within = (path: string) => paths.length === 0 || paths.some((wanted) => path === wanted || path.startsWith(`${wanted.replace(/\/+$/, "")}/`)) || anyGlob(paths, path);
     // Symbols in test files rarely answer a question about the project; they come back only when the
-    // agent asks for code or for paths. With a filter, more candidates are read so enough survive it.
+    // agent asks for code or for paths.
     const keepTests = kinds.includes("code") || paths.length > 0;
-    const fetch = paths.length > 0 || !keepTests ? limit * 5 : limit;
     const tasks = wantsTasks
       ? store
-          .searchTasks(query, Math.min(MAX_TASK_HITS, fetch))
-          .filter(({ task }) => paths.length === 0 || task.files.some(within))
-          .slice(0, Math.min(MAX_TASK_HITS, limit))
+          .searchTasks(query, Math.min(MAX_TASK_HITS, limit), ({ task }) => paths.length === 0 || task.files.some(within))
           .map(({ task, snippet }) => ({
           id: task.id,
           kind: "task" as const,
@@ -74,9 +71,7 @@ export class KnowledgeService {
         }))
       : [];
     const sources = store
-      .search(query, { kinds, limit: fetch })
-      .filter((hit) => within(hit.path) && (keepTests || hit.kind !== "code" || !isTestFile(hit.path)))
-      .slice(0, limit - tasks.length)
+      .search(query, { kinds, limit: limit - tasks.length, keep: (hit) => within(hit.path) && (keepTests || hit.kind !== "code" || !isTestFile(hit.path)) })
       .map((hit) => ({ ...hit, needsCheck: hit.kind === "adr" && store.sourceStatus(hit.path)?.status === "superseded" }));
     return this.withRelated(repo.key, [...sources, ...tasks]);
   }
