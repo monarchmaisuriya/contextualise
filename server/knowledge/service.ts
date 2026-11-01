@@ -1,6 +1,7 @@
-import { type Busy, busySchema, type KnowledgeEntry, type KnowledgeKind, type ProjectFacts, type RelatedMemory, type SearchHit } from "../../shared/knowledge";
+import { posix } from "node:path";
+import { type Busy, busySchema, type FileConnections, type KnowledgeEntry, type KnowledgeKind, type ProjectFacts, type RelatedMemory, type SearchHit } from "../../shared/knowledge";
 import type { KnowledgeBase } from "./base";
-import { AREA_PREFIX, areaOf, isTestFile, storedFacts, updateFacts } from "./facts";
+import { AREA_PREFIX, areaOf, factsAreCurrent, factsFor, goPackage, isTestFile } from "./facts";
 import type { ProjectRoot } from "./git";
 import { BUSY_DAYS, recentChanges } from "./history";
 import type { KnowledgeStore, TaskRecord } from "./store";
@@ -15,6 +16,34 @@ const BUSY_REFRESH_MS = 10 * 60_000;
 const AREA_BUSY = 8;
 const AREA_DOCUMENTS = 10;
 const AREA_TASKS = 5;
+// Linked files listed by name; longer lists say how many more there are.
+const CONNECTIONS_SHOWN = 20;
+const IMPACT_SHOWN = 30;
+
+export interface Impact {
+  // False while the index is still being refreshed, or when the refresh failed.
+  fresh: boolean;
+  // False when the project has no code in the index, as when code indexing is off.
+  codeIndexed: boolean;
+  changed: string[];
+  // Inputs that match no indexed code file.
+  unknown: string[];
+  direct: { paths: string[]; total: number };
+  // Files that use a directly affected file, counted once.
+  further: number;
+  areas: string[];
+  tests: { paths: string[]; total: number };
+}
+
+// A path as the index keeps it: no leading ./ or /, no trailing /.
+const projectPath = (path: string) => path.replace(/^\.?\//, "").replace(/\/+$/, "");
+const someOf = (paths: readonly string[], shown: number) => ({ paths: paths.slice(0, shown), total: paths.length });
+const unique = (paths: Iterable<string>) => [...new Set(paths)].sort();
+// What other files link to for this file: the file, and for Go code its package too.
+const linkTargets = (path: string) => (path.endsWith(".go") && !isTestFile(path) ? [path, goPackage(posix.dirname(path))] : [path]);
+// Files that import any of these, tests aside (they are listed as tests).
+const usersOf = (store: KnowledgeStore, paths: readonly string[]) => unique(paths.flatMap(linkTargets).flatMap((target) => store.linkedFiles(target, "to", "imports"))).filter((user) => !isTestFile(user));
+const testsOf = (store: KnowledgeStore, paths: readonly string[]) => unique(paths.flatMap(linkTargets).flatMap((target) => store.linkedFiles(target, "to", "tests")));
 
 export type RelatedLookup = (repoKey: string, path: string) => Promise<RelatedMemory[]>;
 
@@ -39,8 +68,64 @@ export class KnowledgeService {
   // A failed re-index (a deleted worktree, an unreadable folder) is the project's problem, shown with
   // it and logged by the base; what was indexed before is still the best answer, so reads go on.
   private async current(repo: ProjectRoot): Promise<KnowledgeStore> {
-    await this.base.refresh(repo, SEARCH_WAIT_MS).catch(() => "failed");
-    return this.base.open(repo);
+    return (await this.currentAndState(repo)).store;
+  }
+
+  private async currentAndState(repo: ProjectRoot): Promise<{ store: KnowledgeStore; fresh: boolean }> {
+    const state = await this.base.refresh(repo, SEARCH_WAIT_MS).catch(() => "failed" as const);
+    return { store: await this.base.open(repo), fresh: state === "fresh" };
+  }
+
+  // The index with its facts and file links, built now when a refresh has not built them yet.
+  // `fresh` is false while a refresh carries on, when it failed, or when files were indexed after the
+  // facts and links were built: links may then be out of date.
+  private async withFacts(repo: ProjectRoot): Promise<{ store: KnowledgeStore; facts: ProjectFacts; fresh: boolean }> {
+    const { store, fresh } = await this.currentAndState(repo);
+    const facts = await factsFor(repo, store);
+    return { store, facts, fresh: fresh && factsAreCurrent(store) };
+  }
+
+  private static connectionsOf(store: KnowledgeStore, path: string, fresh: boolean): FileConnections {
+    return {
+      fresh,
+      imports: someOf(store.linkedFiles(path, "from", "imports"), CONNECTIONS_SHOWN),
+      usedBy: someOf(usersOf(store, [path]), CONNECTIONS_SHOWN),
+      tests: someOf(testsOf(store, [path]), CONNECTIONS_SHOWN),
+    };
+  }
+
+  async connections(repo: ProjectRoot, path: string): Promise<FileConnections> {
+    const { store, fresh } = await this.withFacts(repo);
+    return KnowledgeService.connectionsOf(store, projectPath(path), fresh);
+  }
+
+  // What a change to these files or folders reaches: the files that import them, the files that import
+  // those (counted), the areas, and the tests that cover any of them.
+  async impact(repo: ProjectRoot, paths: readonly string[]): Promise<Impact> {
+    const { store, facts, fresh } = await this.withFacts(repo);
+    const unknown: string[] = [];
+    const changed = unique(
+      paths.flatMap((path) => {
+        const files = store.codeFilesUnder(projectPath(path));
+        if (files.length === 0) unknown.push(path);
+        return files;
+      }),
+    );
+    const changedSet = new Set(changed);
+    const direct = usersOf(store, changed).filter((user) => !changedSet.has(user));
+    const reachedSet = new Set([...changed, ...direct]);
+    const further = usersOf(store, direct).filter((user) => !reachedSet.has(user));
+    const reached = [...changed, ...direct];
+    return {
+      fresh,
+      codeIndexed: store.hasCode(),
+      changed,
+      unknown,
+      direct: someOf(direct, IMPACT_SHOWN),
+      further: further.length,
+      areas: unique(reached.map((file) => areaOf(file, facts)).filter((area): area is string => area !== null)),
+      tests: someOf(unique([...changed.filter(isTestFile), ...testsOf(store, reached)]), IMPACT_SHOWN),
+    };
   }
 
   private async withRelated(repoKey: string, hits: Omit<SearchHit, "relatedMemories">[]): Promise<SearchHit[]> {
@@ -76,8 +161,9 @@ export class KnowledgeService {
     return this.withRelated(repo.key, [...sources, ...tasks]);
   }
 
-  async read(repo: ProjectRoot, id: string): Promise<KnowledgeEntry> {
-    const store = await this.current(repo);
+  // `connections` adds a code entry's links, for callers that show them (the agent tools and the reader).
+  async read(repo: ProjectRoot, id: string, { connections = false }: { connections?: boolean } = {}): Promise<KnowledgeEntry> {
+    const { store, fresh } = await this.currentAndState(repo);
     if (id.startsWith("task:")) {
       const task = store.task(id);
       if (!task) throw new Error(`No task ${id} in ${repo.key}; search again for current ids`);
@@ -88,7 +174,9 @@ export class KnowledgeService {
     if (!entry) throw new Error(`No entry ${id} in ${repo.key}; the file may have changed, so search again for current ids`);
     const [hit] = await this.withRelated(repo.key, [{ ...entry, snippet: "", needsCheck: entry.kind === "adr" && store.sourceStatus(entry.path)?.status === "superseded" }]);
     const { snippet: _snippet, ...rest } = hit;
-    return { ...rest, body: entry.body };
+    if (!connections || entry.kind !== "code") return { ...rest, body: entry.body };
+    await factsFor(repo, store);
+    return { ...rest, body: entry.body, connections: KnowledgeService.connectionsOf(store, entry.path, fresh && factsAreCurrent(store)) };
   }
 
   async outline(repo: ProjectRoot, path: string) {
@@ -141,8 +229,7 @@ export class KnowledgeService {
 
   // The project's structure alone, without change history: for callers that need no git.
   async structure(repo: ProjectRoot): Promise<ProjectFacts> {
-    const store = await this.current(repo);
-    return storedFacts(store) ?? (await updateFacts(repo, store));
+    return (await this.withFacts(repo)).facts;
   }
 
   async facts(repo: ProjectRoot): Promise<{ facts: ProjectFacts; busy: Busy; areaLines: Record<string, string> }> {

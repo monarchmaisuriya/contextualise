@@ -27,7 +27,7 @@ describe("UsageLog", () => {
     await log.recordCall("github.com/acme/api", "knowledge_read", "token-a");
     await log.recordCall("github.com/acme/api", "knowledge_search", "token-b");
     await log.recordGiven("github.com/acme/other");
-    expect(await log.lastDays("github.com/acme/api")).toEqual({ days: 7, agentsGiven: 3, agentsUsed: 2, calls: { knowledge_search: 2, knowledge_read: 1, knowledge_outline: 0, knowledge_history: 0 } });
+    expect(await log.lastDays("github.com/acme/api")).toEqual({ days: 7, agentsGiven: 3, agentsUsed: 2, calls: { knowledge_search: 2, knowledge_read: 1, knowledge_outline: 0, knowledge_history: 0, knowledge_impact: 0 } });
   });
 
   it("leaves days older than 7 out of the total and drops days older than 30 from the file", async () => {

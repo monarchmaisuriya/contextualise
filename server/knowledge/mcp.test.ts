@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadTokenSecret, TokenAuthority } from "./auth";
 import { KnowledgeBase } from "./base";
 import { projectRoot } from "./git";
-import { KNOWLEDGE_SERVER, KnowledgeMcp, knowledgeServerEntry } from "./mcp";
+import { KNOWLEDGE_SERVER, KNOWLEDGE_TOOLS, KnowledgeMcp, knowledgeServerEntry } from "./mcp";
 import { KnowledgeService } from "./service";
 import { SymbolReader } from "./symbols";
 
@@ -62,7 +62,7 @@ describe("knowledge tools", () => {
 
   it("offers only read tools", async () => {
     const client = await connect(tokens.mint({ repoKey: "local/abc", top }));
-    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["knowledge_search", "knowledge_read", "knowledge_outline", "knowledge_history"]);
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([...KNOWLEDGE_TOOLS]);
   });
 
   it("tells the agent when to use its tools, so it can find them while they are deferred", async () => {
@@ -104,7 +104,7 @@ describe("knowledge tools", () => {
 
   it("outlines a file, lists the tasks that changed it, and narrows search to paths", async () => {
     const client = await connect(tokens.mint({ repoKey: "local/abc", top }));
-    expect(textOf(await client.callTool({ name: "knowledge_outline", arguments: { path: "shared/contracts.ts" } }))).toBe("1: parseItemRef  [code:shared/contracts.ts:1:parseItemRef]");
+    expect(textOf(await client.callTool({ name: "knowledge_outline", arguments: { path: "shared/contracts.ts" } }))).toMatch(/^1: parseItemRef  \[code:shared\/contracts.ts:1:parseItemRef\]\n\nImports \(in this project\): none found\nUsed by: none found\nTests: none found\n\(From imports/);
     expect(textOf(await client.callTool({ name: "knowledge_outline", arguments: { path: "docs/adr/0001-use-sqlite.md" } }))).toBe("1: § Use SQLite  [adr:docs/adr/0001-use-sqlite.md:1]");
     await base.recordTask(projectRoot("local/abc", top), { id: "task:a1", agentId: "a1", provider: "claude", title: "Trim refs", request: "Trim item refs", outcome: "completed", files: ["shared/contracts.ts"], commands: [], startedAt: "2026-10-29T10:00:00.000Z", endedAt: "2026-10-29T11:00:00.000Z", citations: [{ path: "shared/contracts.ts", blob: "old" }], summary: "Made parseItemRef trim spaces." });
     expect(textOf(await client.callTool({ name: "knowledge_history", arguments: { path: "shared" } }))).toBe("[task:a1] 2026-10-29 Trim refs (completed) [needs check: its files changed since]\n  Made parseItemRef trim spaces.");
@@ -129,6 +129,33 @@ describe("knowledge tools", () => {
     expect(textOf(await client.callTool({ name: "knowledge_search", arguments: { query: "parseItemRef" } }))).not.toContain("Memorise");
     related = async (_repoKey, path) => (path === "shared/contracts.ts" ? [{ id: "01JB8Z6X3T5Q9V2M4N7P8R1S0W", subject: "item refs" }] : []);
     expect(textOf(await client.callTool({ name: "knowledge_search", arguments: { query: "parseItemRef" } }))).toContain('Memorise memories about this file (read with memory_read): 01JB8Z6X3T5Q9V2M4N7P8R1S0W "item refs"');
+  });
+
+  it("says what uses a file, what tests it, and what a change to it reaches", async () => {
+    for (const [path, text] of [
+      ["server/api.ts", 'import { parseItemRef } from "../shared/contracts";\nexport function handler(ref: string) { return parseItemRef(ref); }\n'],
+      ["server/routes.ts", 'import { handler } from "./api";\nexport const routes = [handler];\n'],
+      ["shared/contracts.test.ts", 'import { parseItemRef } from "./contracts";\nparseItemRef(" a ");\n'],
+    ]) {
+      mkdirSync(dirname(join(top, path)), { recursive: true });
+      writeFileSync(join(top, path), text);
+    }
+    execFileSync("git", ["-C", top, "add", "-A"]);
+    const client = await connect(tokens.mint({ repoKey: "local/abc", top }));
+    const outline = textOf(await client.callTool({ name: "knowledge_outline", arguments: { path: "shared/contracts.ts" } }));
+    expect(outline).toContain("Imports (in this project): none found\nUsed by: server/api.ts\nTests: shared/contracts.test.ts\n(From imports the index resolves");
+    const read = textOf(await client.callTool({ name: "knowledge_read", arguments: { id: "code:server/api.ts:2:handler" } }));
+    expect(read).toContain("In server/api.ts:\nImports (in this project): shared/contracts.ts\nUsed by: server/routes.ts\nTests: none found");
+    expect(textOf(await client.callTool({ name: "knowledge_impact", arguments: { paths: ["./shared/contracts.ts", "notes.txt"] } }))).toBe(
+      [
+        "Changing 1 file of code: shared/contracts.ts",
+        "Not indexed (not code, ignored, or new since the last refresh): notes.txt",
+        "Used directly by 1 file: server/api.ts",
+        "Used through those by 1 file more.",
+        "Areas: Other",
+        "Tests to run: shared/contracts.test.ts",
+      ].join("\n") + "\n(From imports the index resolves in TypeScript, JavaScript, Python, and Go; dynamic imports and path aliases are not seen, so check with grep before relying on \"none\".)",
+    );
   });
 
   it("says plainly when nothing matches or an id is unknown", async () => {

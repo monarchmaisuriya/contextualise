@@ -84,12 +84,14 @@ export interface ReaderSheetProps {
   plain?: boolean;
   onOpen?(): void;
   pin?: { pinned: boolean; onChange(pinned: boolean): void };
+  // Shown under the text, as a code entry's connections.
+  footer?: ReactNode;
   onClose(): void;
   styles: Styles;
 }
 
 // Reads one stored text in the host's Modal, with Copy and the optional Open and Pin beside it.
-export function ReaderSheet({ title, text, meta, error, plain = false, onOpen, pin, onClose, styles }: ReaderSheetProps) {
+export function ReaderSheet({ title, text, meta, error, plain = false, onOpen, pin, footer, onClose, styles }: ReaderSheetProps) {
   return (
     <Modal title={title} open onOpenChange={(open) => !open && onClose()}>
       <Modal.Content>
@@ -110,6 +112,7 @@ export function ReaderSheet({ title, text, meta, error, plain = false, onOpen, p
             ) : (
               <Markdown>{text}</Markdown>
             )}
+            {footer}
           </View>
         )}
       </Modal.Content>

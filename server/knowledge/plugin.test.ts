@@ -174,14 +174,15 @@ describe("contributeKnowledge", () => {
     expect(respondToPermission).toHaveBeenCalledWith({ requestId: "p1", response: { behavior: "allow" } });
   });
 
-  it("approves only the four knowledge tools by exact name, not other tools on a server with a similar name", async () => {
+  it("approves only the knowledge tools by exact name, not other tools on a server with a similar name", async () => {
     const ask = (id: string, request: Record<string, unknown>) => emit("agent.permission_requested", { agent: { id: "a1", cwd: top }, request: { id, ...request } });
     await ask("p1", { name: `mcp__${KNOWLEDGE_SERVER}__x__write_file` });
     await ask("p2", { name: `mcp__${KNOWLEDGE_SERVER}__delete_everything` });
     await ask("p3", { name: "CodexMcpElicitation", metadata: { serverName: KNOWLEDGE_SERVER }, description: 'Allow the paseo-contextualise MCP server to run tool "drop_table"?' });
     await ask("p4", { name: "CodexMcpElicitation", metadata: { serverName: KNOWLEDGE_SERVER }, description: 'Allow the paseo-contextualise MCP server to run tool "knowledge_read"?' });
     await ask("p5", { name: `mcp__${KNOWLEDGE_SERVER}__knowledge_history` });
-    expect(respondToPermission.mock.calls.map((call) => (call as unknown as [{ requestId: string }])[0].requestId)).toEqual(["p4", "p5"]);
+    await ask("p6", { name: `mcp__${KNOWLEDGE_SERVER}__knowledge_impact` });
+    expect(respondToPermission.mock.calls.map((call) => (call as unknown as [{ requestId: string }])[0].requestId)).toEqual(["p4", "p5", "p6"]);
   });
 
   it("offers matching entries to Attach, with the snippet that matched and the full text", async () => {

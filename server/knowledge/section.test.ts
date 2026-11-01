@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { FACTS_VERSION } from "./facts";
 import { buildSection, SECTION_END, SECTION_MAX_BYTES, SECTION_START, unavailableSection, withoutSection, withSection } from "./section";
 import { KnowledgeStore } from "./store";
 
@@ -37,7 +38,7 @@ describe("project section", () => {
         "Top-level folders: client, server",
         "Recent tasks:",
         '- 2026-10-28 "Fix item refs" (completed; shared/contracts.ts)',
-        "At the start of a task, search with knowledge_search (MCP server paseo-contextualise) for docs, decisions, and earlier work on the same area. Do this before reading docs or changing code. Open hits with knowledge_read; knowledge_outline and knowledge_history show a file's parts and past changes. Use grep for exact code.",
+        "At the start of a task, search with knowledge_search (MCP server paseo-contextualise) for docs, decisions, and earlier work on the same area. Do this before reading docs or changing code. Open hits with knowledge_read; knowledge_outline and knowledge_history show a file's parts and past changes. Before changing code, knowledge_impact lists what uses those files and the tests to run. Use grep for exact code.",
         SECTION_END,
       ].join("\n"),
     );
@@ -54,7 +55,8 @@ describe("project section", () => {
 
   it("lists main areas with their written line, or the names other areas use, once facts exist", () => {
     const area = (path: string, files: number, keyNames: string[]) => ({ path, files, tests: 0, symbols: 0, languages: {}, keyNames: keyNames.map((name) => ({ name, kind: "class", path: `${path}/x.py`, line: 1, uses: 1 })), mainFiles: [], merged: [] });
-    store.setMeta("facts", JSON.stringify({ version: 1, codeFiles: 5, testFiles: 0, languages: {}, areas: [area("core", 3, ["User", "Shop"]), area("api", 2, [])], links: [], libraries: [], fingerprint: "f" }));
+    store.setMeta("factsRevision", store.sourcesRevision());
+    store.setMeta("facts", JSON.stringify({ version: FACTS_VERSION, codeFiles: 5, testFiles: 0, languages: {}, areas: [area("core", 3, ["User", "Shop"]), area("api", 2, [])], links: [], libraries: [], fingerprint: "f" }));
     store.setMeta("areaLines", JSON.stringify({ api: "Serves the HTTP endpoints." }));
     const text = section() ?? "";
     expect(text).toContain('Main areas (folders of code, biggest first; knowledge_outline on a folder shows one):\n- core (3 files): "User, Shop"\n- api (2 files): "Serves the HTTP endpoints."');

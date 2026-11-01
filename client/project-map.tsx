@@ -3,12 +3,12 @@ import { Markdown } from "@getpaseo/plugin/client/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Text, View } from "react-native";
 import { areaLabel, mermaidBlock, neighbourDiagram, overviewDiagram } from "../shared/diagram";
-import { type Area, areaRpc, type Busy, type BusyFile, type KnowledgeEntry, type ProjectFacts, projectFactsRpc, type TaskSummary } from "../shared/knowledge";
+import { type Area, areaRpc, type Busy, type BusyFile, type FileConnections, type KnowledgeEntry, type ProjectFacts, projectFactsRpc, type TaskSummary } from "../shared/knowledge";
 import { barsCarryInformation } from "./bars";
 import { errorText } from "./errors";
 import { ICONS } from "./icons";
 import { ago, Button, ListRow, plural, Prose, SectionHeader, StateView, type Styles } from "./kit";
-import { languageShares, readerBody } from "./knowledge/text";
+import { CONNECTIONS_NOTE, CONNECTIONS_UPDATING, connectionGroups, languageShares, readerBody } from "./knowledge/text";
 
 // An entry to open in the reader, by id, with the title to show while it loads. `lead`: a task's
 // written summary, which its stored record does not hold.
@@ -33,6 +33,23 @@ export function EntryBody({ entry, styles }: { entry: Pick<KnowledgeEntry, "kind
     </Text>
   ) : (
     <Markdown>{body.text}</Markdown>
+  );
+}
+
+// Under a code entry in the reader: what the file imports, what imports it, and its tests.
+export function Connections({ connections, styles }: { connections: FileConnections; styles: Styles }) {
+  return (
+    <View style={{ gap: 12 }}>
+      {connectionGroups(connections).map((group) => (
+        <View key={group.label} style={{ gap: 4 }}>
+          <Text style={styles.muted}>{group.label}</Text>
+          <Text style={styles.text} selectable>
+            {group.lines.join("\n")}
+          </Text>
+        </View>
+      ))}
+      <Text style={styles.sm}>{connections.fresh ? CONNECTIONS_NOTE : `${CONNECTIONS_UPDATING} ${CONNECTIONS_NOTE}`}</Text>
+    </View>
   );
 }
 

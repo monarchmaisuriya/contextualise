@@ -31,6 +31,39 @@ describe("KnowledgeStore", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("keeps the links between files, replaces them together, and drops them on a reset", () => {
+    store.replaceSource({ path: "src/a.ts", kind: "code", blob: "1", chunks: [] });
+    store.replaceSource({ path: "src/b.ts", kind: "code", blob: "2", chunks: [] });
+    store.replaceSource({ path: "src/a.test.ts", kind: "code", blob: "3", chunks: [] });
+    store.replaceSource({ path: "srcx/c.ts", kind: "code", blob: "4", chunks: [] });
+    store.replaceFileLinks([
+      { from: "src/b.ts", to: "src/a.ts", kind: "imports" },
+      { from: "src/a.test.ts", to: "src/a.ts", kind: "imports" },
+      { from: "src/a.test.ts", to: "src/a.ts", kind: "tests" },
+    ]);
+    expect(store.linkedFiles("src/a.ts", "to", "imports")).toEqual(["src/a.test.ts", "src/b.ts"]);
+    expect(store.linkedFiles("src/a.ts", "to", "tests")).toEqual(["src/a.test.ts"]);
+    expect(store.linkedFiles("src/b.ts", "from", "imports")).toEqual(["src/a.ts"]);
+    // A folder holds the files under it, not files of a folder that only starts with its name.
+    expect(store.codeFilesUnder("src/")).toEqual(["src/a.test.ts", "src/a.ts", "src/b.ts"]);
+    expect(store.codeFilesUnder("src/a.ts")).toEqual(["src/a.ts"]);
+    store.replaceFileLinks([{ from: "src/a.ts", to: "src/b.ts", kind: "imports" }]);
+    expect(store.linkedFiles("src/a.ts", "to", "imports")).toEqual([]);
+    store.resetSources();
+    expect(store.linkedFiles("src/b.ts", "to", "imports")).toEqual([]);
+  });
+
+  it("changes its sources revision with every file entry written or removed, but not with written briefs", () => {
+    const before = store.sourcesRevision();
+    store.replaceSource({ path: "src/a.ts", kind: "code", blob: "1", chunks: [] });
+    const afterWrite = store.sourcesRevision();
+    expect(afterWrite).not.toBe(before);
+    store.replaceSource({ path: "(area)/src", kind: "brief", blob: "generated:x", chunks: [] });
+    expect(store.sourcesRevision()).toBe(afterWrite);
+    store.removeSource("src/a.ts");
+    expect(store.sourcesRevision()).not.toBe(afterWrite);
+  });
+
   it("finds document sections and code symbols, title matches first", () => {
     store.replaceSource({ path: "docs/adr/0001-use-sqlite.md", kind: "adr", blob: "b1", chunks: [{ title: "Use SQLite", body: "We store the index in SQLite.", line: 1 }], adr: { status: "accepted", supersededBy: null } });
     store.replaceSource({ path: "README.md", kind: "doc", blob: "b2", chunks: [{ title: "Setup", body: "Install node. SQLite comes with node.", line: 3 }] });

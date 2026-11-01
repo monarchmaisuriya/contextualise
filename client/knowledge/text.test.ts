@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { entryMeta, glanceLine, languageShares, readerBody } from "./text";
+import { connectionGroups, entryMeta, glanceLine, languageShares, readerBody } from "./text";
 
 describe("project knowledge text", () => {
   it("sums a project up in one line: files, areas, and its main languages", () => {
@@ -29,3 +29,14 @@ describe("project knowledge text", () => {
     expect(readerBody({ kind: "brief", path: "(brief)", body: "[x](https://example.com)" })).toEqual({ text: "[x](https://example.com)", plain: true });
   });
 });
+
+describe("connectionGroups", () => {
+  it("lists each group's files, says how many more, and says None found for an empty one", () => {
+    expect(connectionGroups({ fresh: true, imports: { paths: [], total: 0 }, usedBy: { paths: ["a.ts", "b.ts"], total: 5 }, tests: { paths: ["a.test.ts"], total: 1 } })).toEqual([
+      { label: "Imports", lines: ["None found"] },
+      { label: "Used by", lines: ["a.ts", "b.ts", "and 3 more"] },
+      { label: "Tests", lines: ["a.test.ts"] },
+    ]);
+  });
+});
+

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { KnowledgeBase } from "./base";
+import { FACTS_VERSION, factsAreCurrent, factsFor, updateFacts } from "./facts";
 import { KnowledgeService } from "./service";
 import { KnowledgeStore } from "./store";
 import { SymbolReader } from "./symbols";
@@ -117,6 +118,50 @@ describe("KnowledgeService search", () => {
     expect(await paths([])).toEqual(["jobs/queue.ts"]);
     expect(await paths(["code"])).toEqual(["jobs/queue.test.ts", "jobs/queue.ts"]);
     expect(await paths([], ["jobs/"])).toEqual(["jobs/queue.test.ts", "jobs/queue.ts"]);
+  });
+
+  it("lists a file's links, and says they may be out of date while the index is refreshing or newer than them", async () => {
+    store.replaceFileLinks([
+      { from: "jobs/worker.ts", to: "jobs/queue.ts", kind: "imports" },
+      { from: "jobs/queue.test.ts", to: "jobs/queue.ts", kind: "imports" },
+      { from: "jobs/queue.test.ts", to: "jobs/queue.ts", kind: "tests" },
+    ]);
+    store.setMeta("facts", JSON.stringify({ version: FACTS_VERSION, codeFiles: 1, testFiles: 1, languages: {}, areas: [], links: [], libraries: [], fingerprint: "f" }));
+    store.setMeta("factsRevision", store.sourcesRevision());
+    expect(await service.connections(repo, "./jobs/queue.ts")).toEqual({ fresh: true, imports: { paths: [], total: 0 }, usedBy: { paths: ["jobs/worker.ts"], total: 1 }, tests: { paths: ["jobs/queue.test.ts"], total: 1 } });
+    // A file indexed after the facts were built: readers keep the last links and say so; the refresh rebuilds.
+    store.replaceSource({ path: "jobs/extra.ts", kind: "code", blob: "3", chunks: [], symbols: [] });
+    expect(factsAreCurrent(store)).toBe(false);
+    expect(await service.connections(repo, "jobs/queue.ts")).toMatchObject({ fresh: false, usedBy: { total: 1 } });
+    store.setMeta("factsRevision", store.sourcesRevision());
+    const updating = new KnowledgeService({ refresh: async () => "updating", open: async () => store } as unknown as KnowledgeBase, async () => null);
+    expect((await updating.connections(repo, "jobs/queue.ts")).fresh).toBe(false);
+  });
+
+  it("builds missing facts once for readers and keeps written area explanations, which only a refresh's rebuild drops", async () => {
+    store.replaceSource({ path: "(area)/gone", kind: "brief", blob: "generated:x", chunks: [] });
+    const [first, second] = await Promise.all([factsFor(repo, store), factsFor(repo, store)]);
+    expect(second).toBe(first);
+    expect(store.indexedSources().has("(area)/gone")).toBe(true);
+    await updateFacts(repo, store, { pruneExplanations: true });
+    expect(store.indexedSources().has("(area)/gone")).toBe(false);
+  });
+
+  it("follows a change two steps out, through folders and Go packages, and lists the tests to run", async () => {
+    for (const path of ["api/views.py", "api/urls.py", "core/models.py", "core/db.py", "pkg/store/store.go", "pkg/store/cache.go", "cmd/main.go"]) store.replaceSource({ path, kind: "code", blob: path, chunks: [], symbols: [] });
+    store.replaceFileLinks([
+      { from: "api/views.py", to: "core/models.py", kind: "imports" },
+      { from: "api/urls.py", to: "api/views.py", kind: "imports" },
+      { from: "core/db.py", to: "core/models.py", kind: "imports" },
+      { from: "tests/test_views.py", to: "api/views.py", kind: "tests" },
+      { from: "cmd/main.go", to: "pkg/store/", kind: "imports" },
+      { from: "pkg/store/store_test.go", to: "pkg/store/", kind: "tests" },
+    ]);
+    store.setMeta("facts", JSON.stringify({ version: FACTS_VERSION, codeFiles: 7, testFiles: 0, languages: {}, areas: [], links: [], libraries: [], fingerprint: "f" }));
+    store.setMeta("factsRevision", store.sourcesRevision());
+    expect(await service.impact(repo, ["core/"])).toMatchObject({ changed: ["core/db.py", "core/models.py"], direct: { paths: ["api/views.py"], total: 1 }, further: 1, tests: { paths: ["tests/test_views.py"] }, unknown: [] });
+    expect(await service.impact(repo, ["pkg/store/cache.go"])).toMatchObject({ direct: { paths: ["cmd/main.go"] }, further: 0, tests: { paths: ["pkg/store/store_test.go"] } });
+    expect((await service.connections(repo, "pkg/store/cache.go")).usedBy.paths).toEqual(["cmd/main.go"]);
   });
 
   it("fills the limit when most of the best matches are left out", async () => {

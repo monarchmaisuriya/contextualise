@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { KNOWLEDGE_KINDS, type KnowledgeKind, type TaskSummary, taskSummarySchema } from "../../shared/knowledge";
+import type { FileLink } from "./facts";
 import type { AdrInfo, TextChunk } from "./sources";
 import type { CodeImport, CodeSymbol } from "./symbols";
 
@@ -61,6 +62,9 @@ export class KnowledgeStore {
       CREATE INDEX IF NOT EXISTS symbols_by_path ON symbols (path);
       CREATE TABLE IF NOT EXISTS imports (path TEXT NOT NULL, spec TEXT NOT NULL, names TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS imports_by_path ON imports (path);
+      CREATE TABLE IF NOT EXISTS file_links (from_path TEXT NOT NULL, to_path TEXT NOT NULL, kind TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS file_links_from ON file_links (from_path, kind);
+      CREATE INDEX IF NOT EXISTS file_links_to ON file_links (to_path, kind);
       CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(id UNINDEXED, path UNINDEXED, kind UNINDEXED, line UNINDEXED, title, body, tokenize = 'unicode61');
       CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, ended_at TEXT NOT NULL, record TEXT NOT NULL);
       CREATE VIRTUAL TABLE IF NOT EXISTS tasks_text USING fts5(id UNINDEXED, title, request, files, tokenize = 'unicode61');
@@ -139,6 +143,18 @@ export class KnowledgeStore {
 
   private deleteSource(path: string): void {
     for (const table of ["sources", "chunks", "symbols", "imports"]) this.db.prepare(`DELETE FROM ${table} WHERE path = ?`).run(path);
+    if (!path.startsWith("(")) this.bumpSourcesRevision();
+  }
+
+  // Changes with every write of a project file's entries, in the same transaction, so facts built
+  // from an older state are known to be old even when a refresh stopped before rebuilding them.
+  // Written entries ("(area)/..." and the brief) do not count: facts do not read them.
+  private bumpSourcesRevision(): void {
+    this.setMeta("sourcesRevision", String(Number(this.sourcesRevision()) + 1));
+  }
+
+  sourcesRevision(): string {
+    return this.getMeta("sourcesRevision") ?? "0";
   }
 
   removeSource(path: string): void {
@@ -255,7 +271,35 @@ export class KnowledgeStore {
   resetSources(): void {
     this.transaction(() => {
       for (const table of ["sources", "chunks", "symbols", "imports", "files"]) this.db.exec(`DELETE FROM ${table} WHERE path NOT LIKE '(%'`);
+      this.db.exec("DELETE FROM file_links");
+      this.bumpSourcesRevision();
     });
+  }
+
+  // The links between code files, replaced together with the facts they were built with.
+  replaceFileLinks(links: readonly FileLink[]): void {
+    this.transaction(() => {
+      this.db.exec("DELETE FROM file_links");
+      const insert = this.db.prepare("INSERT INTO file_links (from_path, to_path, kind) VALUES (?, ?, ?)");
+      for (const link of links) insert.run(link.from, link.to, link.kind);
+    });
+  }
+
+  // Files `path` links to (`from`) or that link to it (`to`), by kind, sorted.
+  linkedFiles(path: string, direction: "from" | "to", kind: FileLink["kind"]): string[] {
+    const [match, other] = direction === "from" ? ["from_path", "to_path"] : ["to_path", "from_path"];
+    return (this.db.prepare(`SELECT DISTINCT ${other} AS path FROM file_links WHERE ${match} = ? AND kind = ? ORDER BY ${other}`).all(path, kind) as { path: string }[]).map((row) => row.path);
+  }
+
+  hasCode(): boolean {
+    return this.db.prepare("SELECT 1 FROM sources WHERE kind = 'code' LIMIT 1").get() !== undefined;
+  }
+
+  // Indexed code files: the given file itself, or every one under the given folder.
+  codeFilesUnder(path: string): string[] {
+    const folder = path.replace(/\/+$/, "");
+    // Paths under folder/ sort from "folder/" up to "folder0", the character after "/".
+    return (this.db.prepare("SELECT path FROM sources WHERE kind = 'code' AND (path = ? OR (path >= ? AND path < ?)) ORDER BY path").all(folder, `${folder}/`, `${folder}0`) as { path: string }[]).map((row) => row.path);
   }
 
   task(id: string): TaskRecord | null {
