@@ -28,32 +28,36 @@ import { FetchForm, FULL_WIDTH_FIELD } from "./fetch-form";
 import { ICONS, VENDOR_ICONS } from "./icons";
 import { ago, Button, IconButton, ListRow, Page, plural, ReaderSheet, SearchField, SectionHeader, Segmented, StateView, type Styles, summary, TAGS_QUERY, useStyles, useTagChange } from "./kit";
 import { onTagsChanged } from "./tag-events";
-import { filterPlaceholder, filterTags, selectedTag, SORT_LABELS, SORTS, type Sort, sortTags } from "./tag-list";
+import { agentStatus, filterPlaceholder, filterTags, liveLine, selectedTag, SORT_LABELS, SORTS, type Sort, sortTags } from "./tag-list";
 
 type Navigation = PluginScreenProps["navigation"];
 
 const LIST_PANE_WIDTH = 320;
+// How often an open Tags screen reads agents' states again.
+const LIVE_REFRESH_MS = 10_000;
 const SORT_OPTIONS = SORTS.map((value) => ({ value, label: SORT_LABELS[value] }));
 
 function fetchingCount(tag: TagSummary): number {
   return tag.notes.filter((note) => note.status === "fetching").length;
 }
 
+// What needs M leads the line, then what the tag holds.
 function tagMeta(tag: TagSummary): string {
   const pending = fetchingCount(tag);
-  return [summary(tag) || "empty", pending > 0 ? `${pending} fetching` : null].filter(Boolean).join(" · ");
+  return [liveLine(tag) || null, summary(tag) || "empty", pending > 0 ? `${pending} fetching` : null].filter(Boolean).join(" · ");
 }
 
 // One agent: opens it when pressed (unless Paseo no longer has it), with `trailing` at the end.
 function AgentLine({ agent, when, trailing, styles, navigation }: { agent: AgentMember | PinnedAgent; when: string; trailing: ReactNode; styles: Styles; navigation: Navigation }) {
   const open = navigation && agent.state !== "missing" ? () => navigation.openAgent({ agentId: agent.agentId }) : undefined;
   const state = agent.state === "missing" ? "missing: Paseo no longer has this agent" : agent.state === "archived" ? "archived" : null;
+  const now = agentStatus(agent.live);
   return (
     <ListRow
       title={agent.title ?? agent.agentId}
-      meta={[agent.provider ?? "unknown provider", agent.workspaceName, state, when].filter(Boolean).join(" · ")}
-      icon={agent.state === "archived" ? ICONS.archived : ICONS.agent}
-      danger={agent.state === "missing"}
+      meta={[now?.text, agent.provider ?? "unknown provider", agent.workspaceName, state, when].filter(Boolean).join(" · ")}
+      icon={agent.state === "archived" ? ICONS.archived : now?.urgent ? ICONS.failed : ICONS.agent}
+      danger={agent.state === "missing" || Boolean(now?.urgent)}
       onPress={open}
       accessibilityLabel={`Open agent ${agent.title ?? agent.agentId}`}
       trailing={trailing}
@@ -270,11 +274,12 @@ export function TagsScreen({ theme, layout, params, navigation }: PluginScreenPr
   const styles = useStyles(theme, layout.compact);
   const list = useRpc(listTagsRpc);
   const queryClient = useQueryClient();
-  // While a fetch is running, the list reloads every few seconds so its result shows up on its own.
+  // The list reloads while the screen is open, so agents' states stay current, and faster while a
+  // fetch is running so its result shows up on its own.
   const tags = useQuery({
     queryKey: TAGS_QUERY,
     queryFn: () => list({}),
-    refetchInterval: (query) => (query.state.data?.tags.some((tag) => tag.notes.some((note) => note.status === "fetching")) ? 3_000 : false),
+    refetchInterval: (query) => (query.state.data?.tags.some((tag) => tag.notes.some((note) => note.status === "fetching")) ? 3_000 : LIVE_REFRESH_MS),
   });
   const [filter, setFilter] = useState("");
   const [sort, setSort] = useState<Sort>("recent");

@@ -5,7 +5,7 @@ import { DOCS_URL, type AgentMember, type SnapshotSettings, type TagSummary } fr
 import type { AgentTimelineItem, PaseoApi } from "./paseo-types";
 import { describeMembers, isUnreadable, lastTurns, matchTags, renderConversation, renderSnapshot, renderTerminal, type AgentReading } from "./snapshot";
 import { agentTitle, capTitle, cleanTitle, gitParts, workspaceLabel, workspaceSearchText } from "./rows";
-import type { Directory, DirectoryAgent, DirectoryWorkspace } from "./tags";
+import { agentLive, type Directory, type DirectoryAgent, type DirectoryWorkspace } from "./tags";
 
 const TIMELINE_PAGE = 200;
 const MAX_TIMELINE_PAGES = 5;
@@ -130,6 +130,7 @@ function asMember(agent: DirectoryAgent, workspaceName: string | null): AgentMem
     provider: agent.provider,
     workspaceName,
     state: agent.archivedAt ? "archived" : "active",
+    ...(agentLive(agent) ? { live: agentLive(agent) } : {}),
   };
 }
 

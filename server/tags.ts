@@ -1,4 +1,5 @@
-import { normalizeTagName, tagKey, type AgentInfo, type AgentMember, type PinnedAgent, type TagSummary, type WorkspaceMember } from "../shared/contracts";
+import { normalizeTagName, tagKey, type AgentInfo, type AgentLive, type AgentMember, type PinnedAgent, type TagSummary, type WorkspaceMember } from "../shared/contracts";
+import { needsYou } from "./agent-state";
 import type { PaseoApi } from "./paseo-types";
 import { workspaceTitle } from "./rows";
 import type { StoredPin, StoredTags } from "./tag-store";
@@ -31,8 +32,17 @@ export interface DirectoryAgent {
   cwd?: string;
   updatedAt?: string;
   status?: string;
+  requiresAttention?: boolean;
+  attentionReason?: "finished" | "error" | "permission" | null;
+  pendingPermissions?: readonly unknown[];
   // Paseo's own background agents.
   internal?: boolean;
+}
+
+// What a live agent is doing now; nothing for an archived one.
+export function agentLive(agent: DirectoryAgent): AgentLive | undefined {
+  if (agent.archivedAt) return undefined;
+  return { status: agent.status ?? null, needsYou: needsYou({ ...agent, title: agent.title }), updatedAt: agent.updatedAt ?? null };
 }
 
 export interface Directory {
@@ -71,6 +81,7 @@ export function describeAgent(directory: Directory, agentId: string, fallbackWor
     workspaceId: agent ? (agent.workspaceId ?? null) : null,
     workspaceName: workspace ? workspaceTitle(workspace) : null,
     state: !agent ? "missing" : agent.archivedAt ? "archived" : "active",
+    ...(agent && agentLive(agent) ? { live: agentLive(agent) } : {}),
   };
 }
 
@@ -106,8 +117,8 @@ export function mergeTags(stored: StoredTags, directory: Directory): TagSummary[
   for (const storedTag of Object.values(stored)) {
     const tag = entry(storedTag.name);
     for (const member of storedTag.agents) {
-      const { title, provider, workspaceName, state } = describeAgent(directory, member.agentId, member.workspaceId);
-      const summary: AgentMember = { agentId: member.agentId, workspaceId: member.workspaceId, taggedAt: member.taggedAt, title, provider, workspaceName, state };
+      const { title, provider, workspaceName, state, live } = describeAgent(directory, member.agentId, member.workspaceId);
+      const summary: AgentMember = { agentId: member.agentId, workspaceId: member.workspaceId, taggedAt: member.taggedAt, title, provider, workspaceName, state, ...(live ? { live } : {}) };
       tag.agents.push(summary);
     }
     tag.links.push(...storedTag.links);

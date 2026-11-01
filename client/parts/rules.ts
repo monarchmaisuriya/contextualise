@@ -8,6 +8,9 @@ type Colors = PluginTheme["colors"];
 export const TYPE = { lg: 16, base: 14, sm: 12 } as const;
 // Paseo's compact control height: search fields and buttons are never shorter.
 export const CONTROL_HEIGHT = 32;
+// The one size outside TYPE: a tile's number, which has to read at a glance beside 14 px text.
+export const TILE_NUMBER = 22;
+export const BAR_HEIGHT = 28;
 export const PROSE_MAX_WIDTH = 820;
 export const SEARCH_MAX_WIDTH = 420;
 

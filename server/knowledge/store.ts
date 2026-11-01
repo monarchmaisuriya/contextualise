@@ -253,6 +253,15 @@ export class KnowledgeStore {
     });
   }
 
+  // Tasks that ended at or after `since` (ISO time), newest first.
+  tasksSince(since: string): TaskRecord[] {
+    return (this.db.prepare("SELECT record FROM tasks WHERE ended_at >= ? ORDER BY ended_at DESC").all(since) as { record: string }[]).map((row) => JSON.parse(row.record) as TaskRecord);
+  }
+
+  isCode(path: string): boolean {
+    return this.db.prepare("SELECT 1 FROM sources WHERE path = ? AND kind = 'code'").get(path) !== undefined;
+  }
+
   tasks(limit: number, offset = 0): TaskRecord[] {
     return (this.db.prepare("SELECT record FROM tasks ORDER BY ended_at DESC LIMIT ? OFFSET ?").all(limit, offset) as { record: string }[]).map((row) => JSON.parse(row.record) as TaskRecord);
   }
@@ -295,9 +304,10 @@ export class KnowledgeStore {
     return this.db.prepare("SELECT 1 FROM sources WHERE kind = 'code' LIMIT 1").get() !== undefined;
   }
 
-  // Indexed code files: the given file itself, or every one under the given folder.
+  // Indexed code files: the given file itself, every one under the given folder, or all for "".
   codeFilesUnder(path: string): string[] {
     const folder = path.replace(/\/+$/, "");
+    if (folder === "") return (this.db.prepare("SELECT path FROM sources WHERE kind = 'code' ORDER BY path").all() as { path: string }[]).map((row) => row.path);
     // Paths under folder/ sort from "folder/" up to "folder0", the character after "/".
     return (this.db.prepare("SELECT path FROM sources WHERE kind = 'code' AND (path = ? OR (path >= ? AND path < ?)) ORDER BY path").all(folder, `${folder}/`, `${folder}0`) as { path: string }[]).map((row) => row.path);
   }

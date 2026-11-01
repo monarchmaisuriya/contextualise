@@ -53,6 +53,16 @@ describe("KnowledgeStore", () => {
     expect(store.linkedFiles("src/b.ts", "to", "imports")).toEqual([]);
   });
 
+  it("reads tasks that ended since a time, newest first, and tells code files from other entries", () => {
+    store.upsertTask(task({ id: "task:old", endedAt: "2026-10-01T00:00:00.000Z" }));
+    store.upsertTask(task({ id: "task:new", endedAt: "2026-10-30T00:00:00.000Z" }));
+    store.upsertTask(task({ id: "task:mid", endedAt: "2026-10-20T00:00:00.000Z" }));
+    expect(store.tasksSince("2026-10-15T00:00:00.000Z").map((record) => record.id)).toEqual(["task:new", "task:mid"]);
+    store.replaceSource({ path: "src/a.ts", kind: "code", blob: "1", chunks: [] });
+    store.replaceSource({ path: "README.md", kind: "doc", blob: "2", chunks: [] });
+    expect([store.isCode("src/a.ts"), store.isCode("README.md"), store.isCode("gone.ts")]).toEqual([true, false, false]);
+  });
+
   it("changes its sources revision with every file entry written or removed, but not with written briefs", () => {
     const before = store.sourcesRevision();
     store.replaceSource({ path: "src/a.ts", kind: "code", blob: "1", chunks: [] });

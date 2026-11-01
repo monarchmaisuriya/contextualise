@@ -23,6 +23,8 @@ Every agent's composer has a **Tags** pill next to Tasks and Subagents. Its labe
 - fetch an item into one of its tags (**Fetch an item**),
 - open the Tags screen.
 
+The Tags screen shows what each tag's agents are doing now: a tag reads "1 needs you · 2 running", and each agent says whether it needs a permission, stopped with an error, is running, or finished a turn you have not looked at. It refreshes every 10 seconds while open.
+
 `/tag auth-rewrite` tags the current agent from the message box and `/untag auth-rewrite` removes it (both take several: `/tag auth, billing`). `/tag-link https://example.com/spec auth-rewrite` adds a web link to a tag.
 
 Tags share names with Paseo's workspace labels. A workspace labeled "Auth Rewrite" belongs to the tag `auth rewrite` automatically; case and spacing do not matter. Contextualise reads workspace labels and never changes them.
@@ -102,7 +104,7 @@ Documents are split by heading, so a search hit points at the section that matte
 - **Links:** which areas import which, counted by files. Imports are resolved for relative TypeScript and JavaScript paths, Python modules (from the root, `src/`, and folders with `manage.py`, `setup.py`, or `pyproject.toml`), and Go packages under `go.mod`'s module. Path aliases and dynamic imports are not followed.
 - **Key names:** the classes and functions other areas import most; **main files:** the files imported by the most files.
 - **Libraries:** the dependencies declared in `package.json`, `requirements*.txt`, `pyproject.toml`, and `go.mod`, ranked by how many files import them.
-- **Busy lately:** the files changed most in the last 90 days, from `git log` (read-only, at most every 10 minutes; projects outside git have none).
+- **Change history:** the files changed most in the last 90 days, and every commit's time, from `git log` (read-only, at most every 10 minutes; projects outside git have none). Counts stop at 3,000 commits with files and 20,000 commit times, and say "+" when they do.
 
 These are rebuilt whenever files change. On a 7,000-file Python repository the first full read took about 35 seconds.
 
@@ -128,7 +130,13 @@ These are rebuilt whenever files change. On a 7,000-file Python repository the f
 
 **Where to look.** Project knowledge in the sidebar footer (or "Open project knowledge" in the Command Center) shows each project, opening on the one you looked at last; tap the project name to pick another. Each workspace also has a Project knowledge tab for its own project ("Open project knowledge for this workspace" in the Command Center, or the new-tab menu). Both show:
 
-- **Overview:** five sections. About (the written description, or the README's opening); What agents get (how many agents used project knowledge lately, and Preview, which shows the exact overview a new agent gets); the main areas; the files busy lately; and recent work. One line under the project name sums up its files, areas, and languages. Usage keeps only counts, per project and day, for 30 days: no queries, paths, or agent ids.
+- **Overview**, leading with what to know now:
+  - **Needs you:** agents in this project waiting on a permission or stopped with an error (tap to open the agent), then tasks that failed in the last 48 hours unless the same agent finished one since. Hidden when there is nothing.
+  - **Pulse**, over the last 7, 30, or 90 days (remembered): four tiles (agents running and waiting for you; agent tasks done and failed; commits and files changed; hot files without tests), and bars of agent tasks and commits per day, in your time zone.
+  - **Risky to change:** code changed in the window, ranked by changes times the files that use it, with how many tests cover each ("no tests" only where its area has tests). Tap one for what it imports, what uses it, and its tests.
+  - **Start here:** the README and the files the most others use.
+  - Then recent work, About (the written description, or the README's opening), and What agents get (how many agents used project knowledge lately, and Preview, which shows the exact overview a new agent gets).
+  One line under the project name sums up its files, areas, and languages. Usage keeps only counts, per project and day, for 30 days: no queries, paths, or agent ids.
 - **An area's page:** its explanation, the areas it uses and that use it, its key names, main files, busy files, documents, and recent work.
 - **Areas, Documents, Code, and Past work** list everything of each, a page at a time; Areas also has the diagram of how they connect, and Documents can be narrowed to design documents, decisions, rules, or other docs. Search covers all of it. Every entry opens in a reader with Copy and Pin.
 - The project name (to switch projects), a switch to turn the project off, and a ⋮ menu with Re-index, Add past conversations, and Summarise past conversations.
