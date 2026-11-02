@@ -36,6 +36,9 @@ const TIMELINE_PAGE = 200;
 const MAX_TIMELINE_PAGES = 10;
 const DOCS_URL = "https://github.com/monarchmaisuriya/contextualise#project-knowledge";
 const ATTACH_RESULTS = 20;
+// How long Attach waits for each project's check for changed files, all projects at once. A git
+// repository's check took 16 to 47 ms and a 14,000-file folder's 240 to 460 ms on a real machine.
+const ATTACH_WAIT_MS = 300;
 
 interface KnowledgeDeps {
   resolveRoot: () => Promise<string>;
@@ -384,35 +387,41 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     return { started: true };
   });
   // One "Whole project" row: the project's own writing in one attachment, built from its index.
-  const projectItem = (found: { repoKey: string; name: string; top: string }, store: KnowledgeStore, pickerTitleMaxChars: number) => {
+  const projectItem = (found: { repoKey: string; name: string; top: string }, store: KnowledgeStore, updating: boolean, pickerTitleMaxChars: number) => {
     const pack = projectPack(store, found);
     return {
       id: `${found.repoKey}|project`,
       identifier: "Whole project",
       title: capTitle(found.name, pickerTitleMaxChars),
-      subtitle: `${pack.documents === 0 ? "No design documents, rules, or decisions" : pack.included === pack.documents ? `${pack.documents} document${pack.documents === 1 ? "" : "s"}` : `${pack.included} of ${pack.documents} documents`} · about ${pack.tokens.toLocaleString("en-US")} tokens · ${found.top}`.slice(0, 200),
+      subtitle: `${updating ? "Updating · " : ""}${pack.documents === 0 ? "No design documents, rules, or decisions" : pack.included === pack.documents ? `${pack.documents} document${pack.documents === 1 ? "" : "s"}` : `${pack.included} of ${pack.documents} documents`} · about ${pack.tokens.toLocaleString("en-US")} tokens · ${found.top}`.slice(0, 200),
       url: DOCS_URL,
       text: pack.text,
       resourceType: "knowledge",
     };
   };
 
-  // The picker never waits on a project's re-check: it answers from each index as it is, every project
-  // at once, and a search starts the re-check in the background for the next one. With no words it
-  // offers each whole project; with words, the projects whose name has them, then matching entries.
+  // Every project's check for changed files starts at once, and the picker waits at most ATTACH_WAIT_MS
+  // for them: a project still updating after that answers from its index as it is, says so, and
+  // carries on in the background. With no words it offers each whole project; with words, the projects
+  // whose name has them, then matching entries.
   server.handle(searchKnowledgeAttachmentsRpc, async ({ query }, { paseo }) => {
     remember(paseo);
     if (!(await knowledgeOn())) return { items: [] };
     const { pickerTitleMaxChars } = await deps.settings();
     const words = query.trim().toLowerCase();
-    const projects = await base.projects();
+    const projects = await Promise.all(
+      (await base.projects()).map(async (found) => {
+        const repo = projectRoot(found.repoKey, found.top);
+        const state = await base.refresh(repo, ATTACH_WAIT_MS).catch(() => "failed" as const);
+        return { found, repo, updating: state === "updating" };
+      }),
+    );
     const wholes = await Promise.all(
-      projects.filter((found) => words === "" || found.name.toLowerCase().includes(words)).map(async (found) => projectItem(found, await base.open(projectRoot(found.repoKey, found.top)), pickerTitleMaxChars)),
+      projects.filter(({ found }) => words === "" || found.name.toLowerCase().includes(words)).map(async ({ found, repo, updating }) => projectItem(found, await base.open(repo), updating, pickerTitleMaxChars)),
     );
     if (words === "") return { items: wholes };
     const entries = await Promise.all(
-      projects.map(async (found) => {
-        const repo = projectRoot(found.repoKey, found.top);
+      projects.map(async ({ found, repo, updating }) => {
         const hits = await service.search(repo, query, [], ATTACH_RESULTS, [], 0);
         const bodies = await service.bodies(repo, hits.map((hit) => hit.id), 0);
         return hits
@@ -422,7 +431,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
             identifier: KIND_LABELS[hit.kind],
             title: capTitle(hit.title, pickerTitleMaxChars),
             // The snippet shows why the row matched, and Paseo's picker filters rows by their own text.
-            subtitle: `${found.name} · ${hit.path}${hit.line > 0 ? `:${hit.line}` : ""}${hit.needsCheck ? " · needs check" : ""} · ${hit.snippet.replace(/\s+/g, " ").trim()}`.slice(0, 200),
+            subtitle: `${found.name} · ${hit.path}${hit.line > 0 ? `:${hit.line}` : ""}${hit.needsCheck ? " · needs check" : ""}${updating ? " · updating" : ""} · ${hit.snippet.replace(/\s+/g, " ").trim()}`.slice(0, 200),
             url: DOCS_URL,
             text: `Project knowledge from ${found.repoKey} (${hit.path}${hit.line > 0 ? `:${hit.line}` : ""}), quoted from the repository:\n\n${bodies.get(hit.id)}`,
             resourceType: "knowledge",

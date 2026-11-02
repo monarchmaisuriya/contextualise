@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FRESH_MS, KnowledgeBase } from "./base";
-import type { TaskRecord } from "./store";
+import { projectRoot } from "./git";
+import { KnowledgeStore, type TaskRecord } from "./store";
 import { SymbolReader } from "./symbols";
 
 const symbols = new SymbolReader(async () => process.cwd());
@@ -153,6 +154,74 @@ describe("KnowledgeBase", () => {
     now += FRESH_MS + 1;
     await base.refresh(repo, 10_000);
     expect((await base.open(repo)).read("brief:(area)/api:1")).toBeNull();
+  });
+
+  // A registry entry for `folder` as it was seen on another device number, as after a restart on macOS.
+  const seenBefore = (folder: string, key: string, dev: string) => {
+    const info = statSync(folder, { bigint: true });
+    return { key, path: realpathSync(folder), root: true, dev, ino: String(info.ino), born: String(info.birthtimeNs) };
+  };
+  const writeRegistry = (folders: unknown[]) => {
+    mkdirSync(join(root, "knowledge"), { recursive: true });
+    writeFileSync(join(root, "knowledge", "folders.json"), JSON.stringify({ version: 1, folders }));
+  };
+
+  it("keeps a folder's key when its disk comes back under another device number", async () => {
+    const folder = join(home, "Develop");
+    mkdirSync(folder);
+    writeRegistry([seenBefore(folder, "folder/develop-0123456789ab", "1")]);
+    expect((await base.repoFor(folder))?.key).toBe("folder/develop-0123456789ab");
+  });
+
+  it("folds a folder's keys from several device numbers into the first, and merges the later index into it", async () => {
+    const folder = realpathSync(mkdtempSync(join(home, "Develop-")));
+    writeRegistry([seenBefore(folder, "folder/develop-0123456789ab", "1"), seenBefore(folder, "folder/develop-0123456789ab-2", "2")]);
+    const alias = projectRoot("folder/develop-0123456789ab-2", folder);
+    const aliasFile = join(root, "knowledge", `${KnowledgeBase.fileName(alias.key)}.sqlite`);
+    const aliasStore = new KnowledgeStore(aliasFile);
+    aliasStore.setMeta("repoKey", alias.key);
+    aliasStore.setMeta("top", folder);
+    aliasStore.upsertTask(task);
+    aliasStore.close();
+
+    const projects = await base.projects();
+    expect(projects.map((project) => project.repoKey)).toEqual(["folder/develop-0123456789ab"]);
+    expect((await base.open(projectRoot("folder/develop-0123456789ab", folder))).task(task.id)?.title).toBe("Docs");
+    expect(existsSync(aliasFile)).toBe(false);
+    expect(existsSync(`${aliasFile}.merged`)).toBe(true);
+    // An agent given the later key still reaches the first key's index.
+    expect((await base.open(alias)).getMeta("repoKey")).toBe("folder/develop-0123456789ab");
+    const saved = JSON.parse(readFileSync(join(root, "knowledge", "folders.json"), "utf8")) as { folders: { key: string; aliases: string[] }[] };
+    expect(saved.folders).toMatchObject([{ key: "folder/develop-0123456789ab", aliases: ["folder/develop-0123456789ab-2"] }]);
+  });
+
+  it("never gives a new folder a key that is another folder's alias", async () => {
+    const first = join(home, "Develop");
+    mkdirSync(first);
+    const other = join(home, "Other", "Develop");
+    mkdirSync(other, { recursive: true });
+    const taken = (await base.repoFor(other))!.key;
+    base.close();
+    rmSync(join(root, "knowledge", "folders.json"));
+    writeRegistry([{ ...seenBefore(first, "folder/develop-aaaaaaaaaaaa", "1"), aliases: [taken] }]);
+    base = make();
+    expect((await base.repoFor(other))?.key).toBe(`${taken}-2`);
+  });
+
+  it("leaves out a folder project whose folder is gone, and lists it again when the folder is back", async () => {
+    const folder = join(home, "Scratch");
+    mkdirSync(folder);
+    writeFileSync(join(folder, "notes.md"), "# Notes\n");
+    const project = (await base.repoFor(folder))!;
+    await base.refresh(project, 10_000);
+    const repo = (await base.repoFor(top))!;
+    await base.refresh(repo, 10_000);
+    expect((await base.projects()).map((found) => found.repoKey).sort()).toEqual([repo.key, project.key].sort());
+    rmSync(folder, { recursive: true });
+    rmSync(top, { recursive: true });
+    expect((await base.projects()).map((found) => found.repoKey)).toEqual([repo.key]);
+    mkdirSync(folder);
+    expect((await base.projects()).map((found) => found.repoKey).sort()).toEqual([repo.key, project.key].sort());
   });
 
   it("never takes the home folder or the filesystem root as a project", async () => {

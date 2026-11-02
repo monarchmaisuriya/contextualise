@@ -77,8 +77,9 @@ Every new agent started in a project, a git repository or a folder outside git, 
 
 **Folders outside git** are projects too, keyed the way Memorise keys them:
 - the key comes from the folder's name and real path;
-- it is kept when the folder is renamed or moved on the same disk;
-- agents in the subfolders of a Paseo project share the project's knowledge.
+- it is kept when the folder is renamed or moved on the same disk, and after a restart (the folder is known by its inode and creation time, not by the disk's device number, which macOS can change when it mounts the disk again);
+- agents in the subfolders of a Paseo project share the project's knowledge;
+- a folder that no longer exists is not listed; what was read from it is kept, and it is listed again if the folder comes back.
 
 Files are found by walking the folder, skipping hidden, dependency, and build folders, up to 50,000 entries. A git repository inside the folder adds only the files its index lists, so what it ignores (virtual environments, build output) stays out; only its index is read, so no command its own git config names ever runs. Files it does not track, repositories inside it, and one git cannot read are left out. A file is read again when its modified time or size changes. The home folder, the filesystem root, and Paseo's plugin data folders never become projects.
 
@@ -143,7 +144,7 @@ These are rebuilt whenever files change. On a 7,000-file Python repository the f
 
 Diagrams are drawn by Paseo's own Markdown renderer (Mermaid), so they follow the theme and open full screen. The project's documents render as Markdown; text an agent wrote stays plain text, so it cannot carry links or images.
 
-Attach > Project knowledge opens on one **Whole project** row per project: the project's description, its main areas, the full text of its conventions, architecture documents, and decisions not superseded, and its recent work, in one attachment of at most 60,000 characters (about 15,000 tokens). A document that does not fit is left out whole and named. The row says how many documents fit and its size before you send it. Typing searches every project at once and offers one entry (a document section, a code symbol, or a task) per row. The picker answers from what is already read and never waits for a project to be checked again; that check starts in the background, so a file changed in the last seconds may show its earlier text until the next search.
+Attach > Project knowledge opens on one **Whole project** row per project: the project's description, its main areas, the full text of its conventions, architecture documents, and decisions not superseded, and its recent work, in one attachment of at most 60,000 characters (about 15,000 tokens). A document that does not fit is left out whole and named. The row says how many documents fit and its size before you send it. Typing searches every project at once and offers one entry (a document section, a code symbol, or a task) per row. Each search checks every project for changed files at once and waits at most 0.3 s for them. A project whose check takes longer (a large folder outside git) answers from what was read before and says "updating"; its check finishes in the background.
 
 **Turning it off.** The "Project knowledge" switch in Settings > Contextualise turns all of it off:
 - new agents get no map or tools;

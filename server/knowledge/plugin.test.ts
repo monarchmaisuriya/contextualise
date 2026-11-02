@@ -45,6 +45,7 @@ describe("contributeKnowledge", () => {
   const create = (cwd: string, config: Record<string, unknown> = {}) =>
     (before.get("agent.create") as (input: unknown, context: unknown) => Promise<{ config: { systemPrompt?: string; mcpServers: Record<string, unknown> } }>)({ request: { config: { provider: "claude", cwd, ...config } } }, { paseo });
   const attach = (query: string) => (rpcs.get("knowledge.attach-search") as (input: unknown, context: unknown) => Promise<{ items: { identifier: string; title: string; subtitle: string; text: string }[] } | undefined>)({ query }, { paseo });
+  const call = (name: string, input: unknown) => (rpcs.get(name) as (input: unknown, context: unknown) => Promise<unknown>)(input, { paseo });
   const emit = async (name: string, event: unknown) => {
     for (const handler of on.get(name) ?? []) await (handler as (event: unknown, context: unknown) => Promise<void>)(event, { paseo });
   };
@@ -234,7 +235,7 @@ describe("contributeKnowledge", () => {
     expect(items[0].text).toContain("quoted from the repository:\n\nOne daemon.");
   });
 
-  it("offers each whole project in Attach when nothing is typed, built from the index without a re-check", async () => {
+  it("offers each whole project in Attach when nothing is typed, after checking it for changes", async () => {
     await create(top);
     await emit("agent.turn_ended", { agent: { id: "a1", provider: "codex", cwd: top, title: null }, outcome: { kind: "completed" } });
     const dir = join(home, "plugin-data", "contextualise", "knowledge");
@@ -244,7 +245,7 @@ describe("contributeKnowledge", () => {
     store.close();
     const refresh = vi.spyOn(KnowledgeBase.prototype, "refresh");
     const { items } = (await attach(""))!;
-    expect(refresh).not.toHaveBeenCalled();
+    expect(refresh.mock.calls.map(([, maxWaitMs]) => maxWaitMs)).toEqual([300]);
     refresh.mockRestore();
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ identifier: "Whole project", title: expect.stringMatching(/^contextualise-plugin-repo-/) });
@@ -255,13 +256,28 @@ describe("contributeKnowledge", () => {
     expect(items[0].text).toContain("Document the queue (completed)");
   });
 
-  it("answers a typed search from the index as it is, without waiting for a re-check", async () => {
+  it("shows an edit made since the last check, once the check is due", async () => {
     await create(top);
-    const refresh = vi.spyOn(KnowledgeBase.prototype, "refresh").mockImplementation((_repo, maxWaitMs) => (maxWaitMs === 0 ? Promise.resolve("updating" as const) : new Promise(() => {})));
-    const { items } = (await attach("daemon"))!;
-    expect(refresh.mock.calls.every(([, maxWaitMs]) => maxWaitMs === 0)).toBe(true);
-    refresh.mockRestore();
-    expect(items.map((item) => item.identifier)).toEqual(["Design"]);
+    writeFileSync(join(top, "ARCHITECTURE.md"), "# Overview\nTwo daemons.\n");
+    execFileSync("git", ["-C", top, "add", "-A"]);
+    await call("knowledge.reindex", { repoKey: ((await call("knowledge.projects", {})) as { projects: { repoKey: string }[] }).projects[0].repoKey });
+    expect((await attach("daemons"))!.items.map((item) => item.text)).toEqual([expect.stringContaining("Two daemons.")]);
+  });
+
+  it("waits at most 300 ms for a project's check, then answers from its index and says it is updating", async () => {
+    await create(top);
+    const refresh = vi.spyOn(KnowledgeBase.prototype, "refresh").mockImplementation((_repo, maxWaitMs) => new Promise((done) => setTimeout(() => done("updating"), maxWaitMs)));
+    try {
+      const started = Date.now();
+      const { items } = (await attach("daemon"))!;
+      expect(Date.now() - started).toBeLessThan(1_000);
+      expect(refresh.mock.calls.map(([, maxWaitMs]) => maxWaitMs)).toEqual([300, 0, 0]);
+      expect(items.map((item) => item.identifier)).toEqual(["Design"]);
+      expect(items[0].subtitle).toContain(" · updating · ");
+      expect((await attach(""))!.items[0].subtitle).toMatch(/^Updating · /);
+    } finally {
+      refresh.mockRestore();
+    }
     expect((await attach("plugin-repo"))!.items[0].identifier).toBe("Whole project");
   });
 

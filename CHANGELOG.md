@@ -2,6 +2,17 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.22.1 - 2026-11-02
+
+### Fixed
+
+- **One key per folder after a restart:** a folder outside git keeps its key when the machine restarts. Before, macOS could give the disk a new device number, which counted as part of a folder's identity, so every folder got a second key (`folder/<name>-…-2`) and a second index.
+  - **On first start:** duplicate keys are folded into the first one. The later index's tasks are moved into it, and its files are kept, renamed `*.merged`.
+  - **Agents created in between:** agents given a later key keep working.
+  - **Memorise:** it needs the same fix to keep folder keys equal in both plugins. Until then, memories for those folders do not show under their search results.
+- **Deleted folders:** a folder project whose folder no longer exists is no longer listed in Attach or on the Project knowledge screen. Its data is kept, and it is listed again if the folder comes back.
+- **Fresh Attach results:** Attach > Project knowledge checks every project for changed files at once and waits at most 0.3 s. It no longer answers from an index that may be seconds old. A project whose check takes longer says "updating".
+
 ## 0.22.0 - 2026-11-02
 
 ### Added

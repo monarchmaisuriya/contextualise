@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, appendFile, mkdir, readdir, readFile, realpath } from "node:fs/promises";
+import { access, appendFile, mkdir, readdir, readFile, realpath, rename } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import type { Project } from "../../shared/knowledge";
@@ -91,7 +91,15 @@ export class KnowledgeBase {
     return repo;
   }
 
-  async open(repo: ProjectRoot): Promise<KnowledgeStore> {
+  // The key a project now goes by: a folder's later keys from before its identity stopped depending on
+  // the device number mean its first key. Agents given an alias key keep working.
+  private async canonical(repo: ProjectRoot): Promise<ProjectRoot> {
+    const key = (await (await this.projectKeys()).aliases()).get(repo.key);
+    return key ? { ...repo, key } : repo;
+  }
+
+  async open(project: ProjectRoot): Promise<KnowledgeStore> {
+    const repo = await this.canonical(project);
     const known = this.opened.get(repo.key);
     if (known) {
       if (known.repo.top !== repo.top) known.store.setMeta("top", repo.top);
@@ -135,7 +143,8 @@ export class KnowledgeBase {
   }
 
   // Resolves when the index is current, or after `maxWaitMs` with "updating" while it carries on.
-  async refresh(repo: ProjectRoot, maxWaitMs: number): Promise<"fresh" | "updating"> {
+  async refresh(project: ProjectRoot, maxWaitMs: number): Promise<"fresh" | "updating"> {
+    const repo = await this.canonical(project);
     if ((this.freshUntil.get(repo.key) ?? 0) > this.now()) return "fresh";
     let run = this.running.get(repo.key);
     if (!run) {
@@ -175,7 +184,8 @@ export class KnowledgeBase {
     this.freshUntil.delete(repoKey);
   }
 
-  async recordTask(repo: ProjectRoot, task: TaskRecord): Promise<void> {
+  async recordTask(project: ProjectRoot, task: TaskRecord): Promise<void> {
+    const repo = await this.canonical(project);
     const store = await this.open(repo);
     store.upsertTask(task);
     await appendFile(join(await this.dir(), `${KnowledgeBase.fileName(repo.key)}.tasks.jsonl`), `${JSON.stringify(task)}\n`, { mode: 0o600 });
@@ -187,8 +197,27 @@ export class KnowledgeBase {
     return this.running.has(repoKey);
   }
 
+  // Moves an alias key's index into the project it now means: its tasks are recorded there (by id, so
+  // none is doubled), and its files are renamed aside with ".merged", not deleted.
+  private async fold(store: KnowledgeStore, file: string, into: ProjectRoot): Promise<void> {
+    const tasks = store.tasks(100_000);
+    for (const task of tasks) await this.recordTask(into, task);
+    store.close();
+    const name = file.slice(0, -".sqlite".length);
+    for (const part of [`${name}.sqlite`, `${name}.sqlite-wal`, `${name}.sqlite-shm`, `${name}.tasks.jsonl`, `${name}.usage.json`]) {
+      await rename(part, `${part}.merged`).catch((error: unknown) => {
+        if (Reflect.get(Object(error), "code") !== "ENOENT") throw error;
+      });
+    }
+    console.log(`[contextualise] merged a duplicate index into ${into.key} (${tasks.length} task(s)); its files are kept as ${name}.*.merged`);
+  }
+
+  // Every project with an index, except folders outside git whose folder no longer exists: their index
+  // is kept, and they are listed again if the folder comes back. A repository stays listed, as its
+  // knowledge belongs to the repository and its folder is only the last checkout seen.
   async projects(): Promise<Omit<Project, "enabled" | "pins" | "generation">[]> {
     const dir = await this.dir();
+    const aliases = await (await this.projectKeys()).aliases();
     for (const name of await readdir(dir)) {
       if (!name.endsWith(".sqlite")) continue;
       if ([...this.opened.keys()].some((key) => `${KnowledgeBase.fileName(key)}.sqlite` === name)) continue;
@@ -199,10 +228,17 @@ export class KnowledgeBase {
         store.close();
         continue;
       }
+      const kept = aliases.get(repoKey);
+      if (kept) {
+        await this.fold(store, join(dir, name), projectRoot(kept, top));
+        continue;
+      }
       KnowledgeBase.upgrade(store);
       this.opened.set(repoKey, { repo: projectRoot(repoKey, top), store });
     }
-    return [...this.opened.values()]
+    const present = await Promise.all([...this.opened.values()].map(async (opened) => (opened.repo.git || (await access(opened.repo.top).then(() => true, () => false)) ? opened : null)));
+    return present
+      .filter((opened) => opened !== null)
       .map(({ repo, store }) => ({
         repoKey: repo.key,
         name: projectName({ ...repo, checkoutName: repo.checkoutName ?? store.getMeta("checkoutName") ?? undefined }),
