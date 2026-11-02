@@ -9,6 +9,7 @@ import { errorText } from "./errors";
 import { ICONS } from "./icons";
 import { ActionSheet, ago, Button, IconButton, ListRow, Page, plural, Prose, ReaderSheet, SearchField, SectionHeader, Segmented, StateView, type Styles, Toggle, useActionSheet, usePagedList, useStyles } from "./kit";
 import { entryMeta, glanceLine, readerBody } from "./knowledge/text";
+import { LinkedProjects } from "./linked-projects";
 import { memoriseNote } from "./memorise-note";
 import { type Navigation, Pulse } from "./knowledge/pulse";
 import { AreaPage, AreasView, Connections, EntryBody, type ReadTarget, TaskRow, useFacts } from "./project-map";
@@ -189,7 +190,7 @@ function Overview({ project, hostKey, navigation, writing, change, onShow, onRea
       ) : (
         <Text style={[styles.muted, pad]}>No description yet.</Text>
       )}
-      {!writing && !brief.data ? <Text style={[styles.note, pad]}>Turn on Settings &gt; Contextualise &gt; Conversation summaries to get a written description and a line for each area.</Text> : null}
+      {!writing && !brief.data ? <Text style={[styles.note, pad]}>Turn on Settings &gt; Contextualise &gt; Project knowledge &gt; Write summaries of finished conversations to get a written description and a line for each area.</Text> : null}
 
       <SectionHeader
         label="What agents get"
@@ -322,10 +323,9 @@ export function KnowledgeView(props: ({ fixedRepoKey: string } | { hostId: strin
   const running = project?.generation?.state === "running";
   const canPick = !fixedRepoKey && all.length > 1;
   const menu = useActionSheet(project?.name ?? "this project", [
-    ...(canPick ? [{ label: "Choose project", onPress: () => setChoosing(true) }] : []),
-    { label: "Re-index", icon: ICONS.refresh, disabled: project?.indexing ?? true, onPress: () => project && change(reindex({ repoKey: project.repoKey })) },
+    // Choosing a project is the title's job, and re-indexing has its own button in the header.
     { label: "Add past conversations", disabled: running, onPress: () => project && change(generate({ repoKey: project.repoKey, generate: false })) },
-    { label: "Summarise past conversations", disabled: running, onPress: () => project && change(generate({ repoKey: project.repoKey, generate: true })) },
+    { label: writing ? "Summarise past conversations" : "Summarise past conversations (summaries are off in Settings)", disabled: running || !writing, onPress: () => project && change(generate({ repoKey: project.repoKey, generate: true })) },
   ], styles);
 
   if (projects.isPending) return <StateView state="loading" styles={styles} />;
@@ -352,6 +352,7 @@ export function KnowledgeView(props: ({ fixedRepoKey: string } | { hostId: strin
           </Text>
         ) : null}
         <View style={styles.grow} />
+        <IconButton icon={ICONS.refresh} label={project.indexing ? "Reading the project" : "Read the project again"} disabled={project.indexing} onPress={() => change(reindex({ repoKey: project.repoKey }))} styles={styles} />
         <Toggle value={project.enabled} onValueChange={(enabled) => change(setProjectEnabled({ repoKey: project.repoKey, enabled }))} label={`Project knowledge for ${project.name}`} styles={styles} />
         {menu.button}
       </View>
@@ -386,7 +387,7 @@ export function KnowledgeView(props: ({ fixedRepoKey: string } | { hostId: strin
       ) : null}
       {query.trim() !== "" ? (
         <>
-          <SectionHeader label={kind ? `Results · ${KIND_LABELS[kind]}` : "Results"} count={hits.data?.hits.length} styles={styles} />
+          <SectionHeader label={kind ? `Results · ${KIND_LABELS[kind]}` : "Results"} count={hits.data?.hits.length} action={{ label: "Clear search", onPress: () => setQuery("") }} styles={styles} />
           {hits.isLoading ? <StateView state="loading" styles={styles} /> : null}
           {hits.error ? <StateView state="error" text={errorText(hits.error)} styles={styles} /> : null}
           {hits.data?.hits.length === 0 ? <Text style={[styles.muted, pad]}>Nothing matches. Try other words, or fewer.</Text> : null}
@@ -462,6 +463,9 @@ export function WorkspaceKnowledgePanel({ theme, workspaceId, navigation }: Plug
   const styles = useStyles(theme, true);
   return (
     <Page styles={styles}>
+      {/* Linked projects are folder access, not knowledge, so they show while knowledge is off. */}
+      <SectionHeader label="Linked projects" styles={styles} />
+      <LinkedProjects workspaceId={workspaceId} styles={styles} openAgent={(agentId) => navigation?.openAgent({ agentId })} />
       <KnowledgeOn styles={styles}>
         <WorkspaceProject workspaceId={workspaceId} navigation={navigation} styles={styles} />
       </KnowledgeOn>

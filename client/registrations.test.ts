@@ -32,7 +32,12 @@ test("every name the plugin registers in the app is one Paseo accepts", async ()
   const client = new Proxy(
     {
       paseo: { agents: { list: async () => ({ subscription }) } },
-      rpc: async (contract: { name: string }) => (contract.name.startsWith("settings.") ? { status: "ready", revision: "r", values: { showPill: true, pillLabel: "count" } } : { tags }),
+      rpc: async (contract: { name: string }) =>
+        contract.name.startsWith("settings.")
+          ? { status: "ready", revision: "r", values: { showPill: true, pillLabel: "count" } }
+          : contract.name === "links.list"
+            ? { links: [{ path: "/api", name: "api", repoKey: null, addedAt: "t" }], sharedFolder: false, suggestions: [] }
+            : { tags },
       addTimelineRenderer: (r: { kind: string; version: number }) => {
         expect(Number.isInteger(r.version) && r.version >= 1).toBe(true);
         return accept("timeline renderer kind", r.kind);
@@ -62,7 +67,10 @@ test("every name the plugin registers in the app is one Paseo accepts", async ()
   expect([...(seen.get("addCommandCenterItem") ?? [])]).toEqual(["tag-agent", "pin-agent", "unpin-agent", "open-knowledge", "open-workspace-knowledge", "open-tags"]);
   expect([...(seen.get("slash command name") ?? [])]).toEqual(["tag", "untag", "tag-link", "tag-fetch"]);
   expect([...(seen.get("addWorkspacePanel") ?? [])]).toEqual(["knowledge"]);
-  expect(pills).toEqual([{ agentId: "a1", id: "tags", label: "1 tag", visible: true }]);
+  expect(pills).toEqual([
+    { agentId: "a1", id: "tags", label: "1 tag", visible: true },
+    { agentId: "a1", id: "linked-projects", label: "Linked 1" },
+  ]);
   // Pin and Unpin each set their own state, so selecting one twice never flips it back.
   for (const [id, pinned] of [["pin-agent", true], ["unpin-agent", false], ["pin-agent", true]] as const) {
     const rpc = vi.fn(async () => ({}));

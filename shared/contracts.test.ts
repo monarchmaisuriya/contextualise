@@ -86,3 +86,8 @@ test("every RPC input schema accepts its own parsed output", () => {
     expect(rpc.input.parse(once), rpc.name).toEqual(once);
   }
 });
+
+test("the Attach option for project knowledge is called Project", async () => {
+  const { knowledgeAttachmentSource } = await import("./knowledge");
+  expect(knowledgeAttachmentSource).toMatchObject({ id: "knowledge", title: "Project", pickerTitle: "Attach project" });
+});

@@ -368,7 +368,7 @@ export class Generator {
   }
 
   private static outcomeText(outcome: "done" | "skipped" | "capped" | "current", done: string): string {
-    return outcome === "done" ? done : outcome === "capped" ? "stopped at today's limit" : outcome === "current" ? "already up to date" : "summaries are off (Settings > Contextualise > Conversation summaries)";
+    return outcome === "done" ? done : outcome === "capped" ? "stopped at today's limit" : outcome === "current" ? "already up to date" : "summaries are off (Settings > Contextualise > Project knowledge > Write summaries of finished conversations)";
   }
 
   // "Write a description" and "Rewrite" on the screen.
@@ -389,7 +389,7 @@ export class Generator {
       const imported = await this.importPast(paseo, project);
       const parts = [`${imported} past conversation${imported === 1 ? "" : "s"} added`];
       if (generate) {
-        if (!(await this.deps.settings()).knowledgeGenerate) parts.push("summaries are off (Settings > Contextualise > Conversation summaries)");
+        if (!(await this.deps.settings()).knowledgeGenerate) parts.push("summaries are off (Settings > Contextualise > Project knowledge > Write summaries of finished conversations)");
         else {
           let summarised = 0;
           let capped = false;

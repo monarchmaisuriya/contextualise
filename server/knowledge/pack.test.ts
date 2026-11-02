@@ -43,6 +43,7 @@ describe("projectPack", () => {
     expect(pack.text).not.toContain("0000-files");
     expect(pack.text).not.toContain("Read me.");
     expect(pack.text).toContain("- 2026-11-01 Fix refs (completed)");
+    expect(pack.text).toContain("Search Attach > Project for anything else in this project.");
     expect(pack).toMatchObject({ documents: 3, included: 3, tokens: Math.round(pack.text.length / 4) });
   });
 

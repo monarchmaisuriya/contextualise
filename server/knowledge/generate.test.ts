@@ -98,7 +98,7 @@ describe("Generator", () => {
     const repo = await project();
     generator.run(paseo, repo, true);
     await vi.waitFor(() => expect(generator.status(repo.key)?.state).toBe("done"));
-    expect(generator.status(repo.key)?.message).toBe("2 past conversations added; summaries are off (Settings > Contextualise > Conversation summaries)");
+    expect(generator.status(repo.key)?.message).toBe("2 past conversations added; summaries are off (Settings > Contextualise > Project knowledge > Write summaries of finished conversations)");
     expect(runWorker).not.toHaveBeenCalled();
   });
 
