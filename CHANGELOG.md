@@ -2,6 +2,12 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.22.2 - 2026-11-02
+
+### Fixed
+
+- **Attach > Project knowledge follows "Label before each title":** its rows now start with their title, like every other Attach row. Before, they always began with a word ("Whole project", "Design", "Decisions", and so on), even with the setting at its default of no label. Set it to a word to see them again.
+
 ## 0.22.1 - 2026-11-02
 
 ### Fixed

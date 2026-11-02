@@ -230,7 +230,7 @@ describe("contributeKnowledge", () => {
     await create(top);
     const { items } = (await (rpcs.get("knowledge.attach-search") as (input: unknown, context: unknown) => Promise<{ items: { title: string; subtitle: string; text: string; identifier: string }[] }>)({ query: "daemon" }, { paseo })) ?? { items: [] };
     expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ identifier: "Design", title: "Overview" });
+    expect(items[0]).toMatchObject({ identifier: "", title: "Overview" });
     expect(items[0].subtitle).toMatch(/· ARCHITECTURE\.md:1 · One daemon\.$/);
     expect(items[0].text).toContain("quoted from the repository:\n\nOne daemon.");
   });
@@ -248,7 +248,7 @@ describe("contributeKnowledge", () => {
     expect(refresh.mock.calls.map(([, maxWaitMs]) => maxWaitMs)).toEqual([300]);
     refresh.mockRestore();
     expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ identifier: "Whole project", title: expect.stringMatching(/^contextualise-plugin-repo-/) });
+    expect(items[0]).toMatchObject({ identifier: "", title: expect.stringMatching(/^contextualise-plugin-repo-/) });
     expect(items[0].subtitle).toMatch(/^1 document · about \d+ tokens · /);
     expect(items[0].text).toContain("An API.");
     expect(items[0].text).not.toContain("Serves requests.");
@@ -272,13 +272,20 @@ describe("contributeKnowledge", () => {
       const { items } = (await attach("daemon"))!;
       expect(Date.now() - started).toBeLessThan(1_000);
       expect(refresh.mock.calls.map(([, maxWaitMs]) => maxWaitMs)).toEqual([300, 0, 0]);
-      expect(items.map((item) => item.identifier)).toEqual(["Design"]);
+      expect(items.map((item) => item.title)).toEqual(["Overview"]);
       expect(items[0].subtitle).toContain(" · updating · ");
       expect((await attach(""))!.items[0].subtitle).toMatch(/^Updating · /);
     } finally {
       refresh.mockRestore();
     }
-    expect((await attach("plugin-repo"))!.items[0].identifier).toBe("Whole project");
+    expect((await attach("plugin-repo"))!.items[0].title).toMatch(/^contextualise-plugin-repo-/);
+  });
+
+  it("puts a word before knowledge rows in Attach only when the label setting asks for one", async () => {
+    await create(top);
+    values = { ...values, pickerPrefix: "word" };
+    expect((await attach(""))!.items.map((item) => item.identifier)).toEqual(["Whole project"]);
+    expect((await attach("daemon"))!.items.map((item) => item.identifier)).toEqual(["Design"]);
   });
 
   it("does nothing while knowledge is off: no RPC answers, Attach offers nothing, no folder is recorded, and no titles are read", async () => {
