@@ -30,7 +30,8 @@ export function followLinkPills(client: PluginClientContext): () => void {
         }
       : undefined;
     return (
-      <View style={{ padding: 12, maxWidth: 420 }}>
+      // Paseo's popover already pads its content, as Shell Yeah's relies on; no second padding here.
+      <View style={{ maxWidth: 420 }}>
         <LinkedProjects workspaceId={props.workspaceId} agentId={props.agentId} styles={styles} openAgent={openAgent} />
       </View>
     );

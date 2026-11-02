@@ -255,7 +255,7 @@ export const tagSummarySchema = z.object({
 });
 export type TagSummary = z.infer<typeof tagSummarySchema>;
 
-// An agent M pinned so it comes first in Attach > Agent conversation.
+// An agent M pinned so it comes first in Attach > Chat.
 export const pinnedAgentSchema = z.object({
   agentId: z.string(),
   pinnedAt: z.string(),
@@ -318,17 +318,19 @@ export const tagAttachmentSource = defineAttachmentSource({
 
 export const agentAttachmentSource = defineAttachmentSource({
   id: "agent",
-  title: "Agent conversation",
+  title: "Chat",
   icon: "MessagesSquare",
-  pickerTitle: "Attach another agent's conversation",
-  searchPlaceholder: "Search agents by title, provider, or workspace",
+  pickerTitle: "Attach another chat",
+  searchPlaceholder: "Search chats by title, provider, or workspace",
   search: searchAgentsRpc,
 });
 
 export const terminalAttachmentSource = defineAttachmentSource({
   id: "terminal",
   title: "Terminal output",
-  icon: "SquareTerminal",
+  // A terminal prompt, but not SquareTerminal: Shell Yeah's "Command output" uses that, and the two
+  // would look alike in Attach. A Lucide export of the installed Paseo 0.14.0 app (app-dist web bundle).
+  icon: "Terminal",
   pickerTitle: "Attach terminal output",
   searchPlaceholder: "Search terminals by name or workspace",
   search: searchTerminalsRpc,

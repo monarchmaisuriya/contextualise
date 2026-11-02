@@ -12,6 +12,9 @@ const linkSchema = z.object({
   // The project key Contextualise gives the folder, for its knowledge; null when it has none.
   repoKey: z.string().min(1).max(600).nullable(),
   addedAt: z.string(),
+  // Set when a workspace was attached (its folder, not a project's): the link lapses when Paseo no
+  // longer has that workspace, so a later worktree reusing the folder never inherits it.
+  workspaceId: z.string().min(1).max(200).optional(),
 });
 export type WorkspaceLink = z.infer<typeof linkSchema>;
 // Project grants already used, newest last; a grant expires within an hour, so a few hundred is plenty.
@@ -19,7 +22,7 @@ const USED_GRANTS_KEPT = 500;
 const fileSchema = z.object({ version: z.literal(1), workspaces: z.record(z.string(), z.array(linkSchema).max(MAX_LINKS)), usedGrants: z.array(z.string()).max(USED_GRANTS_KEPT).default([]) });
 type LinksFile = z.infer<typeof fileSchema>;
 
-const within = (path: string, folder: string) => path === folder || path.startsWith(folder.endsWith(sep) ? folder : `${folder}${sep}`);
+export const within = (path: string, folder: string) => path === folder || path.startsWith(folder.endsWith(sep) ? folder : `${folder}${sep}`);
 
 // The folder M asked to link, as a real path, or why it cannot be linked. A link adds the whole
 // folder to every chat in the workspace, so the home folder, the filesystem root, the workspace's own
@@ -37,7 +40,12 @@ export async function linkableFolder(path: string, workspaceFolder: string, prot
   if (within(own, real) || within(real, own)) throw new Error(`${real} overlaps this workspace's own folder, which chats here can already edit`);
   for (const folder of protectedFolders) {
     const kept = await realpath(folder).catch(() => folder);
-    if (within(kept, real) || within(real, kept)) throw new Error(`${real} overlaps Paseo's own data folder (${kept}), which cannot be linked`);
+    // One exception inside Paseo's home: a worktree workspace's folder, <home>/worktrees/<id>/<slug>
+    // or deeper, measured on the real path so a link there into anything else stays refused. The
+    // worktrees folder is fixed here, never read from Paseo's config, where "." would open all of home.
+    const worktrees = await realpath(join(kept, "worktrees")).catch(() => join(kept, "worktrees"));
+    const inWorktree = real.startsWith(`${worktrees}${sep}`) && real.slice(worktrees.length + 1).split(sep).length >= 2;
+    if (within(kept, real) || (within(real, kept) && !inWorktree)) throw new Error(`${real} overlaps Paseo's own data folder (${kept}), which cannot be linked`);
   }
   return real;
 }
@@ -121,18 +129,38 @@ export class WorkspaceLinks {
   }
 }
 
-// Folder options for the chat's provider, merged with any already set. Only Claude and Codex are
-// known: Paseo checks each provider's options strictly and fails the chat on a key it does not know,
-// so any other provider gets nothing (null).
-export function linkedProviderOptions(provider: string, existing: Record<string, unknown> | undefined, paths: readonly string[]): Record<string, unknown> | null {
+// Folder options for the chat's provider, merged with any already set (null: leave them as they are),
+// and whether the chat can then edit the folders. Only Claude, Codex, and OpenCode are known: Paseo
+// checks each provider's options strictly and fails the chat on a key it does not know, so any other
+// provider gets nothing.
+export function linkedProviderOptions(provider: string, existing: Record<string, unknown> | undefined, paths: readonly string[], modeId?: string): { options: Record<string, unknown> | null; granted: boolean } {
   const merge = (current: unknown) => [...new Set([...(Array.isArray(current) ? (current as string[]) : []), ...paths])];
   const base = existing ?? {};
-  if (provider === "claude") return { ...base, additionalDirectories: merge(base.additionalDirectories) };
+  if (provider === "claude") return { options: { ...base, additionalDirectories: merge(base.additionalDirectories) }, granted: true };
   if (provider === "codex") {
     const sandbox = (base.sandbox_workspace_write ?? {}) as Record<string, unknown>;
-    return { ...base, sandbox_workspace_write: { ...sandbox, writable_roots: merge(sandbox.writable_roots) } };
+    return { options: { ...base, sandbox_workspace_write: { ...sandbox, writable_roots: merge(sandbox.writable_roots) } }, granted: true };
   }
-  return null;
+  if (provider === "opencode") return openCodeOptions(base, paths, modeId);
+  return { options: null, granted: false };
+}
+
+// OpenCode asks its external_directory rule for any file outside the chat's folder, as "<that file's
+// folder>/*", and the last matching rule wins; "*" crosses "/". So each attached folder is allowed as
+// "<folder>/*", placed last. M's explicit choices are never widened: one action for every permission,
+// or "deny" for outside folders, is left as it is. Edits are also checked against `edit`, and plan
+// mode denies them.
+function openCodeOptions(base: Record<string, unknown>, paths: readonly string[], modeId: string | undefined): { options: Record<string, unknown> | null; granted: boolean } {
+  const editsAllowed = (edit: unknown) => modeId !== "plan" && (edit === undefined || edit === "allow");
+  const permission = base.permission;
+  if (typeof permission === "string") return { options: null, granted: permission === "allow" && editsAllowed(undefined) };
+  const rules = (permission ?? {}) as Record<string, unknown>;
+  const outside = rules.external_directory;
+  if (outside === "deny") return { options: null, granted: false };
+  const kept: Record<string, unknown> = typeof outside === "string" ? { "*": outside } : { ...((outside ?? {}) as Record<string, unknown>) };
+  for (const path of paths) delete kept[`${path}/*`];
+  const external_directory = { ...kept, ...Object.fromEntries(paths.map((path) => [`${path}/*`, "allow"])) };
+  return { options: { ...base, permission: { ...rules, external_directory } }, granted: editsAllowed(rules.edit) };
 }
 
 // A folder path on one line with comment markers removed, so it can never open or close a section.
@@ -172,6 +200,8 @@ export function linksSection(linked: LinkedForChat, start: string, end: string):
         ...(linked.provider === "codex" ? ["Codex can write to attached folders only in its workspace-write sandbox, and keeps each one's .git read-only, so a commit there needs M's approval."] : []),
         ...searched,
       ]
-    : ["## Attached projects (Contextualise)", `M attached these projects to this workspace, but Contextualise can give extra folders only to Claude and Codex chats, not ${plainPath(linked.provider)}. They are listed for reference; you may not be able to edit them:`, ...list, ...searched];
+    : linked.provider === "opencode"
+      ? ["## Attached projects (Contextualise)", "M attached these projects to this workspace. You can read them, but this chat's OpenCode permissions (plan mode, or edits or outside folders set to ask or deny) may ask M before or stop edits there:", ...list, ...searched]
+      : ["## Attached projects (Contextualise)", `M attached these projects to this workspace, but Contextualise can give extra folders only to Claude, Codex, and OpenCode chats, not ${plainPath(linked.provider)}. They are listed for reference; you may not be able to edit them:`, ...list, ...searched];
   return [start, ...lines, end].join("\n");
 }

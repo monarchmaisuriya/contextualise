@@ -2,6 +2,22 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.25.0 - 2026-11-02
+
+### Added
+
+- **Attach a workspace, not only a project:** the Attached button has Projects and Workspaces tabs. Workspaces lists every other workspace with its branch, worktrees included, so new chats here can edit that exact checkout (for example another project's `fix/pr-948` worktree). A worktree folder inside Paseo's home is allowed; the rest of Paseo's home stays refused. An attached workspace lapses when Paseo no longer has it, so a later worktree reusing its folder never inherits it.
+
+### Changed
+
+- **Attach > Agent conversation is now Attach > Chat,** and Attach > Project comes right after it.
+- **New icons in Attach:** Terminal output shows a terminal prompt and Project a folder of code, so neither looks like Shell Yeah's Command output.
+- **The Attached button is cleaner:** attached projects, one search box, and New chat. How attaching works moved to Settings > Contextualise > Attached projects.
+
+### Added
+
+- **OpenCode chats can edit attached projects:** a new OpenCode chat in a workspace with attached projects gets an "allow" rule for each attached folder in OpenCode's outside-folder permission, placed last so it wins, with its other rules kept. Your own choices are never widened: if you set outside folders to "deny", or one answer for every permission, they are left as they are. Its prompt says it can edit them, or, in plan mode or with edits set to ask or deny, that edits there may need you.
+
 ## 0.24.0 - 2026-11-02
 
 ### Added

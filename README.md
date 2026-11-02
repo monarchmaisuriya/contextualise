@@ -19,7 +19,7 @@ Every agent's composer has a **Tags** pill next to Tasks and Subagents. Its labe
 - remove a tag (tap a filled chip),
 - add an existing tag (tap a plain chip, marked +),
 - add new tags (type names, separated by commas),
-- pin or unpin the agent with the pin icon (pinned agents come first in Attach > Agent conversation),
+- pin or unpin the agent with the pin icon (pinned agents come first in Attach > Chat),
 - fetch an item into one of its tags (**Fetch an item**),
 - open the Tags screen.
 
@@ -127,7 +127,7 @@ These are rebuilt whenever files change. On a 7,000-file Python repository the f
   - At most 20 runs a day (a setting).
   - A session is summarised again only after new turns.
 - **Never generated here:** decisions, pitfalls, and preferences; Memorise keeps those.
-- **Generated titles** also name agents in plain folders in Attach > Agent conversation, where Paseo has only the first request.
+- **Generated titles** also name agents in plain folders in Attach > Chat, where Paseo has only the first request.
 
 **Where to look.** Project knowledge in the sidebar footer (or "Open project knowledge" in the Command Center) shows each project, opening on the one you looked at last; tap the project name to pick another. Each workspace also has a Project knowledge tab for its own project ("Open project knowledge for this workspace" in the Command Center, or the new-tab menu). Both show:
 
@@ -166,14 +166,14 @@ Paseo plugins cannot call each other, so this goes through files Memorise publis
 
 ## Attached projects
 
-Attach another project to one workspace, and every new Claude or Codex chat in that workspace can search, read, and edit it as well as its own folder: a frontend workspace with its backend, for example. Other workspaces, including other workspaces of the same project, are not affected.
+Attach another project to one workspace, and every new Claude, Codex, or OpenCode chat in that workspace can search, read, and edit it as well as its own folder: a frontend workspace with its backend, for example. Other workspaces, including other workspaces of the same project, are not affected.
 
-- **Attach** by picking the project in **Attach > Project**. In a new workspace's first message, the project is attached as the workspace is created, and the first chat starts with it. In any other chat, the attachment carries a one-time grant, valid for an hour, and the chat attaches the project with the `project_attach` Paseo tool (you approve the call). Or use the **Attached** button above the message box, or the Attached projects section of the workspace's Project knowledge tab: search every Paseo project by name or folder, or type a folder path. The home folder, the filesystem root, the workspace's own folder, and Paseo's data folder cannot be attached.
+- **Attach** by picking the project in **Attach > Project**. In a new workspace's first message, the project is attached as the workspace is created, and the first chat starts with it. In any other chat, the attachment carries a one-time grant, valid for an hour, and the chat attaches the project with the `project_attach` Paseo tool (you approve the call). Or use the **Attached** button above the message box, or the Attached projects section of the workspace's Project knowledge tab: in the **Projects** tab search every Paseo project by name or folder, in the **Workspaces** tab any other workspace by title, project, or branch (worktrees included, so a chat can edit another project's exact branch checkout), or type a folder path. An attached workspace lapses when Paseo no longer has it. The home folder, the filesystem root, the workspace's own folder, and Paseo's data folder cannot be attached.
 - **Remove** one with the X beside it in the same button or section; attached projects are highlighted at the top. New chats stop getting the folder, and its knowledge is no longer searched, at once; running chats keep folder access until they end.
-- **Each new chat** gets the folders (Claude: additional directories, which also loads their CLAUDE.md, skills, and commands; Codex: writable roots, in its workspace-write sandbox) and a note listing them, with "use `git -C <folder>` and commit each project separately". Codex keeps an attached folder's `.git` read-only, so a commit there asks you first. Other providers get the list only.
+- **Each new chat** gets the folders (Claude: additional directories, which also loads their CLAUDE.md, skills, and commands; Codex: writable roots, in its workspace-write sandbox; OpenCode: an "allow" rule for each folder in its outside-folder permission, unless you set that, or every permission, to one answer yourself) and a note listing them, with "use `git -C <folder>` and commit each project separately". Codex keeps an attached folder's `.git` read-only, so a commit there asks you first. An OpenCode chat in plan mode, or with edits set to ask or deny, is told edits there may need you. OpenCode takes these rules only when a chat starts. Other providers get the list only.
 - **Search** with `knowledge_search` covers the chat's project and every attached one, labelling each hit's project; an attached project's ids start with its key, so `knowledge_read` reads the right one.
-- **Chats already running** search a newly attached project at once, but keep the folders they started with: Paseo lets a plugin set folders only when a chat starts. **New chat with attached projects** starts one; **Continue this chat with them** starts one that carries the current conversation.
-- **Workspaces that share a folder** (local workspaces on the same folder) cannot be told apart when a chat starts from Paseo's own button, so those chats get no folders, and search only their own project; **New chat with attached projects** gives them everything. `project_attach` works there either way.
+- **Chats already running** search a newly attached project at once, but keep the folders they started with: Paseo lets a plugin set folders only when a chat starts. **New Chat** in the Attached button starts one; **Fork Chat** starts one that carries the current conversation.
+- **Workspaces that share a folder** (local workspaces on the same folder) cannot be told apart when a chat starts from Paseo's own button, so those chats get no folders, and search only their own project; **New Chat** in the Attached button gives them everything. `project_attach` works there either way.
 
 Attached projects are stored in `<PASEO_HOME>/plugin-data/contextualise/knowledge/links.json`, by workspace, and work while Project knowledge is off.
 
@@ -184,7 +184,7 @@ In the composer, Attach offers four sources:
 | Source | Sends |
 | --- | --- |
 | **Tag** | The tag's workspaces (project, name, folder), its links, its fetched items, and each tagged agent's most recent turns |
-| **Agent conversation** | One agent's most recent turns, from any workspace or provider on this host |
+| **Chat** | One agent's most recent turns, from any workspace or provider on this host |
 | **Terminal output** | The newest lines of any terminal on this host |
 | **Project knowledge** | A whole project (its description, areas, design documents, rules, decisions, and recent work), or one document section, code symbol, or finished task from any indexed repository |
 

@@ -30,6 +30,7 @@ export const ICONS = {
   back: "ArrowLeft",
   attached: "FolderCheck",
   attach: "FolderPlus",
+  fork: "GitFork",
 } as const;
 
 // The Contextualise mark (contextualise.png without its dark square), for places that stand for the

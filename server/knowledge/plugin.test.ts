@@ -24,7 +24,7 @@ describe("contributeKnowledge", () => {
   const rpcs = new Map<string, Handler>();
   const on = new Map<string, Handler[]>();
   const respondToPermission = vi.fn(async () => {});
-  const workspaceEntries: { id: string; workspaceDirectory: string; background?: boolean; projectId?: string }[] = [];
+  const workspaceEntries: { id: string; workspaceDirectory: string; background?: boolean; projectId?: string; name?: string; projectDisplayName?: string; workspaceKind?: string; gitRuntime?: { currentBranch: string } }[] = [];
   const projectEntries: { projectId: string; projectDisplayName: string; projectCustomName?: string | null; projectRootPath: string }[] = [];
   const agentEntries: { agent: Record<string, unknown> }[] = [];
   let agentsDown = false;
@@ -488,11 +488,21 @@ describe("contributeKnowledge", () => {
       expect(other.config.systemPrompt ?? "").not.toContain("## Attached projects");
     });
 
-    it("gives a provider other than Claude or Codex no folder options, and says why", async () => {
+    it("gives a provider other than Claude, Codex, or OpenCode no folder options, and says why", async () => {
       await call("links.add", { workspaceId: "w1", path: api });
-      const created = await createIn(top, { provider: "opencode" });
+      const created = await createIn(top, { provider: "pi" });
       expect(created.config.providerOptions).toBeUndefined();
-      expect(created.config.systemPrompt).toContain("only to Claude and Codex chats, not opencode");
+      expect(created.config.systemPrompt).toContain("only to Claude, Codex, and OpenCode chats, not pi");
+    });
+
+    it("lets a new OpenCode chat edit the attached folder, and tells a plan-mode one it may not", async () => {
+      await call("links.add", { workspaceId: "w1", path: api });
+      const created = await createIn(top, { provider: "opencode", modeId: "build" });
+      expect(created.config.providerOptions).toEqual({ permission: { external_directory: { [`${api}/*`]: "allow" } } });
+      expect(created.config.systemPrompt).toContain("You can read and edit them as well as your own folder");
+      expect(created.env?.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD).toBeUndefined();
+      const planning = await createIn(top, { provider: "opencode", modeId: "plan" });
+      expect(planning.config.systemPrompt).toContain("may ask M before or stop edits there");
     });
 
     it("adds no folder when several workspaces share the chat's folder, background ones included, unless Contextualise created the chat", async () => {
@@ -601,6 +611,29 @@ describe("contributeKnowledge", () => {
         rmSync(old, { recursive: true, force: true });
         rmSync(worker, { recursive: true, force: true });
       }
+    });
+
+    it("offers other workspaces' own folders, worktrees inside Paseo's home included, and attaches one until Paseo no longer has it", async () => {
+      mkdirSync(join(home, "worktrees", "22x8cau0", "lavish-otter"), { recursive: true });
+      const worktree = realpathSync(join(home, "worktrees", "22x8cau0", "lavish-otter"));
+      workspaceEntries.push(
+        { id: "wt", workspaceDirectory: worktree, projectId: "p-api", name: "lavish-otter", projectDisplayName: "api", workspaceKind: "worktree", gitRuntime: { currentBranch: "fix/pr-948" } },
+        { id: "wbg", workspaceDirectory: api, projectId: "p-api", name: "worker", projectDisplayName: "api", background: true },
+      );
+      const listed = async () => (await call("links.list", { workspaceId: "w1" })) as { links: { path: string; name: string; workspaceId?: string }[]; workspaces: { workspaceId: string; name: string; branch: string | null; path: string }[] };
+      // Not this workspace, not a background one; the worktree with its branch.
+      expect((await listed()).workspaces.map((entry) => entry.workspaceId).sort()).toEqual(["w2", "wt"]);
+      expect((await listed()).workspaces.find((entry) => entry.workspaceId === "wt")).toEqual({ workspaceId: "wt", name: "lavish-otter", project: "api", path: worktree, branch: "fix/pr-948" });
+      // The path must be that workspace's own folder.
+      await expect(call("links.add", { workspaceId: "w1", path: web2, attachedWorkspaceId: "wt" })).rejects.toThrow("is not the folder of workspace wt");
+      await call("links.add", { workspaceId: "w1", path: worktree, attachedWorkspaceId: "wt" });
+      expect((await listed()).links).toMatchObject([{ path: worktree, name: "api / lavish-otter", workspaceId: "wt" }]);
+      expect((await listed()).workspaces.map((entry) => entry.workspaceId)).not.toContain("wt");
+      expect((await createIn(top)).config.providerOptions).toEqual({ additionalDirectories: [worktree] });
+      // Archived: its folder may belong to another worktree later, so the link lapses.
+      workspaceEntries.splice(workspaceEntries.findIndex((entry) => entry.id === "wt"), 1);
+      expect((await listed()).links).toEqual([]);
+      expect((await createIn(top)).config.providerOptions).toBeUndefined();
     });
 
     it("lists a workspace's links with whether its folder is shared, and works while knowledge is off", async () => {

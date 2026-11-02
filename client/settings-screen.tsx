@@ -283,6 +283,15 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
           <SettingsSelect label="Tags button shows" value={values.pillLabel} options={PILL_LABEL_OPTIONS} disabled={settings.saving || !values.showPill} onValueChange={(value) => persist({ ...values, pillLabel: value })} />
         </SettingsCard>
       </SettingsSection>
+      {/* The Attached popover stays a list and a search box; how attaching works is said here. */}
+      <SettingsSection title="Attached projects">
+        <SettingsCard>
+          <SettingsRow label="What attaching does" hint="Every new Claude, Codex, or OpenCode chat in that workspace can search, read, and edit the attached project as well as its own folder. Other workspaces, even of the same project, are not affected." />
+          <SettingsRow label="How to attach" hint="Pick a project in Attach > Project, or use the Attached button above the message box: its Projects tab attaches a project's main folder, its Workspaces tab one workspace's own folder (such as another project's worktree on a branch). In a new workspace's first message, the project is attached as the workspace is created." />
+          <SettingsRow label="Chats already running" hint="They search a newly attached project at once, but keep the folders they started with. Use New Chat in the Attached button, or Fork Chat (a new chat that carries this conversation), to edit it." />
+          <SettingsRow label="Workspaces that share a folder" hint="Chats started from Paseo's own new-chat button there cannot be told apart, so they get no attached projects. Use New Chat in the Attached button instead." />
+        </SettingsCard>
+      </SettingsSection>
       <SettingsSection title="Saving items">
         <SettingsCard>
           <SettingsSelect

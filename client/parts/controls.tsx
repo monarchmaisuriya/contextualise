@@ -82,16 +82,17 @@ export function SearchField({ value, onChange, placeholder, label, styles }: { v
   );
 }
 
-// One choice out of a few views or orders. Selection is a quiet fill, never accent.
-export function Segmented<Value extends string>({ options, value, onChange, label, styles }: { options: readonly { label: string; value: Value }[]; value: Value; onChange(value: Value): void; label: string; styles: Styles }) {
+// One choice out of a few views or orders. Selection is a quiet fill, never accent. `stretch` fills
+// the row with equal, centered options, for a choice that splits a popover in two.
+export function Segmented<Value extends string>({ options, value, onChange, label, styles, stretch = false }: { options: readonly { label: string; value: Value }[]; value: Value; onChange(value: Value): void; label: string; styles: Styles; stretch?: boolean }) {
   const items = (
-    <View style={{ flexDirection: "row", flexWrap: "nowrap", height: 28, borderWidth: 1, borderColor: styles.colors.border, borderRadius: 6, overflow: "hidden", alignSelf: "flex-start" }} accessibilityRole="tablist" accessibilityLabel={label}>
+    <View style={{ flexDirection: "row", flexWrap: "nowrap", height: 28, borderWidth: 1, borderColor: styles.colors.border, borderRadius: 6, overflow: "hidden", alignSelf: stretch ? "stretch" : "flex-start" }} accessibilityRole="tablist" accessibilityLabel={label}>
       {options.map((option) => {
         const selected = option.value === value;
         return (
           <Pressable
             key={option.value}
-            style={{ paddingHorizontal: 10, justifyContent: "center", backgroundColor: selected ? styles.colors.surface2 : "transparent" }}
+            style={{ paddingHorizontal: 10, justifyContent: "center", ...(stretch ? { flex: 1, alignItems: "center" as const } : {}), backgroundColor: selected ? styles.colors.surface2 : "transparent" }}
             onPress={() => onChange(option.value)}
             hitSlop={{ top: 8, bottom: 8 }}
             accessibilityRole="tab"
@@ -106,7 +107,7 @@ export function Segmented<Value extends string>({ options, value, onChange, labe
       })}
     </View>
   );
-  return segmentedScrolls(styles.compact) ? (
+  return segmentedScrolls(styles.compact) && !stretch ? (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }}>
       {items}
     </ScrollView>
