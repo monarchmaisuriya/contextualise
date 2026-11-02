@@ -72,6 +72,11 @@ describe("contributeKnowledge", () => {
     rpcs.clear();
     on.clear();
     respondToPermission.mockClear();
+    // Paseo knows the test repository as a project with one workspace.
+    workspaceEntries.length = 0;
+    workspaceEntries.push({ id: "w-top", workspaceDirectory: top, projectId: "p-top" });
+    projectEntries.length = 0;
+    projectEntries.push({ projectId: "p-top", projectDisplayName: basename(top), projectRootPath: top });
     const server = {
       before: (name: string, handler: Handler) => before.set(name, handler),
       on: (name: string, handler: Handler) => on.set(name, [...(on.get(name) ?? []), handler]),
@@ -259,6 +264,23 @@ describe("contributeKnowledge", () => {
     expect(items[0].text).not.toContain("Serves requests.");
     expect(items[0].text).toContain("### ARCHITECTURE.md\n#### Overview\nOne daemon.");
     expect(items[0].text).toContain("Document the queue (completed)");
+  });
+
+  it("offers every Paseo project with a visible workspace in Attach, also one no agent has run in, but not one whose workspaces were all archived", async () => {
+    const fresh = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-plugin-fresh-")));
+    const old = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-plugin-old-")));
+    try {
+      for (const folder of [fresh, old]) execFileSync("git", ["init", "-q", folder]);
+      projectEntries.push({ projectId: "p-fresh", projectDisplayName: "fresh", projectCustomName: "Backend", projectRootPath: fresh }, { projectId: "p-old", projectDisplayName: "old", projectRootPath: old });
+      workspaceEntries.push({ id: "w-fresh", workspaceDirectory: fresh, projectId: "p-fresh" });
+      const titles = (await attach(""))!.items.map((item) => item.title);
+      expect(titles).toEqual(expect.arrayContaining([basename(top), "Backend"]));
+      expect(titles).not.toContain("old");
+      expect(titles).toHaveLength(2);
+    } finally {
+      rmSync(fresh, { recursive: true, force: true });
+      rmSync(old, { recursive: true, force: true });
+    }
   });
 
   it("shows an edit made since the last check, once the check is due", async () => {
