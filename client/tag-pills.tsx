@@ -32,9 +32,9 @@ export function followAgentPills(client: PluginClientContext, openTagsFor: (agen
         }}
       />
     );
-    // The popover is the editor's only frame, so it gets the padding a card used to give it.
+    // Paseo's popover already pads its content, as Shell Yeah's relies on; no second padding here.
     return (
-      <View style={{ padding: 12 }}>
+      <View>
         <AgentTags agentId={agentId} fallbackWorkspaceId={workspaceId} styles={styles} footer={footer} />
       </View>
     );

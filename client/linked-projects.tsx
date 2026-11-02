@@ -6,7 +6,7 @@ import { Text, View } from "react-native";
 import { addLinkRpc, newLinkedChatRpc, removeLinkRpc, workspaceLinksRpc } from "../shared/linked-projects";
 import { errorText } from "./errors";
 import { ICONS } from "./icons";
-import { Button, IconButton, ListRow, SearchField, SectionHeader, StateView, type Styles } from "./kit";
+import { Button, IconButton, ListRow, SearchField, StateView, type Styles } from "./kit";
 
 export const linksQuery = (workspaceId: string) => ["contextualise", "links", workspaceId];
 // Rows drawn at once; with hundreds of projects the search narrows the rest.
@@ -68,7 +68,7 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
       {query.error ? <StateView state="error" text={`Could not load attached projects: ${errorText(query.error)}`} styles={styles} /> : null}
       {links.length > 0 ? (
         <View style={{ gap: 4 }}>
-          <SectionHeader label="Attached" count={links.length} styles={styles} />
+          <Text style={styles.heading}>{`Attached ${links.length}`}</Text>
           {links.map((link) => (
             // Attached rows stand out: a fill and a folder-with-check icon.
             <View key={link.path} style={[styles.row, { paddingVertical: 6, paddingLeft: 12, paddingRight: 4, borderRadius: 8, backgroundColor: styles.colors.surface2 }]}>
