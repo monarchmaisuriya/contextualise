@@ -9,8 +9,10 @@ import { ICONS } from "./icons";
 import { Button, IconButton, ListRow, SearchField, Segmented, StateView, type Styles } from "./kit";
 
 export const linksQuery = (workspaceId: string) => ["contextualise", "links", workspaceId];
-// Rows drawn at once; with hundreds of projects the search narrows the rest.
-const SHOWN = 30;
+// Rows drawn at first; scrolling near the end of the list draws this many more.
+const PAGE = 30;
+// How close to the end of the list, in points, counts as reaching it.
+const NEAR_END = 80;
 
 // Any link change in this client tells the composer pills to relabel.
 const listeners = new Set<() => void>();
@@ -48,12 +50,17 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
   const newChat = useRpc(newLinkedChatRpc);
   const [search, setSearch] = useState("");
   const [kind, setKind] = useState<AttachKind>(lastKind);
+  const [shown, setShown] = useState(PAGE);
+  const searchFor = (text: string) => {
+    setSearch(text);
+    setShown(PAGE);
+  };
   const change = useMutation({
     mutationFn: (run: () => Promise<unknown>) => run(),
     onSuccess: (payload) => {
       queryClient.setQueryData(linksQuery(workspaceId), payload);
       linksChanged();
-      setSearch("");
+      searchFor("");
     },
     onError: (error) => toast.error(errorText(error)),
   });
@@ -106,18 +113,25 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
         onChange={(next) => {
           lastKind = next;
           setKind(next);
+          setShown(PAGE);
         }}
         label="What to attach"
         styles={styles}
       />
-      <SearchField value={search} onChange={setSearch} placeholder={`Attach a ${noun}, or type a folder path`} label={`${noun} to attach`} styles={styles} />
-      <ScrollView style={{ maxHeight: 240 }} keyboardShouldPersistTaps="handled">
+      <SearchField value={search} onChange={searchFor} placeholder={`Attach a ${noun}, or type a folder path`} label={`${noun} to attach`} styles={styles} />
+      <ScrollView
+        style={{ maxHeight: 240 }}
+        keyboardShouldPersistTaps="handled"
+        scrollEventThrottle={100}
+        onScroll={({ nativeEvent: { layoutMeasurement, contentOffset, contentSize } }) => {
+          if (shown < rows.length && layoutMeasurement.height + contentOffset.y >= contentSize.height - NEAR_END) setShown(shown + PAGE);
+        }}
+      >
         {folder && !rows.some((row) => row.path === folder) ? <ListRow title={`Attach folder ${folder}`} icon={ICONS.attach} onPress={() => attach(folder)} disabled={change.isPending} styles={styles} /> : null}
-        {rows.slice(0, SHOWN).map((row) => (
+        {rows.slice(0, shown).map((row) => (
           <ListRow key={row.key} title={row.title} meta={row.meta} icon={kind === "projects" ? ICONS.attach : ICONS.workspace} onPress={() => attach(row.path, row.attachedWorkspaceId)} disabled={change.isPending} accessibilityLabel={`Attach ${row.title}`} styles={styles} />
         ))}
         {rows.length === 0 && !folder && data ? <Text style={[styles.note, { paddingHorizontal: 12, paddingVertical: 8 }]}>{words ? `No ${noun} matches "${search.trim()}"` : `No other ${noun}s`}</Text> : null}
-        {rows.length > SHOWN ? <Text style={[styles.note, { paddingHorizontal: 12, paddingVertical: 8 }]}>{`${rows.length - SHOWN} more; type to narrow`}</Text> : null}
       </ScrollView>
       {data?.sharedFolder && links.length > 0 ? (
         <View style={styles.inline}>
