@@ -69,7 +69,7 @@ test("every name the plugin registers in the app is one Paseo accepts", async ()
   expect([...(seen.get("addWorkspacePanel") ?? [])]).toEqual(["knowledge"]);
   expect(pills).toEqual([
     { agentId: "a1", id: "tags", label: "1 tag", visible: true },
-    { agentId: "a1", id: "linked-projects", label: "Linked 1" },
+    { agentId: "a1", id: "linked-projects", label: "Attached 1" },
   ]);
   // Pin and Unpin each set their own state, so selecting one twice never flips it back.
   for (const [id, pinned] of [["pin-agent", true], ["unpin-agent", false], ["pin-agent", true]] as const) {

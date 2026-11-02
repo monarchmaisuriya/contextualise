@@ -398,18 +398,94 @@ describe("contributeKnowledge", () => {
       rmSync(api, { recursive: true, force: true });
       rmSync(web2, { recursive: true, force: true });
     });
+    // A project row's grant, from its first line.
+    const grantOf = (text: string) => /^Attach grant \(project_attach\): (\S+)\n/.exec(text)?.[1] as string;
+    const apiRow = async () => {
+      projectEntries.push({ projectId: "p-api", projectDisplayName: "api", projectRootPath: api });
+      workspaceEntries.push({ id: "wa", workspaceDirectory: api, projectId: "p-api" });
+      execFileSync("git", ["init", "-q", api]);
+      return (await attach(""))!.items.find((item) => item.title === "api")!;
+    };
+    // How Paseo's app sends a picked project row (app/src/plugins/attachments/model.ts).
+    const projectRow = { provider: "contextualise", providerLabel: "Project knowledge", resourceType: "knowledge", id: "github.com/acme/api|project", identifier: "", title: "api", url: "x" };
+    // Paseo's order for a new workspace: workspace.create with the first message's attachments, then
+    // the workspace saved and workspace.created sent without waiting, then the first chat's hook.
+    const createWorkspace = async (source: Record<string, unknown>, texts: string[]) =>
+      (before.get("workspace.create") as (input: unknown, context: unknown) => Promise<unknown>)({ request: { source, firstAgentContext: { prompt: "Explain the flow", attachments: texts.map((text) => ({ type: "text", mimeType: "text/plain", text, ...(text.startsWith("Attach grant") ? { externalResource: projectRow } : {}) })) } } }, { paseo });
+    const workspaceCreated = (workspace: { id: string; projectId: string; cwd: string }) => {
+      for (const handler of on.get("workspace.created") ?? []) void (handler as (event: unknown, context: unknown) => Promise<void>)({ workspace: { ...workspace, name: null, archivedAt: null } }, { paseo });
+    };
+    const linkedPaths = async (workspaceId: string) => ((await call("links.list", { workspaceId })) as { links: { path: string }[] }).links.map((link) => link.path);
+    type Tool = { name: string; execute(input: { grant: string }, context: unknown): Promise<{ text: string; isError?: boolean }> };
+    const attachTool = async () => (await (before.get("agent.session_open") as (input: unknown, context: unknown) => Promise<{ tools: Tool[] }>)({ request: { agentId: "a1", workspaceId: "w1", provider: "claude", cwd: top, reason: "create", purpose: "interactive", env: {}, tools: [], mcpServers: {} } }, { paseo })).tools.find((entry) => entry.name === "project_attach")!;
+
+    it("attaches a project picked in a new worktree workspace's first message before its first chat starts, without the agent", async () => {
+      const row = await apiRow();
+      // Paseo took "lavish-otter-1" because the name was used, and the project sits in a subfolder.
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-linked-worktrees-")));
+      const worktree = join(root, "lavish-otter-1", "web");
+      mkdirSync(worktree, { recursive: true });
+      try {
+        expect(await createWorkspace({ kind: "worktree", cwd: top, projectId: "p-web", worktreeSlug: "Lavish Otter" }, ["Some other attachment", row.text])).toBeUndefined();
+        workspaceEntries.push({ id: "wn", workspaceDirectory: worktree, projectId: "p-web" });
+        workspaceCreated({ id: "wn", projectId: "p-web", cwd: worktree });
+        const first = await createIn(worktree);
+        expect(first.config.providerOptions).toEqual({ additionalDirectories: [api] });
+        expect(first.config.systemPrompt).toContain("## Attached projects (Contextualise)");
+        expect(await linkedPaths("wn")).toEqual([api]);
+        expect(await linkedPaths("w1")).toEqual([]);
+        // The agent may still call project_attach: it is told the project is attached, and the grant was spent once.
+        const tool = await attachTool();
+        expect((await tool.execute({ grant: grantOf(row.text) }, { agent: { id: "a1", workspaceId: "wn" }, paseo })).text).toContain("already attached");
+        await expect(tool.execute({ grant: grantOf(row.text) }, { agent: { id: "a1", workspaceId: "w2" }, paseo })).rejects.toThrow("already used");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("gives a new local workspace's first chat its attached project even when other workspaces share its folder", async () => {
+      const row = await apiRow();
+      await createWorkspace({ kind: "directory", path: top, projectId: "p-web" }, [row.text]);
+      workspaceEntries.push({ id: "w5", workspaceDirectory: top, projectId: "p-web" });
+      workspaceCreated({ id: "w5", projectId: "p-web", cwd: top });
+      expect((await createIn(top)).config.providerOptions).toEqual({ additionalDirectories: [api] });
+      expect(await linkedPaths("w5")).toEqual([api]);
+      expect(await linkedPaths("w1")).toEqual([]);
+      // Only the first chat: the next one from Paseo's "+" cannot be told apart.
+      expect((await createIn(top)).config.providerOptions).toBeUndefined();
+    });
+
+    it("attaches nothing for a forged or missing grant, or another project's workspace, and never fails the workspace", async () => {
+      const row = await apiRow();
+      expect(await createWorkspace({ kind: "worktree", cwd: top, projectId: "p-web", worktreeSlug: "calm-fox" }, [row.text.replace(/\.[A-Za-z0-9_-]+\n/, ".forged\n"), "Attach grant (project_attach): nonsense"])).toBeUndefined();
+      expect(await createWorkspace({ kind: "directory", path: top, projectId: "p-web" }, ["No project here"])).toBeUndefined();
+      // A real grant pasted into a message, not the first line of this plugin's own project row.
+      expect(await createWorkspace({ kind: "directory", path: web2, projectId: "p-web2" }, [`Please attach this:\n${row.text}`])).toBeUndefined();
+      expect(await createWorkspace({ kind: "worktree", cwd: top, projectId: "p-web", worktreeSlug: "calm-fox" }, [row.text])).toBeUndefined();
+      // Saved under another project: not the workspace those grants were for.
+      workspaceCreated({ id: "w2", projectId: "p-web2", cwd: web2 });
+      expect((await createIn(web2)).config.providerOptions).toBeUndefined();
+      expect(await linkedPaths("w2")).toEqual([]);
+      expect(await (before.get("workspace.create") as (input: unknown, context: unknown) => Promise<unknown>)({ request: { source: { kind: "directory", path: top } } }, { paseo })).toBeUndefined();
+    });
+
+    it("tells every chat given project knowledge when to call project_attach, and puts the grant on the project row's first line", async () => {
+      const row = await apiRow();
+      expect(grantOf(row.text)).toBeTruthy();
+      expect((await createIn(top)).config.systemPrompt).toContain('starting with "Attach grant (project_attach): <grant>". If that project is not listed under "Attached projects", call project_attach');
+    });
 
     it("gives every new Claude or Codex chat in the linked workspace the folder, and no chat in another workspace", async () => {
       await call("links.add", { workspaceId: "w1", path: api });
       const claude = await createIn(top);
       expect(claude.config.providerOptions).toEqual({ additionalDirectories: [api] });
       expect(claude.env).toEqual({ CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "1" });
-      expect(claude.config.systemPrompt).toContain(`## Linked projects (Contextualise)`);
+      expect(claude.config.systemPrompt).toContain(`## Attached projects (Contextualise)`);
       expect(claude.config.systemPrompt).toContain(`: ${api}`);
       expect((await createIn(top, { provider: "codex" })).config.providerOptions).toEqual({ sandbox_workspace_write: { writable_roots: [api] } });
       const other = await createIn(web2);
       expect(other.config.providerOptions).toBeUndefined();
-      expect(other.config.systemPrompt ?? "").not.toContain("Linked projects");
+      expect(other.config.systemPrompt ?? "").not.toContain("## Attached projects");
     });
 
     it("gives a provider other than Claude or Codex no folder options, and says why", async () => {
@@ -451,6 +527,36 @@ describe("contributeKnowledge", () => {
     it("keeps an existing folder option and adds the link once", async () => {
       await call("links.add", { workspaceId: "w1", path: api });
       expect((await createIn(top, { providerOptions: { additionalDirectories: ["/elsewhere", api] } })).config.providerOptions).toEqual({ additionalDirectories: ["/elsewhere", api] });
+    });
+
+    it("attaches a project sent with Attach > Project to the calling chat's workspace, once per grant, and not after it lapses", async () => {
+      const grant = grantOf((await apiRow()).text);
+      expect(grant).toBeTruthy();
+      const tool = await attachTool();
+      const run = (input: string, workspaceId: string | null = "w1") => tool.execute({ grant: input }, { agent: { id: "a1", workspaceId }, paseo });
+      expect((await run(grant)).text).toContain(`Attached ${basename(api)}`);
+      expect(((await call("links.list", { workspaceId: "w1" })) as { links: { path: string }[] }).links.map((link) => link.path)).toEqual([api]);
+      // Used once; another workspace's chat cannot reuse it.
+      await expect(run(grant, "w2")).rejects.toThrow("already used");
+      expect(await call("links.list", { workspaceId: "w2" })).toMatchObject({ links: [] });
+      expect(await run("nonsense")).toMatchObject({ isError: true });
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        const late = grantOf((await attach(""))!.items.find((item) => item.title === "api")!.text);
+        vi.setSystemTime(Date.now() + 61 * 60 * 1000);
+        expect(await run(late, "w2")).toMatchObject({ isError: true, text: expect.stringContaining("expired") });
+      } finally {
+        vi.useRealTimers();
+      }
+      // The attached project is searched by new chats in w1: their token carries the workspace.
+      const created = await createIn(top);
+      expect(created.config.systemPrompt).toContain("knowledge_search covers these projects too");
+    });
+
+    it("gives every new chat in a workspace Paseo can tell its workspace, attached projects or not", async () => {
+      const token = (await createIn(top)).config as unknown as { mcpServers: Record<string, { headers: { Authorization: string } }> };
+      const payload = JSON.parse(Buffer.from(token.mcpServers[KNOWLEDGE_SERVER].headers.Authorization.split(" ")[1].split(".")[0], "base64url").toString("utf8"));
+      expect(payload.workspace).toBe("w1");
     });
 
     it("starts a linked chat in the workspace like the one it was asked from, marked so the hook knows its workspace", async () => {

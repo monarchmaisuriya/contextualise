@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FACTS_VERSION } from "./facts";
-import { buildSection, SECTION_END, SECTION_MAX_BYTES, SECTION_START, unavailableSection, withoutSection, withSection } from "./section";
+import { ATTACH_RULE, buildSection, SECTION_END, SECTION_MAX_BYTES, SECTION_START, unavailableSection, withoutSection, withSection } from "./section";
 import { KnowledgeStore } from "./store";
 
 describe("project section", () => {
@@ -39,6 +39,7 @@ describe("project section", () => {
         "Recent tasks:",
         '- 2026-10-28 "Fix item refs" (completed; shared/contracts.ts)',
         "At the start of a task, search with knowledge_search (MCP server paseo-contextualise) for docs, decisions, and earlier work on the same area. Do this before reading docs or changing code. Open hits with knowledge_read; knowledge_outline and knowledge_history show a file's parts and past changes. Before changing code, knowledge_impact lists what uses those files and the tests to run. Use grep for exact code.",
+        ATTACH_RULE,
         SECTION_END,
       ].join("\n"),
     );

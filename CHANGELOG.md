@@ -2,6 +2,18 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.24.0 - 2026-11-02
+
+### Added
+
+- **Attaching a project from Attach > Project attaches it to the workspace:** in a new workspace's first message, Contextualise attaches it as the workspace is created, so the first chat starts with the folder and searches it, with nothing for the agent to do. In other chats the attachment carries a one-time grant (it lapses after an hour), and the chat attaches the project with the new `project_attach` Paseo tool. You approve the call. It works in any workspace, including ones that share a folder, and in chats from before this version once they reopen.
+- **Search covers attached projects:** `knowledge_search` searches the chat's own project and every project attached to its workspace, labelling each hit's project. An attached project's ids start with its key, so `knowledge_read` reads them from that project.
+
+### Changed
+
+- **Linked projects are now attached projects:** the button above the message box is **Attached**, and the workspace tab's section is "Attached projects". Attached projects are highlighted at the top with an X to remove each; below them, a search box finds any project by name or folder (built for hundreds of projects) and also takes a folder path.
+- **The agent is told when to attach:** the project knowledge section now tells agents to call `project_attach` for a project picked in Attach > Project that is not attached yet. The grant moved to the attachment's first line.
+
 ## 0.23.2 - 2026-11-02
 
 ### Fixed

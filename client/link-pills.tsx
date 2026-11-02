@@ -7,11 +7,15 @@ import { LinkedProjects, onLinksChanged } from "./linked-projects";
 
 const PILL_ID = "linked-projects";
 
-// A Linked pill on every active agent's composer. Its label counts the workspace's linked projects;
-// pressing it opens a popover to add or remove them and to start a chat that has them.
+// An Attached pill on every active agent's composer. Its label counts the workspace's attached
+// projects; pressing it opens a popover to attach or detach them and to start a chat that has them.
 export function followLinkPills(client: PluginClientContext): () => void {
   const pills = new Map<string, { registration: PluginButtonRegistration; workspaceId: string }>();
   const counts = new Map<string, number>();
+  // When each workspace's count was last read: an agent can attach a project (project_attach), so an
+  // agent update recounts its workspace, at most this often.
+  const countedAt = new Map<string, number>();
+  const RECOUNT_MS = 5_000;
   let stopped = false;
   const lifetime = new AbortController();
 
@@ -34,7 +38,7 @@ export function followLinkPills(client: PluginClientContext): () => void {
 
   const label = (workspaceId: string) => {
     const count = counts.get(workspaceId) ?? 0;
-    return count > 0 ? `Linked ${count}` : "Linked";
+    return count > 0 ? `Attached ${count}` : "Attached";
   };
 
   function drop(agentId: string) {
@@ -44,11 +48,12 @@ export function followLinkPills(client: PluginClientContext): () => void {
 
   // A failed count keeps the last label.
   async function refreshCount(workspaceId: string) {
+    countedAt.set(workspaceId, Date.now());
     try {
       counts.set(workspaceId, (await client.rpc(workspaceLinksRpc, { workspaceId })).links.length);
       for (const pill of pills.values()) if (pill.workspaceId === workspaceId) pill.registration.update({ label: label(workspaceId) });
     } catch (error) {
-      if (!stopped) console.error("[contextualise] could not count linked projects", error);
+      if (!stopped) console.error("[contextualise] could not count attached projects", error);
     }
   }
 
@@ -67,7 +72,7 @@ export function followLinkPills(client: PluginClientContext): () => void {
         id: PILL_ID,
         workspaceId,
         agentId: agent.id,
-        button: { title: "Linked projects", icon: ICONS.link, label: label(workspaceId), behavior: { kind: "popover", Content: Popover } },
+        button: { title: "Attached projects", icon: ICONS.link, label: label(workspaceId), behavior: { kind: "popover", Content: Popover } },
       }),
     });
   }
@@ -87,12 +92,16 @@ export function followLinkPills(client: PluginClientContext): () => void {
         update: (message) => {
           if (message.type !== "agent_update") return;
           if (message.payload.kind === "remove") drop(message.payload.agentId);
-          else register(message.payload.agent);
+          else {
+            register(message.payload.agent);
+            const workspaceId = message.payload.agent.workspaceId;
+            if (workspaceId && Date.now() - (countedAt.get(workspaceId) ?? 0) > RECOUNT_MS) void refreshCount(workspaceId);
+          }
         },
       });
     })
     .catch((error: unknown) => {
-      if (!stopped) console.error("[contextualise] could not follow agents for linked-project pills", error);
+      if (!stopped) console.error("[contextualise] could not follow agents for attached-project pills", error);
     });
 
   return () => {

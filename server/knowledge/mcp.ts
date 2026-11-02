@@ -38,10 +38,12 @@ export function knowledgeServerEntry(port: number, token: string) {
   return { [KNOWLEDGE_SERVER]: { type: "http" as const, url: `http://127.0.0.1:${port}${PATH}`, headers: { Authorization: `Bearer ${token}` }, alwaysLoad: true } };
 }
 
-function describeHit(hit: SearchHit): string {
+// An attached project's hit has its key before its id ("<key>|<id>"), so knowledge_read reads it
+// from that project and never from the agent's own, where the same path may exist.
+function describeHit(hit: SearchHit, project?: string): string {
   const where = hit.kind === "task" ? (hit.path ? `touched ${hit.path}` : "") : `${hit.path}${hit.line > 0 ? `:${hit.line}` : ""}`;
   return [
-    `[${hit.id}] ${hit.kind}: ${hit.title}${where ? ` (${where})` : ""}${hit.needsCheck ? " [needs check: its source changed]" : ""}`,
+    `[${project ? `${project}|` : ""}${hit.id}] ${hit.kind}: ${hit.title}${where ? ` (${where})` : ""}${project ? ` in project ${project}` : ""}${hit.needsCheck ? " [needs check: its source changed]" : ""}`,
     ...(hit.snippet ? [`  ${hit.snippet.replace(/\s+/g, " ").trim()}`] : []),
     ...(hit.relatedMemories.length > 0 ? [`  Memorise memories about this file (read with memory_read): ${hit.relatedMemories.map((memory) => `${memory.id} "${memory.subject}"`).join("; ")}`] : []),
   ].join("\n");
@@ -112,20 +114,20 @@ export class KnowledgeMcp {
     private readonly usage: Pick<UsageLog, "recordCall">,
     // While off, every tool answers that it is off, reading and counting nothing.
     private readonly knowledgeOn: () => Promise<boolean> = async () => true,
-    // A project linked to the workspace now, by its key; null when it is not (or no longer) linked.
-    private readonly linkedProject: (workspaceId: string, repoKey: string) => Promise<ProjectRoot | null> = async () => null,
+    // The projects attached to a workspace now, read on every call, so detaching stops their knowledge.
+    private readonly attachedProjects: (workspaceId: string) => Promise<ProjectRoot[]> = async () => [],
     private readonly readConversation: ConversationReader | null = null,
   ) {}
 
   private build(scope: AgentScope, agent: string): McpServer {
     const own = projectRoot(scope.repoKey, scope.top);
-    // Another project only while it is linked to the agent's workspace, checked on every call, so
-    // removing a link stops its knowledge at once.
+    const attached = async () => (scope.workspace ? (await this.attachedProjects(scope.workspace)).filter((repo) => repo.key !== scope.repoKey) : []);
+    // Another project only while it is attached to the agent's workspace.
     const repoOf = async (project: string | undefined): Promise<ProjectRoot> => {
       if (!project || project === scope.repoKey) return own;
-      const linked = scope.workspace ? await this.linkedProject(scope.workspace, project) : null;
-      if (!linked) throw new Error(`${project} is not linked to this agent's workspace; leave project out to use this agent's own project`);
-      return linked;
+      const found = (await attached()).find((repo) => repo.key === project);
+      if (!found) throw new Error(`${project} is not attached to this agent's workspace; leave project out to use this agent's own project`);
+      return found;
     };
     // Counting is advisory: it never delays or fails the call, and a failed count is logged.
     const count = (name: KnowledgeTool) =>
@@ -137,10 +139,10 @@ export class KnowledgeMcp {
       tool("knowledge_search"),
       {
         description:
-          "Search what this repository knows about itself: why things were decided (ADRs, with status), its conventions and architecture docs, other docs, and what agents did here before (request, files, outcome). Code symbols (functions, classes, types) are included but rank below the project's own writing; symbols in test files appear only when you ask for kinds [\"code\"] or pass paths. Use grep for exact code text. Returns ids for knowledge_read.",
+          "Search what this repository, and every project attached to its workspace, knows about itself: why things were decided (ADRs, with status), its conventions and architecture docs, other docs, and what agents did here before (request, files, outcome). Code symbols (functions, classes, types) are included but rank below the project's own writing; symbols in test files appear only when you ask for kinds [\"code\"] or pass paths. Use grep for exact code text. Returns ids for knowledge_read; an attached project's ids start with its key.",
         inputSchema: {
           query: z.string().min(1).max(200),
-          project: z.string().min(1).max(600).optional().describe("A linked project's key (listed under Linked projects); this agent's own project when left out"),
+          project: z.string().min(1).max(600).optional().describe("An attached project's key (listed under Attached projects); this agent's own project when left out"),
           kinds: z.array(z.enum(KNOWLEDGE_KINDS)).max(KNOWLEDGE_KINDS.length).optional().describe("Limit to these kinds; all kinds when left out (test-file symbols only with code)"),
           paths: z.array(z.string().min(1).max(300)).max(20).optional().describe("Limit to these files, folders, or globs (src/api/**), relative to the project root"),
           limit: z.number().int().min(1).max(20).optional(),
@@ -150,9 +152,16 @@ export class KnowledgeMcp {
         if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
         void count("knowledge_search");
         try {
-          const repo = await repoOf(project);
-          const hits = await this.service.search(repo, query, kinds ?? [], limit ?? 8, paths ?? []);
-          return text(hits.length > 0 ? hits.map(describeHit).join("\n") : `Nothing in ${scope.repoKey} matches "${query}". Try other words, or fewer.`);
+          // With no project named: this agent's project and every attached one, each searched at once,
+          // their best hits taken in turn so one project cannot crowd out the others.
+          const repos = project ? [await repoOf(project)] : [own, ...(await attached())];
+          const max = limit ?? 8;
+          const found = await Promise.all(repos.map(async (repo) => ({ repo, hits: await this.service.search(repo, query, kinds ?? [], max, paths ?? []) })));
+          const lines: string[] = [];
+          for (let rank = 0; lines.length < max && found.some(({ hits }) => rank < hits.length); rank += 1) {
+            for (const { repo, hits } of found) if (rank < hits.length && lines.length < max) lines.push(describeHit(hits[rank], repo.key === scope.repoKey ? undefined : repo.key));
+          }
+          return text(lines.length > 0 ? lines.join("\n") : `Nothing in ${repos.map((repo) => repo.key).join(", ")} matches "${query}". Try other words, or fewer.`);
         } catch (error) {
           return failure(error);
         }
@@ -162,13 +171,16 @@ export class KnowledgeMcp {
       tool("knowledge_read"),
       {
         description: "Read one entry found by knowledge_search: a document section, a code symbol's signature, or a finished task's request, files, commands, and outcome.",
-        inputSchema: { id: z.string().min(1).max(600), project: z.string().min(1).max(600).optional().describe("A linked project's key (listed under Linked projects); this agent's own project when left out"), },
+        inputSchema: { id: z.string().min(1).max(600), project: z.string().min(1).max(600).optional().describe("An attached project's key (listed under Attached projects); this agent's own project when left out"), },
       },
       async ({ id, project }) => {
         if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
         void count("knowledge_read");
         try {
-          return text(describeEntry(await this.service.read(await repoOf(project), id, { connections: true })));
+          // An id from an attached project's hit carries its key; without one, `project` decides.
+          const qualified = project ? undefined : (await attached()).find((repo) => id.startsWith(`${repo.key}|`));
+          const repo = qualified ?? (await repoOf(project));
+          return text(describeEntry(await this.service.read(repo, qualified ? id.slice(qualified.key.length + 1) : id, { connections: true })));
         } catch (error) {
           return failure(error);
         }
@@ -178,7 +190,7 @@ export class KnowledgeMcp {
       tool("knowledge_outline"),
       {
         description: "List one file's sections (documents) or functions, classes, methods, and types (code), with line numbers, to see what it holds before reading it. Given a main area's folder (from the project map), describe that area instead: what it uses, what uses it, its key names, and its main files.",
-        inputSchema: { path: z.string().min(1).max(300).describe("A file path, or a main area's folder, relative to the project root"), project: z.string().min(1).max(600).optional().describe("A linked project's key (listed under Linked projects); this agent's own project when left out"), },
+        inputSchema: { path: z.string().min(1).max(300).describe("A file path, or a main area's folder, relative to the project root"), project: z.string().min(1).max(600).optional().describe("An attached project's key (listed under Attached projects); this agent's own project when left out"), },
       },
       async ({ path, project }) => {
         if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
@@ -201,7 +213,7 @@ export class KnowledgeMcp {
       tool("knowledge_history"),
       {
         description: "List the finished tasks that changed a file or any file in a folder, newest first: what was asked, the outcome, and when.",
-        inputSchema: { path: z.string().min(1).max(300).describe("A file or folder relative to the project root"), limit: z.number().int().min(1).max(20).optional(), project: z.string().min(1).max(600).optional().describe("A linked project's key (listed under Linked projects); this agent's own project when left out"), },
+        inputSchema: { path: z.string().min(1).max(300).describe("A file or folder relative to the project root"), limit: z.number().int().min(1).max(20).optional(), project: z.string().min(1).max(600).optional().describe("An attached project's key (listed under Attached projects); this agent's own project when left out"), },
       },
       async ({ path, limit, project }) => {
         if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
@@ -222,7 +234,7 @@ export class KnowledgeMcp {
       tool("knowledge_impact"),
       {
         description: "Before or after changing code: given files or folders, list the files that use them directly, how many more depend on those, the areas touched, and the test files to run.",
-        inputSchema: { paths: z.array(z.string().min(1).max(300)).min(1).max(50).describe("Files or folders relative to the project root"), project: z.string().min(1).max(600).optional().describe("A linked project's key (listed under Linked projects); this agent's own project when left out"), },
+        inputSchema: { paths: z.array(z.string().min(1).max(300)).min(1).max(50).describe("Files or folders relative to the project root"), project: z.string().min(1).max(600).optional().describe("An attached project's key (listed under Attached projects); this agent's own project when left out"), },
       },
       async ({ paths, project }) => {
         if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
@@ -245,7 +257,7 @@ export class KnowledgeMcp {
         },
         async ({ grant, before }) => {
           if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
-          const granted = this.tokens.verifyGrant(grant);
+          const granted = this.tokens.verifyGrant(grant, "conversation");
           if (!granted) return failure("This grant is not valid. Use the grant written in an attached conversation.");
           try {
             const page = await reader(granted.agentId, granted.upTo, before ?? null);

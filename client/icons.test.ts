@@ -16,6 +16,8 @@ const VERIFIED_LUCIDE = new Set([
   "BookOpen",
   // Added 2026-10-29, found in the installed Paseo app's web bundle (/Applications/Paseo.app).
   "ArrowLeft",
+  // Added 2026-11-02, exports of the installed Paseo 0.14.0 app's lucide table (app-dist web bundle).
+  "FolderCheck", "FolderPlus",
 ]);
 
 test("every icon the plugin draws is a Lucide name Paseo can draw", () => {
