@@ -404,12 +404,12 @@ describe("contributeKnowledge", () => {
       const claude = await createIn(top);
       expect(claude.config.providerOptions).toEqual({ additionalDirectories: [api] });
       expect(claude.env).toEqual({ CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "1" });
-      expect(claude.config.systemPrompt).toContain(`## Linked projects (Contextualise)`);
+      expect(claude.config.systemPrompt).toContain(`## Attached projects (Contextualise)`);
       expect(claude.config.systemPrompt).toContain(`: ${api}`);
       expect((await createIn(top, { provider: "codex" })).config.providerOptions).toEqual({ sandbox_workspace_write: { writable_roots: [api] } });
       const other = await createIn(web2);
       expect(other.config.providerOptions).toBeUndefined();
-      expect(other.config.systemPrompt ?? "").not.toContain("Linked projects");
+      expect(other.config.systemPrompt ?? "").not.toContain("Attached projects");
     });
 
     it("gives a provider other than Claude or Codex no folder options, and says why", async () => {
@@ -451,6 +451,42 @@ describe("contributeKnowledge", () => {
     it("keeps an existing folder option and adds the link once", async () => {
       await call("links.add", { workspaceId: "w1", path: api });
       expect((await createIn(top, { providerOptions: { additionalDirectories: ["/elsewhere", api] } })).config.providerOptions).toEqual({ additionalDirectories: ["/elsewhere", api] });
+    });
+
+    it("attaches a project sent with Attach > Project to the calling chat's workspace, once per grant, and not after it lapses", async () => {
+      projectEntries.push({ projectId: "p-api", projectDisplayName: "api", projectRootPath: api });
+      workspaceEntries.push({ id: "wa", workspaceDirectory: api, projectId: "p-api" });
+      execFileSync("git", ["init", "-q", api]);
+      const row = (await attach(""))!.items.find((item) => item.title === "api")!;
+      const grant = /grant: (\S+)/.exec(row.text)?.[1] as string;
+      expect(grant).toBeTruthy();
+      type Tool = { name: string; execute(input: { grant: string }, context: unknown): Promise<{ text: string; isError?: boolean }> };
+      const opened = (await (before.get("agent.session_open") as (input: unknown, context: unknown) => Promise<{ tools: Tool[] }>)({ request: { agentId: "a1", workspaceId: "w1", provider: "claude", cwd: top, reason: "create", purpose: "interactive", env: {}, tools: [], mcpServers: {} } }, { paseo })).tools;
+      const tool = opened.find((entry) => entry.name === "project_attach")!;
+      const run = (input: string, workspaceId: string | null = "w1") => tool.execute({ grant: input }, { agent: { id: "a1", workspaceId }, paseo });
+      expect((await run(grant)).text).toContain(`Attached ${basename(api)}`);
+      expect(((await call("links.list", { workspaceId: "w1" })) as { links: { path: string }[] }).links.map((link) => link.path)).toEqual([api]);
+      // Used once; another workspace's chat cannot reuse it.
+      await expect(run(grant, "w2")).rejects.toThrow("already used");
+      expect(await call("links.list", { workspaceId: "w2" })).toMatchObject({ links: [] });
+      expect(await run("nonsense")).toMatchObject({ isError: true });
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        const late = /grant: (\S+)/.exec((await attach(""))!.items.find((item) => item.title === "api")!.text)?.[1] as string;
+        vi.setSystemTime(Date.now() + 61 * 60 * 1000);
+        expect(await run(late, "w2")).toMatchObject({ isError: true, text: expect.stringContaining("expired") });
+      } finally {
+        vi.useRealTimers();
+      }
+      // The attached project is searched by new chats in w1: their token carries the workspace.
+      const created = await createIn(top);
+      expect(created.config.systemPrompt).toContain("knowledge_search covers these projects too");
+    });
+
+    it("gives every new chat in a workspace Paseo can tell its workspace, attached projects or not", async () => {
+      const token = (await createIn(top)).config as unknown as { mcpServers: Record<string, { headers: { Authorization: string } }> };
+      const payload = JSON.parse(Buffer.from(token.mcpServers[KNOWLEDGE_SERVER].headers.Authorization.split(" ")[1].split(".")[0], "base64url").toString("utf8"));
+      expect(payload.workspace).toBe("w1");
     });
 
     it("starts a linked chat in the workspace like the one it was asked from, marked so the hook knows its workspace", async () => {

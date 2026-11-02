@@ -164,17 +164,18 @@ The knowledge tool server keeps listening so that agents already given it still 
 
 Paseo plugins cannot call each other, so this goes through files Memorise publishes for other plugins ([Memorise's INTEROP.md](https://github.com/monarchmaisuriya/memorise/blob/main/INTEROP.md)). Without Memorise, everything above the heading still works, and Settings > Contextualise says what installing, turning on, or updating Memorise would add.
 
-## Linked projects
+## Attached projects
 
-Link another project's folder to one workspace, and every new Claude or Codex chat in that workspace can read and edit it as well as its own folder: a frontend workspace with its backend, for example. Other workspaces, including other workspaces of the same project, are not affected.
+Attach another project to one workspace, and every new Claude or Codex chat in that workspace can search, read, and edit it as well as its own folder: a frontend workspace with its backend, for example. Other workspaces, including other workspaces of the same project, are not affected.
 
-- **Add and remove** from the **Linked** button above the message box, or the Linked projects section of the workspace's Project knowledge tab. Pick a project Contextualise knows, or type a folder path. The home folder, the filesystem root, the workspace's own folder, and Paseo's data folder cannot be linked.
-- **Each new chat** gets the folders (Claude: additional directories, which also loads their CLAUDE.md, skills, and commands; Codex: writable roots, in its workspace-write sandbox) and a note listing them, with "use `git -C <folder>` and commit each project separately". Codex keeps a linked folder's `.git` read-only, so a commit there asks you first. Other providers get the list only.
-- **The linked project's knowledge** is searchable from the same chat with the knowledge tools' `project` argument, only while the folder stays linked.
-- **Chats already running** keep the folders they started with: Paseo lets a plugin set folders only when a chat starts. **New linked chat** starts one in the workspace; **Continue this chat with them** starts one that carries the current conversation. Removing a link takes effect for new chats and for knowledge at once; running chats keep their folder access until they end.
-- **Workspaces that share a folder** (local workspaces on the same folder) cannot be told apart when a chat starts from Paseo's own button, so those chats get no links and say why; **New linked chat** gives them their links.
+- **Attach** by picking the project in **Attach > Project**: the attachment carries a one-time grant, valid for an hour, and the chat attaches the project with the `project_attach` Paseo tool (you approve the call). Or use the **Attached** button above the message box, or the Attached projects section of the workspace's Project knowledge tab: pick any Paseo project, or type a folder path. The home folder, the filesystem root, the workspace's own folder, and Paseo's data folder cannot be attached.
+- **Detach** from the same button or section. New chats stop getting the folder, and its knowledge is no longer searched, at once; running chats keep folder access until they end.
+- **Each new chat** gets the folders (Claude: additional directories, which also loads their CLAUDE.md, skills, and commands; Codex: writable roots, in its workspace-write sandbox) and a note listing them, with "use `git -C <folder>` and commit each project separately". Codex keeps an attached folder's `.git` read-only, so a commit there asks you first. Other providers get the list only.
+- **Search** with `knowledge_search` covers the chat's project and every attached one, labelling each hit's project; an attached project's ids start with its key, so `knowledge_read` reads the right one.
+- **Chats already running** search a newly attached project at once, but keep the folders they started with: Paseo lets a plugin set folders only when a chat starts. **New chat with attached projects** starts one; **Continue this chat with them** starts one that carries the current conversation.
+- **Workspaces that share a folder** (local workspaces on the same folder) cannot be told apart when a chat starts from Paseo's own button, so those chats get no folders, and search only their own project; **New chat with attached projects** gives them everything. `project_attach` works there either way.
 
-Links are stored in `<PASEO_HOME>/plugin-data/contextualise/knowledge/links.json`, by workspace, and work while Project knowledge is off.
+Attached projects are stored in `<PASEO_HOME>/plugin-data/contextualise/knowledge/links.json`, by workspace, and work while Project knowledge is off.
 
 ## Attaching context
 

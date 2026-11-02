@@ -18,11 +18,18 @@ export const agentScopeSchema = z.object({
 });
 export type AgentScope = z.infer<typeof agentScopeSchema>;
 
-// A grant to read one conversation, up to the moment it was attached. It is signed over a different
-// prefix than tokens, and has fields a token lacks, so neither passes as the other.
-const grantSchema = z.object({ kind: z.literal("conversation"), agentId: z.string().min(1).max(200), upTo: z.string().min(1).max(40) }).strict();
-export type ConversationGrant = z.infer<typeof grantSchema>;
-const GRANT_PREFIX = "conversation-grant.";
+// Grants travel in attachments M sends. A conversation grant reads one conversation up to the moment it
+// was attached. A project grant attaches one project to the receiving chat's workspace; it lapses after
+// an hour and its id is used once, since it can be copied from a transcript into another chat. Each
+// kind is signed over its own prefix, and none over a token's, so no grant passes as another or as a
+// token.
+const grantSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("conversation"), agentId: z.string().min(1).max(200), upTo: z.string().min(1).max(40) }).strict(),
+  z.object({ kind: z.literal("project"), repoKey: z.string().min(1).max(600), top: z.string().min(1).max(1_000), id: z.string().min(1).max(40), expires: z.string().min(1).max(40) }).strict(),
+]);
+export type Grant = z.infer<typeof grantSchema>;
+export const PROJECT_GRANT_MS = 60 * 60 * 1000;
+const grantPrefix = (kind: Grant["kind"]) => `${kind}-grant.`;
 
 // Same scheme as Memorise (memorise/server/mcp-auth.ts). Paseo stores injected MCP entries with the
 // agent and reuses them on resume, so a token must stay valid across plugin reloads and restarts.
@@ -42,20 +49,25 @@ export class TokenAuthority {
     return `${payload}.${this.sign(payload).toString("base64url")}`;
   }
 
-  mintGrant(agentId: string, upTo: string): string {
-    const payload = Buffer.from(JSON.stringify(grantSchema.parse({ kind: "conversation", agentId, upTo }))).toString("base64url");
-    return `${payload}.${this.sign(`${GRANT_PREFIX}${payload}`).toString("base64url")}`;
+  mintGrant(grant: Grant): string {
+    const payload = Buffer.from(JSON.stringify(grantSchema.parse(grant))).toString("base64url");
+    return `${payload}.${this.sign(`${grantPrefix(grant.kind)}${payload}`).toString("base64url")}`;
   }
 
-  verifyGrant(grant: string): ConversationGrant | null {
+  mintProjectGrant(repoKey: string, top: string, now = new Date()): string {
+    return this.mintGrant({ kind: "project", repoKey, top, id: randomBytes(12).toString("base64url"), expires: new Date(now.getTime() + PROJECT_GRANT_MS).toISOString() });
+  }
+
+  // A grant of the expected kind with a valid signature, or null.
+  verifyGrant<Kind extends Grant["kind"]>(grant: string, kind: Kind): Extract<Grant, { kind: Kind }> | null {
     const match = /^([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/.exec(grant.trim());
     if (!match) return null;
-    const expected = this.sign(`${GRANT_PREFIX}${match[1]}`);
+    const expected = this.sign(`${grantPrefix(kind)}${match[1]}`);
     const given = Buffer.from(match[2], "base64url");
     if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
     try {
       const parsed = grantSchema.safeParse(JSON.parse(Buffer.from(match[1], "base64url").toString("utf8")));
-      return parsed.success ? parsed.data : null;
+      return parsed.success && parsed.data.kind === kind ? (parsed.data as Extract<Grant, { kind: Kind }>) : null;
     } catch {
       return null;
     }

@@ -2,6 +2,17 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## Unreleased
+
+### Added
+
+- **Attaching a project from Attach > Project attaches it to the workspace:** the attachment carries a one-time grant (it lapses after an hour), and the chat attaches the project with the new `project_attach` Paseo tool. You approve the call. It works in any workspace, including ones that share a folder, and in chats from before this version once they reopen.
+- **Search covers attached projects:** `knowledge_search` searches the chat's own project and every project attached to its workspace, labelling each hit's project. An attached project's ids start with its key, so `knowledge_read` reads them from that project.
+
+### Changed
+
+- **Linked projects are now attached projects:** the button above the message box is **Attached**, each attached project has **Detach**, and the workspace tab's section is "Attached projects".
+
 ## 0.23.2 - 2026-11-02
 
 ### Fixed

@@ -463,8 +463,8 @@ export function WorkspaceKnowledgePanel({ theme, workspaceId, navigation }: Plug
   const styles = useStyles(theme, true);
   return (
     <Page styles={styles}>
-      {/* Linked projects are folder access, not knowledge, so they show while knowledge is off. */}
-      <SectionHeader label="Linked projects" styles={styles} />
+      {/* Attached projects are folder access, not only knowledge, so they show while knowledge is off. */}
+      <SectionHeader label="Attached projects" styles={styles} />
       <LinkedProjects workspaceId={workspaceId} styles={styles} openAgent={(agentId) => navigation?.openAgent({ agentId })} />
       <KnowledgeOn styles={styles}>
         <WorkspaceProject workspaceId={workspaceId} navigation={navigation} styles={styles} />

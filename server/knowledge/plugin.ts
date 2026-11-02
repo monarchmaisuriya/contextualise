@@ -14,7 +14,7 @@ import { requestedTool } from "../vendor-fetch";
 import { loadTokenSecret, TokenAuthority } from "./auth";
 import { KnowledgeBase } from "./base";
 import { currentBlobs } from "./indexer";
-import { projectRoot } from "./git";
+import { type ProjectRoot, projectRoot } from "./git";
 import { CONVERSATION_TOOL, type ConversationReader, KNOWLEDGE_OFF, KNOWLEDGE_SERVER, KNOWLEDGE_TOOLS, KnowledgeMcp, knowledgeServerEntry } from "./mcp";
 import { Generator } from "./generate";
 import { MemoriseLink, memorySuggestions } from "./memorise";
@@ -30,10 +30,12 @@ import { KnowledgeService } from "./service";
 import { SymbolReader } from "./symbols";
 import type { KnowledgeStore } from "./store";
 import { buildTask, type TimelineEntry } from "./task-log";
-import type { z } from "zod";
+import { z } from "zod";
 import { runWorker } from "../workers";
 
 const PLUGIN_ID = "contextualise";
+// A Paseo tool given to every chat as it opens; Paseo tells it the calling chat's workspace.
+const PROJECT_ATTACH_TOOL = "project_attach";
 // Paseo fails agent creation when a hook takes 30 s; indexing past this continues in the background.
 const HOOK_WAIT_MS = 2_000;
 const TIMELINE_PAGE = 200;
@@ -185,12 +187,25 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     for await (const workspace of allWorkspaces(paseo)) if (workspace.id === workspaceId) return workspace;
     throw new Error(`Paseo has no workspace ${workspaceId}`);
   };
-  // A linked project's knowledge, while the folder is still linked to the workspace.
-  const linkedProject = async (workspaceId: string, repoKey: string) => {
-    const found = (await links.list(workspaceId)).find((link) => link.repoKey === repoKey);
-    if (!found) return null;
-    const repo = await base.repoFor(found.path);
-    return repo?.key === repoKey ? repo : null;
+  // The projects attached to a workspace now, as Contextualise reads them; a folder that no longer
+  // reads as the project it was attached as is left out.
+  const attachedProjects = async (workspaceId: string) => {
+    const found: ProjectRoot[] = [];
+    for (const link of await links.list(workspaceId)) {
+      const repo = link.repoKey ? await base.repoFor(link.path).catch(() => null) : null;
+      if (repo && repo.key === link.repoKey) found.push(repo);
+    }
+    return found;
+  };
+  // project_attach: the same checks as the Attached button, for the workspace Paseo says the calling
+  // chat is in.
+  const attachProject = async (paseo: PaseoApi, workspaceId: string, granted: { repoKey: string; top: string }) => {
+    const folder = await linkableFolder(granted.top, workspaceFolder(await workspaceById(paseo, workspaceId)), [await paseoHome()]);
+    const name = basename(folder);
+    if ((await links.list(workspaceId)).some((link) => link.path === folder)) return `${name} is already attached to this workspace. knowledge_search covers it.`;
+    const repoKey = (await base.repoFor(folder).catch(() => null))?.key ?? null;
+    await links.add(workspaceId, { path: folder, repoKey, addedAt: new Date().toISOString() });
+    return `Attached ${name} (${folder}) to this workspace. knowledge_search now covers it${repoKey ? ` (project key ${repoKey})` : ""}, and every new chat here can read and edit it. This chat can read it; editing outside your own folder may need M's approval. M can detach it with the Attached button above the message box.`;
   };
 
   // The workspace a new chat is in and its links. Paseo gives the hook no workspace id, so it is the
@@ -200,8 +215,9 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     const { provider, cwd } = request.config;
     const chat = { links: [], granted: false, provider, sharedFolder: false, problem: null };
     try {
+      // Looked up for every chat, links or not: the workspace goes into its knowledge token, so it can
+      // attach projects and search them.
       const linked = await links.workspaceIds();
-      if (linked.length === 0) return { workspaceId: null, chat };
       // The marker is trusted only for a chat whose folder is that workspace's folder.
       const marked = request.env?.[LINK_WORKSPACE_ENV];
       let workspaceId = marked && (await realFolder(workspaceFolder(await workspaceById(paseo, marked)))) === (await realFolder(cwd)) ? marked : null;
@@ -224,8 +240,10 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
         chat: { ...chat, granted: linkedProviderOptions(provider, undefined, []) !== null, links: found.map((link) => ({ path: link.path, name: basename(link.path), repoKey: link.repoKey })) },
       };
     } catch (error) {
-      console.error(`[contextualise] could not prepare linked projects for an agent in ${cwd}: ${String(error)}`);
-      return { workspaceId: null, chat: { ...chat, problem: error instanceof Error ? error.message : String(error) } };
+      console.error(`[contextualise] could not prepare attached projects for an agent in ${cwd}: ${String(error)}`);
+      // Said in the prompt only when some workspace has attached projects that could be missing.
+      const any = (await links.workspaceIds().catch(() => [])).length > 0;
+      return { workspaceId: null, chat: { ...chat, problem: any ? (error instanceof Error ? error.message : String(error)) : null } };
     }
   };
   // Adds the linked folders to the chat's provider options and says so in the prompt. Claude also
@@ -262,7 +280,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     try {
       // It listens while knowledge is off too, answering that it is off: agents keep their stored tool
       // address, and OpenCode will not load an agent whose tool server refuses connections.
-      const http: Server | null = await new KnowledgeMcp(tokens, service, usage, knowledgeOn, linkedProject, readConversation).listen(knowledgePort);
+      const http: Server | null = await new KnowledgeMcp(tokens, service, usage, knowledgeOn, attachedProjects, readConversation).listen(knowledgePort);
       console.log(`[contextualise] knowledge tools on 127.0.0.1:${knowledgePort}`);
       return { tokens, port: knowledgePort, http, problem: null };
     } catch (error) {
@@ -301,12 +319,37 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     await base.markRoot(workspace.cwd).catch((error: unknown) => console.error(`[contextualise] could not record ${workspace.cwd} as a project root: ${String(error)}`));
   });
 
+  // project_attach is a Paseo agent tool, given to each chat when it opens (new and resumed), so it
+  // learns the chat's workspace from Paseo when called: exact even where workspaces share a folder.
+  // Not approved automatically: it changes what every new chat in the workspace can edit.
+  const projectAttachTool = {
+    name: PROJECT_ATTACH_TOOL,
+    title: "Attach a project",
+    description: "Attach a project M sent with Attach > Project to this chat's workspace: pass the grant written at the end of that attachment. Then knowledge_search covers it, and new chats in the workspace can read and edit it.",
+    input: z.object({ grant: z.string().min(1).max(2_000) }),
+    execute: async ({ grant }: { grant: string }, { agent, paseo }: { agent: { workspaceId: string | null }; paseo: PaseoApi }) => {
+      remember(paseo);
+      const granted = (await runtime).tokens.verifyGrant(grant, "project");
+      if (!granted) return { isError: true, text: "This grant is not valid. Use the grant written at the end of a project M attached with Attach > Project." };
+      if (Date.parse(granted.expires) < Date.now()) return { isError: true, text: "This grant has expired (grants last an hour). Ask M to pick the project again in Attach > Project, or attach it with the Attached button above the message box." };
+      if (!agent.workspaceId) return { isError: true, text: "Paseo has no workspace for this chat, so there is nothing to attach the project to." };
+      await links.useGrant(granted.id);
+      return { text: await attachProject(paseo, agent.workspaceId, granted) };
+    },
+  };
+  // The SDK this plugin builds against (0.13) does not declare session_open's tools; Paseo 0.14 runs them.
+  server.before("agent.session_open", async ({ request }, { paseo }) => {
+    remember(paseo);
+    const opened = request as typeof request & { tools?: unknown[] };
+    return { ...opened, tools: [...(opened.tools ?? []), projectAttachTool] } as typeof request;
+  });
+
   // Adds the project map and the read tools to every new agent in a git repository. Knowledge enriches
   // an agent; it must never stop one being created, so every failure becomes one line in the section.
   server.before("agent.create", async ({ request }, { paseo }) => {
     remember(paseo);
     const linked = await linkedFor(paseo, request);
-    return withLinks(await prepareKnowledge(paseo, request, linked.workspaceId !== null && linked.chat.links.length > 0 ? linked.workspaceId : null), linked.chat);
+    return withLinks(await prepareKnowledge(paseo, request, linked.workspaceId), linked.chat);
   });
   const prepareKnowledge = async (paseo: PaseoApi, request: PluginBeforeRequests["agent.create"], linkedWorkspace: string | null): Promise<PluginBeforeRequests["agent.create"]> => {
     const { config } = request;
@@ -573,7 +616,9 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     return { started: true };
   });
   // One whole-project row: the project's own writing in one attachment, built from its index.
-  const projectItem = (found: { repoKey: string; name: string; top: string }, store: KnowledgeStore, updating: boolean, pickerTitleMaxChars: number, label: (word: string) => string) => {
+  // Its text ends with a project grant, so the chat it is sent to can attach the project to its
+  // workspace with project_attach.
+  const projectItem = (found: { repoKey: string; name: string; top: string }, store: KnowledgeStore, updating: boolean, pickerTitleMaxChars: number, label: (word: string) => string, grant: string | null) => {
     const pack = projectPack(store, found);
     return {
       id: `${found.repoKey}|project`,
@@ -581,7 +626,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       title: capTitle(found.name, pickerTitleMaxChars),
       subtitle: `${updating ? "Updating · " : ""}${pack.documents === 0 ? "No design documents, rules, or decisions" : pack.included === pack.documents ? `${pack.documents} document${pack.documents === 1 ? "" : "s"}` : `${pack.included} of ${pack.documents} documents`} · about ${pack.tokens.toLocaleString("en-US")} tokens · ${found.top}`.slice(0, 200),
       url: DOCS_URL,
-      text: pack.text,
+      text: grant ? `${pack.text}\n\nM attached this project. Attach it to this workspace by calling ${PROJECT_ATTACH_TOOL} (a Paseo tool) with grant: ${grant}\nThen knowledge_search covers it, and new chats here can read and edit it.` : pack.text,
       resourceType: "knowledge",
     };
   };
@@ -621,8 +666,10 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
         return { found, repo, updating: state === "updating" };
       }),
     );
+    // No grants while the tool server is down: there is nothing to attach through.
+    const tokens = await runtime.then(({ tokens, problem }) => (problem ? null : tokens)).catch(() => null);
     const wholes = await Promise.all(
-      projects.filter(({ found }) => words === "" || found.name.toLowerCase().includes(words)).map(async ({ found, repo, updating }) => projectItem(found, await base.open(repo), updating, pickerTitleMaxChars, label)),
+      projects.filter(({ found }) => words === "" || found.name.toLowerCase().includes(words)).map(async ({ found, repo, updating }) => projectItem(found, await base.open(repo), updating, pickerTitleMaxChars, label, tokens ? tokens.mintProjectGrant(found.repoKey, found.top) : null)),
     );
     if (words === "") return { items: wholes };
     const entries = await Promise.all(
@@ -672,7 +719,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       if (!(await knowledgeOn())) return null;
       const { tokens, problem } = await runtime;
       if (problem) return null;
-      return `To read the whole conversation, tool calls included, call ${CONVERSATION_TOOL} (MCP server ${KNOWLEDGE_SERVER}) with grant: ${tokens.mintGrant(agentId, new Date().toISOString())}`;
+      return `To read the whole conversation, tool calls included, call ${CONVERSATION_TOOL} (MCP server ${KNOWLEDGE_SERVER}) with grant: ${tokens.mintGrant({ kind: "conversation", agentId, upTo: new Date().toISOString() })}`;
     },
     stop: async () => {
       generator.stop();

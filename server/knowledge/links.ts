@@ -14,7 +14,10 @@ const linkSchema = z.object({
   addedAt: z.string(),
 });
 export type WorkspaceLink = z.infer<typeof linkSchema>;
-const fileSchema = z.object({ version: z.literal(1), workspaces: z.record(z.string(), z.array(linkSchema).max(MAX_LINKS)) });
+// Project grants already used, newest last; a grant expires within an hour, so a few hundred is plenty.
+const USED_GRANTS_KEPT = 500;
+const fileSchema = z.object({ version: z.literal(1), workspaces: z.record(z.string(), z.array(linkSchema).max(MAX_LINKS)), usedGrants: z.array(z.string()).max(USED_GRANTS_KEPT).default([]) });
+type LinksFile = z.infer<typeof fileSchema>;
 
 const within = (path: string, folder: string) => path === folder || path.startsWith(folder.endsWith(sep) ? folder : `${folder}${sep}`);
 
@@ -49,42 +52,57 @@ export class WorkspaceLinks {
     return join(await this.dir(), "links.json");
   }
 
-  private async load(): Promise<Record<string, WorkspaceLink[]>> {
+  private async load(): Promise<LinksFile> {
     const path = await this.file();
     const text = await readFile(path, "utf8").catch((error: unknown) => {
       if (Reflect.get(Object(error), "code") === "ENOENT") return null;
       throw error;
     });
-    if (text === null) return {};
+    if (text === null) return { version: 1, workspaces: {}, usedGrants: [] };
     const parsed = fileSchema.safeParse(JSON.parse(text));
-    if (!parsed.success) throw new Error(`${path} could not be read (${parsed.error.issues[0]?.message}); fix or remove it to clear linked projects`);
-    return parsed.data.workspaces;
+    if (!parsed.success) throw new Error(`${path} could not be read (${parsed.error.issues[0]?.message}); fix or remove it to clear attached projects`);
+    return parsed.data;
   }
 
   // The workspaces that have at least one link.
   async workspaceIds(): Promise<string[]> {
-    return Object.keys(await this.load());
+    return Object.keys((await this.load()).workspaces);
   }
 
   async list(workspaceId: string): Promise<WorkspaceLink[]> {
-    return (await this.load())[workspaceId] ?? [];
+    return (await this.load()).workspaces[workspaceId] ?? [];
   }
 
-  private update(workspaceId: string, change: (current: WorkspaceLink[]) => WorkspaceLink[]): Promise<WorkspaceLink[]> {
+  private write<T>(change: (file: LinksFile) => T): Promise<T> {
     const next = this.queue.then(async () => {
-      const workspaces = await this.load();
-      const links = change(workspaces[workspaceId] ?? []);
-      if (links.length > 0) workspaces[workspaceId] = links;
-      else delete workspaces[workspaceId];
+      const file = await this.load();
+      const result = change(file);
       const path = await this.file();
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
       const temp = `${path}.${process.pid}.tmp`;
-      await writeFile(temp, `${JSON.stringify(fileSchema.parse({ version: 1, workspaces }), null, 2)}\n`, { mode: 0o600 });
+      await writeFile(temp, `${JSON.stringify(fileSchema.parse(file), null, 2)}\n`, { mode: 0o600 });
       await rename(temp, path);
-      return links;
+      return result;
     });
     this.queue = next.catch(() => undefined);
     return next;
+  }
+
+  private update(workspaceId: string, change: (current: WorkspaceLink[]) => WorkspaceLink[]): Promise<WorkspaceLink[]> {
+    return this.write((file) => {
+      const links = change(file.workspaces[workspaceId] ?? []);
+      if (links.length > 0) file.workspaces[workspaceId] = links;
+      else delete file.workspaces[workspaceId];
+      return links;
+    });
+  }
+
+  // Marks a project grant used; one used before is refused.
+  useGrant(id: string): Promise<void> {
+    return this.write((file) => {
+      if (file.usedGrants.includes(id)) throw new Error("This attachment was already used to attach its project. Pick the project again in Attach > Project.");
+      file.usedGrants = [...file.usedGrants, id].slice(-USED_GRANTS_KEPT);
+    });
   }
 
   add(workspaceId: string, link: WorkspaceLink): Promise<WorkspaceLink[]> {
@@ -140,19 +158,20 @@ export interface LinkedForChat {
 // The prompt section that tells a chat about its workspace's linked projects. Null when there is
 // nothing to say.
 export function linksSection(linked: LinkedForChat, start: string, end: string): string | null {
-  if (linked.problem) return [start, `Linked projects (Contextualise) could not be added to this chat: ${linked.problem.replace(/\s+/g, " ").slice(0, 300)}`, end].join("\n");
-  if (linked.sharedFolder) return [start, "Linked projects (Contextualise): this workspace's folder is shared by several Paseo workspaces, so Contextualise cannot tell which one this chat is in and added no linked projects. Ask M to start the chat from the Linked pill's \"New linked chat\" instead.", end].join("\n");
+  if (linked.problem) return [start, `Attached projects (Contextualise) could not be added to this chat: ${linked.problem.replace(/\s+/g, " ").slice(0, 300)}`, end].join("\n");
+  if (linked.sharedFolder) return [start, "Attached projects (Contextualise): this workspace's folder is shared by several Paseo workspaces, so Contextualise cannot tell which one this chat is in and added no attached projects. Ask M to start the chat from the Attached button's \"New chat with attached projects\" instead.", end].join("\n");
   if (linked.links.length === 0) return null;
   const list = linked.links.map((link) => `- ${plainPath(link.name)}: ${plainPath(link.path)}${link.repoKey ? ` (project key ${plainPath(link.repoKey)})` : ""}`);
+  const searched = linked.knowledgeTools && linked.links.some((link) => link.repoKey) ? ["knowledge_search covers these projects too; for knowledge_read, knowledge_outline, knowledge_history, and knowledge_impact on one of them, pass its project key as `project`."] : [];
   const lines = linked.granted
     ? [
-        "## Linked projects (Contextualise)",
-        "M linked these folders to this workspace. You can read and edit them as well as your own folder:",
+        "## Attached projects (Contextualise)",
+        "M attached these projects to this workspace. You can read and edit them as well as your own folder:",
         ...list,
-        "Run git in a linked folder with `git -C <folder>`, and commit each project separately, in its own repository.",
-        ...(linked.provider === "codex" ? ["Codex can write to linked folders only in its workspace-write sandbox, and keeps each one's .git read-only, so a commit there needs M's approval."] : []),
-        ...(linked.knowledgeTools && linked.links.some((link) => link.repoKey) ? ["Search a linked project's knowledge with the knowledge tools' `project` argument set to its project key."] : []),
+        "Run git in an attached folder with `git -C <folder>`, and commit each project separately, in its own repository.",
+        ...(linked.provider === "codex" ? ["Codex can write to attached folders only in its workspace-write sandbox, and keeps each one's .git read-only, so a commit there needs M's approval."] : []),
+        ...searched,
       ]
-    : ["## Linked projects (Contextualise)", `M linked these folders to this workspace, but Contextualise can give extra folders only to Claude and Codex chats, not ${plainPath(linked.provider)}. They are listed for reference; you may not be able to edit them:`, ...list];
+    : ["## Attached projects (Contextualise)", `M attached these projects to this workspace, but Contextualise can give extra folders only to Claude and Codex chats, not ${plainPath(linked.provider)}. They are listed for reference; you may not be able to edit them:`, ...list, ...searched];
   return [start, ...lines, end].join("\n");
 }

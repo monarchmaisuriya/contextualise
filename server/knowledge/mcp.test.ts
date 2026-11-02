@@ -23,7 +23,7 @@ describe("knowledge tools", () => {
   let related: ((repoKey: string, path: string) => Promise<{ id: string; subject: string }[]>) | null;
   let knowledgeOn: boolean;
   // Projects linked now, by "<workspace>|<project key>".
-  const linkedNow = new Map<string, ProjectRoot>();
+  const attachedNow = new Map<string, ProjectRoot[]>();
   const calls: [string, string, string][] = [];
   const clients: Client[] = [];
 
@@ -53,8 +53,8 @@ describe("knowledge tools", () => {
     tokens = new TokenAuthority(await loadTokenSecret(root));
     calls.length = 0;
     knowledgeOn = true;
-    http = await new KnowledgeMcp(tokens, new KnowledgeService(base, async () => related), { recordCall: async (repoKey, tool, token) => void calls.push([repoKey, tool, token]) }, async () => knowledgeOn, async (workspace, repoKey) => linkedNow.get(`${workspace}|${repoKey}`) ?? null).listen(0);
-    linkedNow.clear();
+    http = await new KnowledgeMcp(tokens, new KnowledgeService(base, async () => related), { recordCall: async (repoKey, tool, token) => void calls.push([repoKey, tool, token]) }, async () => knowledgeOn, async (workspace) => attachedNow.get(workspace) ?? []).listen(0);
+    attachedNow.clear();
   });
   afterEach(async () => {
     for (const client of clients.splice(0)) await client.close();
@@ -67,7 +67,7 @@ describe("knowledge tools", () => {
 
   it("reads an attached conversation only with its grant, and only up to when it was attached", async () => {
     const reads: [string, string, string | null][] = [];
-    const reader = new KnowledgeMcp(tokens, new KnowledgeService(base, async () => null), { recordCall: async () => {} }, async () => true, async () => null, async (agentId, upTo, before) => {
+    const reader = new KnowledgeMcp(tokens, new KnowledgeService(base, async () => null), { recordCall: async () => {} }, async () => true, async () => [], async (agentId, upTo, before) => {
       reads.push([agentId, upTo, before]);
       return { text: "**User:** Fix login", before: before ? null : "5@e1" };
     });
@@ -78,12 +78,14 @@ describe("knowledge tools", () => {
       await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers } }));
       clients.push(client);
       expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([...KNOWLEDGE_TOOLS, CONVERSATION_TOOL]);
-      const grant = tokens.mintGrant("a7", "2026-11-02T10:00:00.000Z");
+      const grant = tokens.mintGrant({ kind: "conversation", agentId: "a7", upTo: "2026-11-02T10:00:00.000Z" });
       expect(textOf(await client.callTool({ name: CONVERSATION_TOOL, arguments: { grant } }))).toContain('call conversation_read again with before: "5@e1"');
       expect(textOf(await client.callTool({ name: CONVERSATION_TOOL, arguments: { grant, before: "5@e1" } }))).toContain("start of the conversation");
       expect(reads).toEqual([["a7", "2026-11-02T10:00:00.000Z", null], ["a7", "2026-11-02T10:00:00.000Z", "5@e1"]]);
-      // A knowledge token is not a grant, and a grant with its agent changed fails its signature.
+      // A knowledge token or a project grant is not a conversation grant, and a grant with its agent
+      // changed fails its signature.
       const token = tokens.mint({ repoKey: "local/abc", top });
+      expect(await client.callTool({ name: CONVERSATION_TOOL, arguments: { grant: tokens.mintProjectGrant("local/abc", top) } })).toMatchObject({ isError: true });
       const [payload, signature] = grant.split(".");
       const forged = `${Buffer.from(Buffer.from(payload, "base64url").toString("utf8").replace("a7", "a8")).toString("base64url")}.${signature}`;
       for (const bad of [token, forged, "nonsense"]) expect(await client.callTool({ name: CONVERSATION_TOOL, arguments: { grant: bad } })).toMatchObject({ isError: true });
@@ -114,20 +116,45 @@ describe("knowledge tools", () => {
     expect(await base.projects()).toEqual([]);
   });
 
-  it("reads a linked project only through a token for the workspace it is linked to, and only while it stays linked", async () => {
+  it("reads an attached project only through a token for the workspace it is attached to, and only while it stays attached", async () => {
     const web = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-mcp-web-")));
     try {
-      linkedNow.set("w1|local/api", projectRoot("local/api", top));
+      attachedNow.set("w1", [projectRoot("local/api", top)]);
       const search = { name: "knowledge_search", arguments: { query: "sqlite", project: "local/api" } };
       const inW1 = await connect(tokens.mint({ repoKey: "local/web", top: web, workspace: "w1" }));
       expect(textOf(await inW1.callTool(search))).toContain("Use SQLite");
       for (const token of [tokens.mint({ repoKey: "local/web", top: web, workspace: "w2" }), tokens.mint({ repoKey: "local/web", top: web })]) {
         const result = await (await connect(token)).callTool(search);
         expect(result).toMatchObject({ isError: true });
-        expect(textOf(result)).toContain("local/api is not linked to this agent's workspace");
+        expect(textOf(result)).toContain("local/api is not attached to this agent's workspace");
       }
-      linkedNow.clear();
+      attachedNow.clear();
       expect(await inW1.callTool(search)).toMatchObject({ isError: true });
+    } finally {
+      rmSync(web, { recursive: true, force: true });
+    }
+  });
+
+  it("searches the agent's project and every attached one when no project is named, and reads an attached hit from its own project", async () => {
+    const web = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-mcp-web-")));
+    try {
+      execFileSync("git", ["init", "-q", web]);
+      mkdirSync(join(web, "docs/adr"), { recursive: true });
+      // The same path in both projects, with different text.
+      writeFileSync(join(web, "docs/adr/0001-use-sqlite.md"), "# Use SQLite\n\nStatus: accepted\n\nThe web app caches in SQLite.\n");
+      execFileSync("git", ["-C", web, "add", "-A"]);
+      attachedNow.set("w1", [projectRoot("local/api", top)]);
+      const client = await connect(tokens.mint({ repoKey: "local/web", top: web, workspace: "w1" }));
+      const found = textOf(await client.callTool({ name: "knowledge_search", arguments: { query: "sqlite" } }));
+      expect(found).toContain("in project local/api");
+      const apiId = /\[(local\/api\|[^\]]+)\] adr/.exec(found)?.[1];
+      const webId = /^\[([^\]|]+)\] adr/m.exec(found)?.[1];
+      expect(apiId && webId).toBeTruthy();
+      expect(textOf(await client.callTool({ name: "knowledge_read", arguments: { id: apiId } }))).toContain("We keep the index in SQLite.");
+      expect(textOf(await client.callTool({ name: "knowledge_read", arguments: { id: webId } }))).toContain("The web app caches in SQLite.");
+      // Detached: the agent's own project only.
+      attachedNow.clear();
+      expect(textOf(await client.callTool({ name: "knowledge_search", arguments: { query: "sqlite" } }))).not.toContain("local/api");
     } finally {
       rmSync(web, { recursive: true, force: true });
     }

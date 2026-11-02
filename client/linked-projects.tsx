@@ -22,7 +22,7 @@ function linksChanged(): void {
   for (const listener of listeners) listener();
 }
 
-// One workspace's linked projects: the folders every new Claude or Codex chat in it can read and
+// One workspace's attached projects: the folders every new Claude or Codex chat in it can read and
 // edit. Used by the composer pill's popover (with `agentId`, so it can start chats like that one) and
 // by the workspace panel.
 export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { workspaceId: string; agentId?: string; styles: Styles; openAgent?: (agentId: string) => void }) {
@@ -47,7 +47,7 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
     mutationFn: (carryConversation: boolean) => newChat({ workspaceId, fromAgentId: agentId as string, carryConversation }),
     onSuccess: ({ agentId: created }, carried) => {
       if (openAgent) openAgent(created);
-      else toast.show(carried ? "Started a linked chat that carries this conversation; it is in this workspace's tabs" : "Started a linked chat; it is in this workspace's tabs", { variant: "success" });
+      else toast.show(carried ? "Started a chat with the attached projects that carries this conversation; it is in this workspace's tabs" : "Started a chat with the attached projects; it is in this workspace's tabs", { variant: "success" });
     },
     onError: (error) => toast.error(errorText(error)),
   });
@@ -56,28 +56,28 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
   const submit = () => change.mutate(() => add({ workspaceId, path }));
   return (
     <View style={{ gap: 8 }}>
-      {query.error ? <StateView state="error" text={`Could not load linked projects: ${errorText(query.error)}`} styles={styles} /> : null}
+      {query.error ? <StateView state="error" text={`Could not load attached projects: ${errorText(query.error)}`} styles={styles} /> : null}
       <Text style={styles.note}>
         {links.length === 0
-          ? "Add another project's folder, and every new Claude or Codex chat in this workspace can read and edit it too. Other workspaces are not affected."
-          : "Every new Claude or Codex chat in this workspace can read and edit these folders. Chats already running keep the folders they started with."}
+          ? "Attach another project, and every new Claude or Codex chat in this workspace can search, read, and edit it too. Picking a project in Attach > Project attaches it as well. Other workspaces are not affected."
+          : "Every new Claude or Codex chat in this workspace can search, read, and edit these projects. Chats already running search them at once, and keep the folders they started with."}
       </Text>
       {links.length > 0 ? (
         <>
-          <SectionHeader label="Linked to this workspace" styles={styles} />
+          <SectionHeader label="Attached to this workspace" styles={styles} />
           <View style={styles.wrap}>
             {links.map((link) => (
-              <Chip key={link.path} label={link.name} icon={ICONS.close} on onPress={() => change.mutate(() => remove({ workspaceId, path: link.path }))} accessibilityLabel={`Remove ${link.path}`} styles={styles} />
+              <Chip key={link.path} label={`Detach ${link.name}`} icon={ICONS.close} on onPress={() => change.mutate(() => remove({ workspaceId, path: link.path }))} accessibilityLabel={`Detach ${link.path}`} styles={styles} />
             ))}
           </View>
         </>
       ) : null}
       {data && data.suggestions.length > 0 ? (
         <>
-          <SectionHeader label="Add a project" styles={styles} />
+          <SectionHeader label="Attach a project" styles={styles} />
           <View style={styles.wrap}>
             {data.suggestions.slice(0, 12).map((found) => (
-              <Chip key={found.path} label={found.name} icon={ICONS.add} onPress={() => change.mutate(() => add({ workspaceId, path: found.path }))} accessibilityLabel={`Add ${found.path}`} styles={styles} />
+              <Chip key={found.path} label={found.name} icon={ICONS.add} onPress={() => change.mutate(() => add({ workspaceId, path: found.path }))} accessibilityLabel={`Attach ${found.path}`} styles={styles} />
             ))}
           </View>
         </>
@@ -92,16 +92,16 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
           autoCapitalize="none"
           autoCorrect={false}
           onSubmitEditing={submit}
-          accessibilityLabel="Folder to add"
+          accessibilityLabel="Folder to attach"
         />
-        <Button label="Add" kind="primary" styles={styles} onPress={submit} disabled={change.isPending || path.trim() === ""} />
+        <Button label="Attach" kind="primary" styles={styles} onPress={submit} disabled={change.isPending || path.trim() === ""} />
       </View>
       {data?.sharedFolder && links.length > 0 ? (
-        <Text style={styles.note}>This workspace shares its folder with other workspaces, so chats started from Paseo's own new-chat button cannot be told apart and get no linked projects. Use New linked chat.</Text>
+        <Text style={styles.note}>This workspace shares its folder with other workspaces, so chats started from Paseo's own new-chat button cannot be told apart and get no attached projects. Use New chat with attached projects.</Text>
       ) : null}
       {agentId && links.length > 0 ? (
         <View style={[styles.row, { borderTopWidth: 1, borderColor: styles.colors.border, paddingTop: 8, flexWrap: "wrap" }]}>
-          <Button label="New linked chat" icon={ICONS.add} kind="primary" styles={styles} onPress={() => starting.mutate(false)} disabled={starting.isPending} />
+          <Button label="New chat with attached projects" icon={ICONS.add} kind="primary" styles={styles} onPress={() => starting.mutate(false)} disabled={starting.isPending} />
           <Button label="Continue this chat with them" icon={ICONS.link} styles={styles} onPress={() => starting.mutate(true)} disabled={starting.isPending} />
         </View>
       ) : null}
