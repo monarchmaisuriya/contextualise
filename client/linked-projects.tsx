@@ -71,8 +71,8 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
           <SectionHeader label="Attached to this workspace" count={links.length} styles={styles} />
           <View style={{ gap: 4 }}>
             {links.map((link) => (
-              // Attached rows stand out: an accent edge, a fill, and a folder-with-check icon.
-              <View key={link.path} style={[styles.row, { paddingVertical: 6, paddingLeft: 10, paddingRight: 4, borderRadius: 8, borderLeftWidth: 3, borderLeftColor: styles.colors.accent, backgroundColor: styles.colors.surface2 }]}>
+              // Attached rows stand out: a fill and a folder-with-check icon.
+              <View key={link.path} style={[styles.row, { paddingVertical: 6, paddingLeft: 12, paddingRight: 4, borderRadius: 8, backgroundColor: styles.colors.surface2 }]}>
                 <Icon name={ICONS.attached} size={16} color={styles.colors.accent} />
                 <View style={styles.grow}>
                   <Text style={styles.body} numberOfLines={1}>
