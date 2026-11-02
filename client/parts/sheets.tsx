@@ -98,7 +98,7 @@ export function ReaderSheet({ title, text, meta, error, plain = false, onOpen, p
         {error ? <StateView state="error" text={error} styles={styles} /> : text === undefined ? <StateView state="loading" styles={styles} /> : (
           <View style={{ gap: 12 }}>
             <View style={styles.compact ? { gap: 4 } : styles.row}>
-              {meta ? <Text style={[styles.sm, styles.compact ? null : styles.grow]}>{meta}</Text> : <View style={styles.grow} />}
+              {meta ? <Text style={[styles.note, styles.compact ? null : styles.grow]}>{meta}</Text> : <View style={styles.grow} />}
               <View style={styles.row}>
                 <CopyButton text={text} styles={styles} />
                 {onOpen ? <Button label="Open" icon={ICONS.open} onPress={onOpen} styles={styles} /> : null}
@@ -106,7 +106,7 @@ export function ReaderSheet({ title, text, meta, error, plain = false, onOpen, p
               </View>
             </View>
             {plain ? (
-              <Text style={styles.text} selectable>
+              <Text style={styles.prose} selectable>
                 {text}
               </Text>
             ) : (

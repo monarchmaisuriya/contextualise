@@ -2,6 +2,12 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.21.1 - 2026-11-02
+
+### Fixed
+
+- Text sizes are consistent: each kind of text has one size, weight, and line height, taken from Paseo's own scale. Section headings are 12 px and medium like Paseo's (no longer the same size as the rows under them); notes and hints are always 12 px; text to read (agent-written descriptions, area explanations, past work) is 15 px like the README and documents beside it; rows and controls stay 14 px.
+
 ## 0.21.0 - 2026-11-01
 
 ### Changed

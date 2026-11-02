@@ -1,10 +1,33 @@
 import { expect, test } from "vitest";
-import { actionColor, emptyActions, metaPlacement, pageInset, rowBackground, rowFrame, searchWidth, segmentedScrolls, TYPE } from "./rules";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { actionColor, emptyActions, metaPlacement, pageInset, rowBackground, rowFrame, searchWidth, segmentedScrolls, TEXT } from "./rules";
 
 const colors = { surface0: "s0", surface1: "s1", surface2: "s2", border: "b", foreground: "fg", foregroundMuted: "mu", accent: "ac", accentForeground: "af", statusSuccess: "ok", statusWarning: "wa", statusDanger: "da" };
 
-test("three type sizes, none of them 13", () => {
-  expect(Object.values(TYPE)).toEqual([16, 14, 12]);
+test("every kind of text uses a size from Paseo's own scale", () => {
+  const paseoScale = [12, 14, 15, 16, 18, 20, 22, 26];
+  for (const kind of Object.values(TEXT)) expect(paseoScale).toContain(kind.fontSize);
+});
+
+test("headings and notes are smaller than rows, reading text matches Paseo's Markdown, the title leads", () => {
+  expect(TEXT.heading.fontSize).toBeLessThan(TEXT.body.fontSize);
+  expect(TEXT.note.fontSize).toBeLessThan(TEXT.body.fontSize);
+  expect([TEXT.prose.fontSize, TEXT.prose.lineHeight]).toEqual([15, 21]);
+  expect(TEXT.title.fontSize).toBeGreaterThan(TEXT.prose.fontSize);
+});
+
+test("every line height leaves room for descenders", () => {
+  for (const kind of Object.values(TEXT)) expect(kind.lineHeight).toBeGreaterThanOrEqual(kind.fontSize * 1.25);
+});
+
+test("no client file sets a font size of its own: text names a kind from TEXT", () => {
+  const client = join(__dirname, "..");
+  const files = (dir: string): string[] => readdirSync(dir).flatMap((name) => (statSync(join(dir, name)).isDirectory() ? files(join(dir, name)) : [join(dir, name)]));
+  const raw = files(client)
+    .filter((file) => file.endsWith(".tsx") || (file.endsWith(".ts") && !file.endsWith(".test.ts") && !file.endsWith("rules.ts")))
+    .filter((file) => /fontSize:\s*\d/.test(readFileSync(file, "utf8")));
+  expect(raw).toEqual([]);
 });
 
 test("pages are inset 24 on desktop and 12 on phones", () => {

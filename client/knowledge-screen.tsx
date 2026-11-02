@@ -169,17 +169,17 @@ function Overview({ project, hostKey, navigation, writing, change, onShow, onRea
       <SectionHeader label="About" action={writing && !running ? { label: brief.data ? "Rewrite" : "Write description", onPress: () => change(describe({ repoKey })) } : undefined} styles={styles} />
       {brief.data ? (
         <>
-          <Text style={[styles.sm, pad]}>Written by an agent from the project's facts; may contain mistakes.</Text>
+          <Text style={[styles.note, pad]}>Written by an agent from the project's facts; may contain mistakes.</Text>
           {/* Written by a model that read repository text, so shown as plain text: no links or images. */}
           <Prose>
-            <Text style={[styles.text, pad]} selectable>
+            <Text style={[styles.prose, pad]} selectable>
               {brief.data.body}
             </Text>
           </Prose>
         </>
       ) : readme.data ? (
         <>
-          <Text style={[styles.sm, pad]}>From the README.</Text>
+          <Text style={[styles.note, pad]}>From the README.</Text>
           <Prose>
             <View style={pad}>
               <EntryBody entry={readme.data} styles={styles} />
@@ -189,7 +189,7 @@ function Overview({ project, hostKey, navigation, writing, change, onShow, onRea
       ) : (
         <Text style={[styles.muted, pad]}>No description yet.</Text>
       )}
-      {!writing && !brief.data ? <Text style={[styles.sm, pad]}>Turn on Settings &gt; Contextualise &gt; Conversation summaries to get a written description and a line for each area.</Text> : null}
+      {!writing && !brief.data ? <Text style={[styles.note, pad]}>Turn on Settings &gt; Contextualise &gt; Conversation summaries to get a written description and a line for each area.</Text> : null}
 
       <SectionHeader
         label="What agents get"
@@ -200,8 +200,8 @@ function Overview({ project, hostKey, navigation, writing, change, onShow, onRea
         styles={styles}
       />
       {overview.error ? <StateView state="error" text={errorText(overview.error)} styles={styles} /> : null}
-      {overview.data ? <Text style={[overview.data.state === "given" ? styles.text : styles.muted, pad]}>{overviewLine(overview.data)}</Text> : null}
-      {used ? <Text style={[styles.muted, pad]}>{used}</Text> : null}
+      {overview.data ? <Text style={[overview.data.state === "given" ? styles.body : styles.muted, pad]}>{overviewLine(overview.data)}</Text> : null}
+      {used ? <Text style={[styles.note, pad]}>{used}</Text> : null}
       {previewing ? (
         <ReaderSheet
           title="What agents get"
@@ -341,13 +341,13 @@ export function KnowledgeView(props: ({ fixedRepoKey: string } | { hostId: strin
     <>
       <View style={styles.row}>
         <Pressable style={[styles.inline, { flexShrink: 1 }]} disabled={!canPick} onPress={() => setChoosing(true)} accessibilityRole={canPick ? "button" : undefined} accessibilityLabel={canPick ? `Project ${project.name}; choose another of ${all.length}` : project.name}>
-          <Text style={[styles.lg, { flexShrink: 1 }]} numberOfLines={1}>
+          <Text style={[styles.title, { flexShrink: 1 }]} numberOfLines={1}>
             {project.name}
           </Text>
           {canPick ? <Icon name={ICONS.expanded} size={16} color={styles.colors.foregroundMuted} /> : null}
         </Pressable>
         {!styles.compact && readLine ? (
-          <Text style={styles.sm} numberOfLines={1}>
+          <Text style={styles.note} numberOfLines={1}>
             {readLine}
           </Text>
         ) : null}
@@ -363,10 +363,10 @@ export function KnowledgeView(props: ({ fixedRepoKey: string } | { hostId: strin
         actions={all.map((candidate) => ({ label: candidate.repoKey === repoKey ? `${named(candidate)} · shown` : named(candidate), onPress: () => setRepoKey(candidate.repoKey) }))}
         styles={styles}
       />
-      {styles.compact && readLine ? <Text style={styles.sm}>{readLine}</Text> : null}
-      {facts.data ? <Text style={styles.sm}>{glanceLine(facts.data.facts)}</Text> : null}
-      {generation?.state === "running" ? <Text style={styles.sm}>{generation.message}…</Text> : null}
-      {generation?.state === "done" ? <Text style={styles.sm}>Done {ago(generation.at)}: {generation.message}</Text> : null}
+      {styles.compact && readLine ? <Text style={styles.note}>{readLine}</Text> : null}
+      {facts.data ? <Text style={styles.note}>{glanceLine(facts.data.facts)}</Text> : null}
+      {generation?.state === "running" ? <Text style={styles.note}>{generation.message}…</Text> : null}
+      {generation?.state === "done" ? <Text style={styles.note}>Done {ago(generation.at)}: {generation.message}</Text> : null}
       {generation?.state === "failed" ? <StateView state="error" text={`Failed ${ago(generation.at)}: ${generation.message}`} styles={styles} /> : null}
       {project.problem ? <StateView state="error" text={project.problem} styles={styles} /> : null}
       <View style={styles.compact ? { gap: 8 } : [styles.row, { flexWrap: "wrap" }]}>
@@ -421,12 +421,12 @@ export function KnowledgeView(props: ({ fixedRepoKey: string } | { hostId: strin
       )}
       {reading ? <EntryReader repoKey={project.repoKey} target={reading} pins={pins} onClose={() => setReading(null)} styles={styles} /> : null}
       {note ? (
-        <Text style={styles.sm}>
+        <Text style={styles.note}>
           {note.text}
           {note.command ? ` Run: ${note.command}` : ""}
         </Text>
       ) : null}
-      {!fixedRepoKey ? <Text style={styles.sm}>{plural(all.length, "project")} indexed on this computer.</Text> : null}
+      {!fixedRepoKey ? <Text style={styles.note}>{plural(all.length, "project")} indexed on this computer.</Text> : null}
     </>
   );
 }

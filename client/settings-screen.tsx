@@ -7,6 +7,7 @@ import { type FetchPreference, KNOWLEDGE_MAP_PARTS, type KnowledgeMapPart, MAX_C
 import { memoriseStatusRpc } from "../shared/knowledge";
 import { errorText } from "./errors";
 import { memoriseNote } from "./memorise-note";
+import { TEXT } from "./parts/rules";
 import { keepsOpen, saveRowKey, withDraft, withoutError } from "./settings-drafts";
 import { tagsChanged } from "./tag-events";
 
@@ -306,7 +307,7 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
         title="More settings"
         trailing={
           <Pressable onPress={() => setMoreOpen(!moreShown)} hitSlop={10} accessibilityRole="button" accessibilityState={{ expanded: moreShown }} accessibilityLabel={moreShown ? "Hide more settings" : "Show more settings"}>
-            <Text style={{ color: theme.colors.accent, fontSize: 14 }}>{moreShown ? "Hide" : "Show"}</Text>
+            <Text style={{ ...TEXT.body, color: theme.colors.accent }}>{moreShown ? "Hide" : "Show"}</Text>
           </Pressable>
         }
       >

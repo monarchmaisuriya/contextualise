@@ -28,7 +28,7 @@ export function useFacts(repoKey: string | null) {
 export function EntryBody({ entry, styles }: { entry: Pick<KnowledgeEntry, "kind" | "path" | "body">; styles: Styles }) {
   const body = readerBody(entry);
   return body.plain ? (
-    <Text style={styles.text} selectable>
+    <Text style={styles.prose} selectable>
       {body.text}
     </Text>
   ) : (
@@ -42,13 +42,13 @@ export function Connections({ connections, styles }: { connections: FileConnecti
     <View style={{ gap: 12 }}>
       {connectionGroups(connections).map((group) => (
         <View key={group.label} style={{ gap: 4 }}>
-          <Text style={styles.muted}>{group.label}</Text>
-          <Text style={styles.text} selectable>
+          <Text style={styles.heading}>{group.label}</Text>
+          <Text style={styles.body} selectable>
             {group.lines.join("\n")}
           </Text>
         </View>
       ))}
-      <Text style={styles.sm}>{connections.fresh ? CONNECTIONS_NOTE : `${CONNECTIONS_UPDATING} ${CONNECTIONS_NOTE}`}</Text>
+      <Text style={styles.note}>{connections.fresh ? CONNECTIONS_NOTE : `${CONNECTIONS_UPDATING} ${CONNECTIONS_NOTE}`}</Text>
     </View>
   );
 }
@@ -75,7 +75,7 @@ function LanguageBar({ languages, styles }: { languages: Record<string, number>;
         {shares.map((share, index) => (
           <View key={share.language} style={styles.inline}>
             <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors[index % colors.length] }} />
-            <Text style={styles.sm}>
+            <Text style={styles.note}>
               {share.language} {share.percent}%
             </Text>
           </View>
@@ -132,7 +132,7 @@ export function AreasView({ repoKey, onOpenArea, styles }: { repoKey: string; on
         <>
           <SectionHeader label="How the parts connect" styles={styles} />
           <Markdown>{mermaidBlock(diagram)}</Markdown>
-          <Text style={[styles.sm, { paddingHorizontal: 12 }]}>Each box is a folder of code; an arrow means its files import the other's. Thicker arrows mean more files.</Text>
+          <Text style={[styles.note, { paddingHorizontal: 12 }]}>Each box is a folder of code; an arrow means its files import the other's. Thicker arrows mean more files.</Text>
         </>
       ) : null}
       {Object.keys(facts.languages).length > 0 ? (
@@ -144,7 +144,7 @@ export function AreasView({ repoKey, onOpenArea, styles }: { repoKey: string; on
       {facts.libraries.length > 0 ? (
         <>
           <SectionHeader label="Most used libraries" styles={styles} />
-          <Text style={[styles.text, { paddingHorizontal: 12 }]}>{facts.libraries.map((library) => `${library.name} ${library.files}`).join(" · ")}</Text>
+          <Text style={[styles.body, { paddingHorizontal: 12 }]}>{facts.libraries.map((library) => `${library.name} ${library.files}`).join(" · ")}</Text>
         </>
       ) : null}
       <SectionHeader label="Areas" count={facts.areas.length} styles={styles} />
@@ -179,26 +179,26 @@ export function AreaPage({ repoKey, path, onOpenArea, onBack, onRead, styles, on
   return (
     <>
       <ListRow title="Back" icon={ICONS.back} onPress={onBack} styles={styles} />
-      <Text style={[styles.lg, pad]} numberOfLines={1}>
+      <Text style={[styles.title, pad]} numberOfLines={1}>
         {areaLabel(path)}
       </Text>
       {query.error ? <StateView state="error" text={errorText(query.error)} styles={styles} /> : null}
       {!data && !query.error ? <StateView state="loading" styles={styles} /> : null}
       {data ? (
         <>
-          <Text style={[styles.sm, pad]}>
+          <Text style={[styles.note, pad]}>
             {plural(data.area.files, "code file")}
             {data.area.tests > 0 ? ` · ${plural(data.area.tests, "test file")}` : ""} · {data.area.symbols} {data.area.symbols === 1 ? "function or class" : "functions and classes"}
             {data.area.merged.length > 0 ? ` · folders: ${data.area.merged.map(areaLabel).join(", ")}` : ""}
           </Text>
-          {data.line ? <Text style={[styles.text, pad]}>{data.line}</Text> : null}
+          {data.line ? <Text style={[styles.body, pad]}>{data.line}</Text> : null}
           {data.explanation ? (
             <>
               <SectionHeader label="How it works" action={onExplain ? { label: "Rewrite", onPress: onExplain } : undefined} styles={styles} />
-              <Text style={[styles.sm, pad]}>Written by an agent {ago(data.explanation.at)}; may contain mistakes.</Text>
+              <Text style={[styles.note, pad]}>Written by an agent {ago(data.explanation.at)}; may contain mistakes.</Text>
               {/* Written by a model that read repository text, so shown as plain text: no links or images. */}
               <Prose>
-                <Text style={[styles.text, pad]} selectable>
+                <Text style={[styles.prose, pad]} selectable>
                   {data.explanation.body}
                 </Text>
               </Prose>
@@ -206,7 +206,7 @@ export function AreaPage({ repoKey, path, onOpenArea, onBack, onRead, styles, on
           ) : onExplain ? (
             <View style={[styles.row, pad]}>
               <Button label="Explain this area" icon={ICONS.knowledge} kind="primary" styles={styles} onPress={onExplain} />
-              <Text style={[styles.sm, styles.grow]}>An agent reads this area's facts and writes how it works. Uses one of today's summary runs.</Text>
+              <Text style={[styles.note, styles.grow]}>An agent reads this area's facts and writes how it works. Uses one of today's summary runs.</Text>
             </View>
           ) : null}
           {diagram ? <Markdown>{mermaidBlock(diagram)}</Markdown> : null}

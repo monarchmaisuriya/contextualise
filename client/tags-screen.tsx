@@ -209,10 +209,10 @@ function TagDetail({ tag, styles, navigation, onBack, onRead }: { tag: TagSummar
     <View style={{ gap: 8 }}>
       {onBack ? <ListRow title="Tags" icon={ICONS.back} onPress={onBack} accessibilityLabel="Back to tags" styles={styles} /> : null}
       <View style={{ gap: 4 }}>
-        <Text style={styles.lg} numberOfLines={1} accessibilityRole="header">
+        <Text style={styles.title} numberOfLines={1} accessibilityRole="header">
           {tag.name}
         </Text>
-        <Text style={styles.sm} numberOfLines={1}>
+        <Text style={styles.note} numberOfLines={1}>
           {tagMeta(tag)}
         </Text>
       </View>
@@ -262,7 +262,7 @@ function TagDetail({ tag, styles, navigation, onBack, onRead }: { tag: TagSummar
             />
           ))}
           {/* Workspaces join a tag by Paseo label; this is the one place that says so. */}
-          {tag.hasWorkspaceLabel ? null : <Text style={[styles.sm, { paddingHorizontal: 12 }]}>Label a workspace "{tag.name}" in Paseo to include it.</Text>}
+          {tag.hasWorkspaceLabel ? null : <Text style={[styles.note, { paddingHorizontal: 12 }]}>Label a workspace "{tag.name}" in Paseo to include it.</Text>}
         </View>
       ) : null}
       {previewing ? <PreviewSheet tag={tag} styles={styles} onClose={() => setPreviewing(false)} /> : null}
