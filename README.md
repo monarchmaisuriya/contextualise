@@ -114,7 +114,7 @@ These are rebuilt whenever files change. On a 7,000-file Python repository the f
 **Knowledge from existing sessions:**
 
 - **Add past conversations** (on the Project knowledge screen) adds a task entry for every existing agent of the project from its timeline. It uses no model.
-- **Generated knowledge** is off until you turn it on in Settings > Contextualise > Conversation summaries, like Memorise's suggestions from sessions. When on:
+- **Generated knowledge** is off until you turn it on in Settings > Contextualise > Project knowledge > Write summaries of finished conversations, like Memorise's suggestions from sessions. When on:
   - a background agent reads a session once the agent has been quiet for 20 minutes (a setting), and writes a short title and a 2 to 4 sentence summary into its task entry;
   - it writes a project overview (what the project does, its main parts, recent work) and one line per main area, from the structure above, the README, document titles, and recent work. It is written when there is none, again when the structure has changed and the overview is a week old, and on "Rewrite". It replaces the project brief of earlier versions.
   - on an area's page, "Explain this area" writes how that area works, from its facts and files; the explanation is searchable like any entry.
@@ -144,12 +144,12 @@ These are rebuilt whenever files change. On a 7,000-file Python repository the f
 
 Diagrams are drawn by Paseo's own Markdown renderer (Mermaid), so they follow the theme and open full screen. The project's documents render as Markdown; text an agent wrote stays plain text, so it cannot carry links or images.
 
-Attach > Project knowledge opens on one **Whole project** row per project: the project's description, its main areas, the full text of its conventions, architecture documents, and decisions not superseded, and its recent work, in one attachment of at most 60,000 characters (about 15,000 tokens). A document that does not fit is left out whole and named. The row says how many documents fit and its size before you send it. Typing searches every project at once and offers one entry (a document section, a code symbol, or a task) per row. Each search checks every project for changed files at once and waits at most 0.3 s for them. A project whose check takes longer (a large folder outside git) answers from what was read before and says "updating"; its check finishes in the background.
+Attach > Project opens on one **Whole project** row per project: the project's description, its main areas, the full text of its conventions, architecture documents, and decisions not superseded, and its recent work, in one attachment of at most 60,000 characters (about 15,000 tokens). A document that does not fit is left out whole and named. The row says how many documents fit and its size before you send it. Typing searches every project at once and offers one entry (a document section, a code symbol, or a task) per row. Each search checks every project for changed files at once and waits at most 0.3 s for them. A project whose check takes longer (a large folder outside git) answers from what was read before and says "updating"; its check finishes in the background.
 
 **Turning it off.** The "Project knowledge" switch in Settings > Contextualise turns all of it off:
 - new agents get no map or tools;
 - nothing is read, checked, or recorded, and no summaries are written;
-- Attach > Project knowledge offers nothing;
+- Attach > Project offers nothing;
 - the sidebar row is hidden, and the screen and tab say it is off, with **Turn on**.
 
 The knowledge tool server keeps listening so that agents already given it still load (OpenCode will not load an agent whose tool server refuses connections); while off, each of its tools answers that knowledge is off. What was read stays on disk, so turning it on again is instant.
@@ -163,6 +163,18 @@ The knowledge tool server keeps listening so that agents already given it still 
 - suggests fixes to Memorise when code changes: a memory about a function, class, or method that was renamed (same kind, parameters, and body) gets a suggestion to update its name, one about a definition that no longer exists anywhere gets a suggestion to archive it, and one citing an ADR that became superseded gets a suggestion to archive it. Suggestions wait in Memorise's Suggestions, labelled "Suggested by Contextualise", and nothing changes until you approve them there. Each is sent once, at most 5 per re-index.
 
 Paseo plugins cannot call each other, so this goes through files Memorise publishes for other plugins ([Memorise's INTEROP.md](https://github.com/monarchmaisuriya/memorise/blob/main/INTEROP.md)). Without Memorise, everything above the heading still works, and Settings > Contextualise says what installing, turning on, or updating Memorise would add.
+
+## Linked projects
+
+Link another project's folder to one workspace, and every new Claude or Codex chat in that workspace can read and edit it as well as its own folder: a frontend workspace with its backend, for example. Other workspaces, including other workspaces of the same project, are not affected.
+
+- **Add and remove** from the **Linked** button above the message box, or the Linked projects section of the workspace's Project knowledge tab. Pick a project Contextualise knows, or type a folder path. The home folder, the filesystem root, the workspace's own folder, and Paseo's data folder cannot be linked.
+- **Each new chat** gets the folders (Claude: additional directories, which also loads their CLAUDE.md, skills, and commands; Codex: writable roots, in its workspace-write sandbox) and a note listing them, with "use `git -C <folder>` and commit each project separately". Codex keeps a linked folder's `.git` read-only, so a commit there asks you first. Other providers get the list only.
+- **The linked project's knowledge** is searchable from the same chat with the knowledge tools' `project` argument, only while the folder stays linked.
+- **Chats already running** keep the folders they started with: Paseo lets a plugin set folders only when a chat starts. **New linked chat** starts one in the workspace; **Continue this chat with them** starts one that carries the current conversation. Removing a link takes effect for new chats and for knowledge at once; running chats keep their folder access until they end.
+- **Workspaces that share a folder** (local workspaces on the same folder) cannot be told apart when a chat starts from Paseo's own button, so those chats get no links and say why; **New linked chat** gives them their links.
+
+Links are stored in `<PASEO_HOME>/plugin-data/contextualise/knowledge/links.json`, by workspace, and work while Project knowledge is off.
 
 ## Attaching context
 

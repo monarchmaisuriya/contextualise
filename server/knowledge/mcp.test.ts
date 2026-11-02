@@ -9,8 +9,8 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadTokenSecret, TokenAuthority } from "./auth";
 import { KnowledgeBase } from "./base";
-import { projectRoot } from "./git";
-import { KNOWLEDGE_OFF, KNOWLEDGE_SERVER, KNOWLEDGE_TOOLS, KnowledgeMcp, knowledgeServerEntry } from "./mcp";
+import { type ProjectRoot, projectRoot } from "./git";
+import { CONVERSATION_TOOL, KNOWLEDGE_OFF, KNOWLEDGE_SERVER, KNOWLEDGE_TOOLS, KnowledgeMcp, knowledgeServerEntry } from "./mcp";
 import { KnowledgeService } from "./service";
 import { SymbolReader } from "./symbols";
 
@@ -22,6 +22,8 @@ describe("knowledge tools", () => {
   let tokens: TokenAuthority;
   let related: ((repoKey: string, path: string) => Promise<{ id: string; subject: string }[]>) | null;
   let knowledgeOn: boolean;
+  // Projects linked now, by "<workspace>|<project key>".
+  const linkedNow = new Map<string, ProjectRoot>();
   const calls: [string, string, string][] = [];
   const clients: Client[] = [];
 
@@ -51,7 +53,8 @@ describe("knowledge tools", () => {
     tokens = new TokenAuthority(await loadTokenSecret(root));
     calls.length = 0;
     knowledgeOn = true;
-    http = await new KnowledgeMcp(tokens, new KnowledgeService(base, async () => related), { recordCall: async (repoKey, tool, token) => void calls.push([repoKey, tool, token]) }, async () => knowledgeOn).listen(0);
+    http = await new KnowledgeMcp(tokens, new KnowledgeService(base, async () => related), { recordCall: async (repoKey, tool, token) => void calls.push([repoKey, tool, token]) }, async () => knowledgeOn, async (workspace, repoKey) => linkedNow.get(`${workspace}|${repoKey}`) ?? null).listen(0);
+    linkedNow.clear();
   });
   afterEach(async () => {
     for (const client of clients.splice(0)) await client.close();
@@ -60,6 +63,37 @@ describe("knowledge tools", () => {
     base.close();
     rmSync(top, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
+  });
+
+  it("reads an attached conversation only with its grant, and only up to when it was attached", async () => {
+    const reads: [string, string, string | null][] = [];
+    const reader = new KnowledgeMcp(tokens, new KnowledgeService(base, async () => null), { recordCall: async () => {} }, async () => true, async () => null, async (agentId, upTo, before) => {
+      reads.push([agentId, upTo, before]);
+      return { text: "**User:** Fix login", before: before ? null : "5@e1" };
+    });
+    const server = await reader.listen(0);
+    try {
+      const { url, headers } = knowledgeServerEntry((server.address() as AddressInfo).port, tokens.mint({ repoKey: "local/abc", top }))[KNOWLEDGE_SERVER];
+      const client = new Client({ name: "test", version: "1" });
+      await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers } }));
+      clients.push(client);
+      expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([...KNOWLEDGE_TOOLS, CONVERSATION_TOOL]);
+      const grant = tokens.mintGrant("a7", "2026-11-02T10:00:00.000Z");
+      expect(textOf(await client.callTool({ name: CONVERSATION_TOOL, arguments: { grant } }))).toContain('call conversation_read again with before: "5@e1"');
+      expect(textOf(await client.callTool({ name: CONVERSATION_TOOL, arguments: { grant, before: "5@e1" } }))).toContain("start of the conversation");
+      expect(reads).toEqual([["a7", "2026-11-02T10:00:00.000Z", null], ["a7", "2026-11-02T10:00:00.000Z", "5@e1"]]);
+      // A knowledge token is not a grant, and a grant with its agent changed fails its signature.
+      const token = tokens.mint({ repoKey: "local/abc", top });
+      const [payload, signature] = grant.split(".");
+      const forged = `${Buffer.from(Buffer.from(payload, "base64url").toString("utf8").replace("a7", "a8")).toString("base64url")}.${signature}`;
+      for (const bad of [token, forged, "nonsense"]) expect(await client.callTool({ name: CONVERSATION_TOOL, arguments: { grant: bad } })).toMatchObject({ isError: true });
+      expect(reads).toHaveLength(2);
+      // And a grant is not a token.
+      expect(tokens.verify(`Bearer ${grant}`)).toBeNull();
+    } finally {
+      server.closeAllConnections();
+      await new Promise((done) => server.close(done));
+    }
   });
 
   it("offers only read tools", async () => {
@@ -78,6 +112,25 @@ describe("knowledge tools", () => {
     }
     expect(calls).toEqual([]);
     expect(await base.projects()).toEqual([]);
+  });
+
+  it("reads a linked project only through a token for the workspace it is linked to, and only while it stays linked", async () => {
+    const web = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-mcp-web-")));
+    try {
+      linkedNow.set("w1|local/api", projectRoot("local/api", top));
+      const search = { name: "knowledge_search", arguments: { query: "sqlite", project: "local/api" } };
+      const inW1 = await connect(tokens.mint({ repoKey: "local/web", top: web, workspace: "w1" }));
+      expect(textOf(await inW1.callTool(search))).toContain("Use SQLite");
+      for (const token of [tokens.mint({ repoKey: "local/web", top: web, workspace: "w2" }), tokens.mint({ repoKey: "local/web", top: web })]) {
+        const result = await (await connect(token)).callTool(search);
+        expect(result).toMatchObject({ isError: true });
+        expect(textOf(result)).toContain("local/api is not linked to this agent's workspace");
+      }
+      linkedNow.clear();
+      expect(await inW1.callTool(search)).toMatchObject({ isError: true });
+    } finally {
+      rmSync(web, { recursive: true, force: true });
+    }
   });
 
   it("tells the agent when to use its tools, so it can find them while they are deferred", async () => {

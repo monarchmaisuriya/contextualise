@@ -184,6 +184,8 @@ export interface AgentSearchContext {
   generatedTitles?: ReadonlyMap<string, string>;
   // Background agents (plugins' workers) are never offered.
   isBackground?: (agent: DirectoryAgent) => boolean;
+  // A line that lets the receiving agent read the whole conversation; none when unavailable.
+  conversationGrant?: (agentId: string) => Promise<string | null>;
 }
 
 // Every agent on this host that matches the search words: title, provider, workspace, branch, and
@@ -212,7 +214,8 @@ export async function searchAgents(paseo: PaseoApi, directory: Directory, query:
       const reading = await context.readings.read(paseo, agent, options.turnsPerAgent);
       const state = isUnreadable(reading) ? "unreadable" : agent.archivedAt ? "archived" : agent.status === "running" ? "running" : null;
       const active = agent.updatedAt ? shortTimeAgo(agent.updatedAt) : "";
-      const text = renderConversation(member, workspaceName, reading, options.snapshotMaxChars);
+      const grant = await context.conversationGrant?.(agent.id).catch(() => null);
+      const text = `${renderConversation(member, workspaceName, reading, options.snapshotMaxChars)}${grant ? `\n\n${grant}` : ""}`;
       const { title, includesWorkspace } = agentTitle(agent, workspace, sharing.get(agent.workspaceId ?? "") ?? 1, { maxChars: options.pickerTitleMaxChars, shortenLinks: options.shortenLinks, generated: generatedTitles.get(agent.id) });
       return {
         id: agent.id,

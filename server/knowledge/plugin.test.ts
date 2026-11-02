@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { snapshotSettingsSchema, type SnapshotSettings } from "../../shared/contracts";
 import { KnowledgeBase } from "./base";
@@ -24,7 +24,7 @@ describe("contributeKnowledge", () => {
   const rpcs = new Map<string, Handler>();
   const on = new Map<string, Handler[]>();
   const respondToPermission = vi.fn(async () => {});
-  const workspaceEntries: { id: string; workspaceDirectory: string }[] = [];
+  const workspaceEntries: { id: string; workspaceDirectory: string; background?: boolean }[] = [];
   const agentEntries: { agent: Record<string, unknown> }[] = [];
   let agentsDown = false;
   const timeline = [
@@ -33,7 +33,8 @@ describe("contributeKnowledge", () => {
   ];
   const paseo = {
     config: { get: async () => ({ requestId: "r", config: { plugins } }) },
-    workspaces: { list: async () => ({ entries: workspaceEntries, pageInfo: { hasMore: false, nextCursor: null } }) },
+    // Like Paseo, background workspaces are listed only when asked for.
+    workspaces: { list: async (options?: { includeBackground?: boolean }) => ({ entries: workspaceEntries.filter((entry) => options?.includeBackground || !entry.background), pageInfo: { hasMore: false, nextCursor: null } }) },
     agents: {
       list: async () => {
         if (agentsDown) throw new Error("daemon busy");
@@ -223,6 +224,8 @@ describe("contributeKnowledge", () => {
     await ask("p4", { name: "CodexMcpElicitation", metadata: { serverName: KNOWLEDGE_SERVER }, description: 'Allow the paseo-contextualise MCP server to run tool "knowledge_read"?' });
     await ask("p5", { name: `mcp__${KNOWLEDGE_SERVER}__knowledge_history` });
     await ask("p6", { name: `mcp__${KNOWLEDGE_SERVER}__knowledge_impact` });
+    // Reading another agent's conversation is left to M every time.
+    await ask("p7", { name: `mcp__${KNOWLEDGE_SERVER}__conversation_read` });
     expect(respondToPermission.mock.calls.map((call) => (call as unknown as [{ requestId: string }])[0].requestId)).toEqual(["p4", "p5", "p6"]);
   });
 
@@ -292,7 +295,8 @@ describe("contributeKnowledge", () => {
     await create(top);
     values = { ...values, knowledgeEnabled: false };
     for (const [name, handler] of rpcs) {
-      if (name === "knowledge.attach-search" || name === "knowledge.memorise-status") continue;
+      // Linked projects are folder access, not knowledge, so they keep working while it is off.
+      if (name === "knowledge.attach-search" || name === "knowledge.memorise-status" || name.startsWith("links.")) continue;
       await expect((handler as (input: unknown, context: unknown) => Promise<unknown>)({}, { paseo }), name).rejects.toThrow("Project knowledge is off. Turn it on in Settings > Contextualise.");
     }
     expect(await attach("")).toEqual({ items: [] });
@@ -321,7 +325,7 @@ describe("contributeKnowledge", () => {
     expect((await projects({}, { paseo })).projects[0].generation).toBeNull();
     expect(await describe({ repoKey: found.repoKey }, { paseo })).toEqual({ started: true });
     // Summaries are off in this test, so the job ends at once and says so.
-    await vi.waitFor(async () => expect((await projects({}, { paseo })).projects[0].generation).toMatchObject({ state: "done", message: "summaries are off (Settings > Contextualise > Conversation summaries)" }));
+    await vi.waitFor(async () => expect((await projects({}, { paseo })).projects[0].generation).toMatchObject({ state: "done", message: "summaries are off (Settings > Contextualise > Project knowledge > Write summaries of finished conversations)" }));
   });
 
   it("previews exactly the section an agent is given, without markers, refreshing and counting nothing", async () => {
@@ -351,5 +355,102 @@ describe("contributeKnowledge", () => {
   it("records a task when an agent's turn ends, shown to the next agent", async () => {
     await emit("agent.turn_ended", { agent: { id: "a1", provider: "codex", cwd: top, title: null }, outcome: { kind: "completed" } });
     expect((await create(top)).config.systemPrompt).toContain('"Document the queue" (completed; README.md)');
+  });
+
+  describe("linked projects", () => {
+    let api: string;
+    let web2: string;
+    type Created = { config: { systemPrompt?: string; providerOptions?: Record<string, unknown> }; env?: Record<string, string> };
+    const createIn = (cwd: string, config: Record<string, unknown> = {}, env?: Record<string, string>) =>
+      (before.get("agent.create") as (input: unknown, context: unknown) => Promise<Created>)({ request: { config: { provider: "claude", cwd, ...config }, ...(env ? { env } : {}) } }, { paseo });
+    beforeEach(() => {
+      api = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-linked-api-")));
+      web2 = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-linked-web2-")));
+      workspaceEntries.length = 0;
+      workspaceEntries.push({ id: "w1", workspaceDirectory: top }, { id: "w2", workspaceDirectory: web2 });
+    });
+    afterEach(() => {
+      rmSync(api, { recursive: true, force: true });
+      rmSync(web2, { recursive: true, force: true });
+    });
+
+    it("gives every new Claude or Codex chat in the linked workspace the folder, and no chat in another workspace", async () => {
+      await call("links.add", { workspaceId: "w1", path: api });
+      const claude = await createIn(top);
+      expect(claude.config.providerOptions).toEqual({ additionalDirectories: [api] });
+      expect(claude.env).toEqual({ CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "1" });
+      expect(claude.config.systemPrompt).toContain(`## Linked projects (Contextualise)`);
+      expect(claude.config.systemPrompt).toContain(`: ${api}`);
+      expect((await createIn(top, { provider: "codex" })).config.providerOptions).toEqual({ sandbox_workspace_write: { writable_roots: [api] } });
+      const other = await createIn(web2);
+      expect(other.config.providerOptions).toBeUndefined();
+      expect(other.config.systemPrompt ?? "").not.toContain("Linked projects");
+    });
+
+    it("gives a provider other than Claude or Codex no folder options, and says why", async () => {
+      await call("links.add", { workspaceId: "w1", path: api });
+      const created = await createIn(top, { provider: "opencode" });
+      expect(created.config.providerOptions).toBeUndefined();
+      expect(created.config.systemPrompt).toContain("only to Claude and Codex chats, not opencode");
+    });
+
+    it("adds no folder when several workspaces share the chat's folder, background ones included, unless Contextualise created the chat", async () => {
+      workspaceEntries.push({ id: "w3", workspaceDirectory: top, background: true });
+      await call("links.add", { workspaceId: "w1", path: api });
+      const shared = await createIn(top);
+      expect(shared.config.providerOptions).toBeUndefined();
+      expect(shared.config.systemPrompt).toContain("shared by several Paseo workspaces");
+      expect((await createIn(top, {}, { CONTEXTUALISE_LINK_WORKSPACE: "w1" })).config.providerOptions).toEqual({ additionalDirectories: [api] });
+      // A marker naming a workspace in another folder is not trusted.
+      expect((await createIn(top, {}, { CONTEXTUALISE_LINK_WORKSPACE: "w2" })).config.providerOptions).toBeUndefined();
+    });
+
+    it("stops giving a folder once it is removed, or once it is replaced by a symlink", async () => {
+      await call("links.add", { workspaceId: "w1", path: api });
+      await call("links.remove", { workspaceId: "w1", path: api });
+      expect((await createIn(top)).config.providerOptions).toBeUndefined();
+      await call("links.add", { workspaceId: "w1", path: api });
+      const moved = `${api}-moved`;
+      renameSync(api, moved);
+      symlinkSync(web2, api);
+      expect((await createIn(top)).config.providerOptions).toBeUndefined();
+      rmSync(api);
+      renameSync(moved, api);
+    });
+
+    it("refuses to link Paseo's own data folder", async () => {
+      mkdirSync(join(home, "plugin-data"), { recursive: true });
+      await expect(call("links.add", { workspaceId: "w1", path: join(home, "plugin-data") })).rejects.toThrow("Paseo's own data folder");
+    });
+
+    it("keeps an existing folder option and adds the link once", async () => {
+      await call("links.add", { workspaceId: "w1", path: api });
+      expect((await createIn(top, { providerOptions: { additionalDirectories: ["/elsewhere", api] } })).config.providerOptions).toEqual({ additionalDirectories: ["/elsewhere", api] });
+    });
+
+    it("starts a linked chat in the workspace like the one it was asked from, marked so the hook knows its workspace", async () => {
+      const created: unknown[] = [];
+      const api = paseo as unknown as Record<string, Record<string, unknown>>;
+      const ref = api.agents.ref;
+      api.agents.ref = () => ({ refresh: async () => null, current: () => ({ id: "a1", provider: "claude", model: "opus", currentModeId: "default", thinkingOptionId: null, title: "Fix login" }), timeline: { refetch: async () => ({ entries: timeline, hasOlder: false, startCursor: null }) } });
+      api.workspaces.ref = (workspaceId: string) => ({ agents: { create: async (options: unknown) => (created.push({ workspaceId, ...(options as object) }), { id: "a2" }) } });
+      try {
+        expect(await call("links.new-chat", { workspaceId: "w1", fromAgentId: "a1", carryConversation: false })).toEqual({ agentId: "a2" });
+        expect(created[0]).toEqual({ workspaceId: "w1", config: { provider: "claude/opus", modeId: "default" }, env: { CONTEXTUALISE_LINK_WORKSPACE: "w1" } });
+        await call("links.new-chat", { workspaceId: "w1", fromAgentId: "a1", carryConversation: true });
+        expect((created[1] as { prompt: string }).prompt).toMatch(/^Carry on from the chat "Fix login"[\s\S]*Document the queue/);
+      } finally {
+        api.agents.ref = ref;
+        delete api.workspaces.ref;
+      }
+    });
+
+    it("lists a workspace's links with whether its folder is shared, and works while knowledge is off", async () => {
+      values = { ...values, knowledgeEnabled: false };
+      const listed = (await call("links.add", { workspaceId: "w1", path: api })) as { links: { path: string; name: string; repoKey: string | null }[]; sharedFolder: boolean; suggestions: unknown[] };
+      expect(listed).toMatchObject({ links: [{ path: api, name: basename(api), repoKey: null }], sharedFolder: false, suggestions: [] });
+      workspaceEntries.push({ id: "w4", workspaceDirectory: top });
+      expect(((await call("links.list", { workspaceId: "w1" })) as { sharedFolder: boolean }).sharedFolder).toBe(true);
+    });
   });
 });

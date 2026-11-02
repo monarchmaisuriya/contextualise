@@ -29,6 +29,7 @@ import {
   terminalAttachmentSource,
 } from "./shared/contracts";
 import { knowledgeAttachmentSource } from "./shared/knowledge";
+import { followLinkPills } from "./client/link-pills";
 
 // Shown, hidden, and moved under Paseo's Settings > Sidebar.
 function TagsSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
@@ -60,6 +61,7 @@ export default function contribute(client: PluginClientContext) {
     client.addTimelineRenderer({ kind: RECEIPT_KIND, version: 1, schema: receiptSchema, Component: (props) => <ReceiptRow {...props} openTags={openTagsFor} /> }),
     client.addTimelineRenderer({ kind: FETCH_RESULT_KIND, version: 1, schema: fetchResultSchema, Component: (props) => <FetchResultRow {...props} openItem={openItem} openTags={openTagsFor} /> }),
     followAgentPills(client, openTagsFor),
+    followLinkPills(client),
     // Paseo shows a thrown error as a toast and clears the composer either way. The Tags pill's
     // label is the confirmation; a /tag that changed nothing says so.
     client.addSlashCommand({

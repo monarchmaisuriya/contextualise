@@ -183,3 +183,19 @@ export function matchTags(tags: readonly TagSummary[], query: string): TagSummar
   const inside = tags.filter((tag) => !tag.key.startsWith(wanted) && tag.key.includes(wanted));
   return [...prefix, ...inside];
 }
+
+const FULL_MESSAGE_CHARS = 3_000;
+const FULL_TOOL_CHARS = 800;
+const cut = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)} […]` : text);
+
+// A run of a conversation's timeline as read by conversation_read: messages and tool calls (name,
+// status, and what was run or changed), in order, each cut to a length, and redacted.
+export function renderTimelineItems(items: readonly AgentTimelineItem[]): string {
+  const lines: string[] = [];
+  for (const item of items) {
+    if (item.type === "user_message") lines.push(`**User:** ${cut(item.text.trim(), FULL_MESSAGE_CHARS)}`);
+    else if (item.type === "assistant_message") lines.push(`**Agent:** ${cut(item.text.trim(), FULL_MESSAGE_CHARS)}`);
+    else if (item.type === "tool_call") lines.push(`**Tool ${item.name} (${item.status}):** ${cut(JSON.stringify(item.detail), FULL_TOOL_CHARS)}`);
+  }
+  return redactSecrets(lines.join("\n\n"));
+}

@@ -124,7 +124,7 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
     // Both plugins' background agents run under the Paseo home's plugin-data folder.
     const pluginData = dirname(await resolveRoot());
     const isBackground = (agent: { cwd?: string }) => Boolean(agent.cwd) && (resolve(agent.cwd as string) === pluginData || resolve(agent.cwd as string).startsWith(`${pluginData}${sep}`));
-    return { items: await searchAgents(paseo, await directory(paseo), query, options, { readings: agentReadings, pinned, serverId: await serverId, generatedTitles: await knowledge.generatedTitles(), isBackground }) };
+    return { items: await searchAgents(paseo, await directory(paseo), query, options, { readings: agentReadings, pinned, serverId: await serverId, generatedTitles: await knowledge.generatedTitles(), isBackground, conversationGrant: knowledge.conversationGrant }) };
   });
 
   server.handle(searchTerminalsRpc, async ({ query }, { paseo }) => {

@@ -99,12 +99,13 @@ test("agent search matches every word, puts archived agents last, and links to t
   const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
   const { paseo } = fakePaseo({ old: page(), new: page(), other: page() });
   const withArchived = { ...options, includeArchivedAgents: true };
-  const items = await searchAgents(paseo, directory, "fix log", withArchived, { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv_1" });
+  const items = await searchAgents(paseo, directory, "fix log", withArchived, { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv_1", conversationGrant: async (agentId) => `grant for ${agentId}` });
   expect(items.map((item) => item.id)).toEqual(["new", "old"]);
   expect(items[0]).toMatchObject({ identifier: "", title: "Fix logout", url: agentLink("srv_1", "new"), resourceType: "agent" });
   expect(items[0].subtitle).toMatch(/^\d+d · payments \/ api$/);
   expect(items[1].subtitle).toMatch(/^\d+d · payments \/ api · archived$/);
   expect(items[0].text).toContain("**User:** hi");
+  expect(items[0].text).toMatch(/\n\ngrant for new$/);
   expect((await searchAgents(paseo, directory, "payments", withArchived, { readings: new AgentReadings(), pinned: NO_PINS, serverId: "srv_1" })).map((item) => item.id)).toEqual(["other", "new", "old"]);
 });
 

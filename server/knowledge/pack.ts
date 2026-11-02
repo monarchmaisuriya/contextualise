@@ -9,7 +9,7 @@ const PACK_TASKS = 5;
 // Room kept for the list of documents left out, which names at most this many.
 const LEFT_OUT_NAMED = 20;
 const LEFT_OUT_ROOM = 3_000;
-const CLOSING = "Search Attach > Project knowledge for anything else in this project.";
+const CLOSING = "Search Attach > Project for anything else in this project.";
 
 export interface ProjectPack {
   text: string;

@@ -2,6 +2,26 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.23.0 - 2026-11-02
+
+### Added
+
+- **Linked projects:** link another project's folder to one workspace, and every new Claude or Codex chat there can read and edit it as well as its own folder (a frontend workspace with its backend, for example). Other workspaces are not affected.
+  - Add and remove links from the new **Linked** button above the message box, or the workspace's Project knowledge tab.
+  - Each new chat gets the folders and a note listing them, with how to commit in each repository. Its knowledge tools also search a linked project, only while it stays linked.
+  - A running chat keeps the folders it started with, because Paseo lets a plugin set folders only when a chat starts. **New linked chat** and **Continue this chat with them** start a chat that has them.
+  - Local workspaces that share one folder get links only in chats started with **New linked chat**, since Paseo cannot say which of them a chat belongs to.
+- **Whole attached conversations:** an agent given an attached conversation can read all of it, tool calls included, with the new `conversation_read` tool, up to the moment it was attached. Only the conversation it was given; each read asks you first.
+
+### Changed
+
+- Attach > Project knowledge is now **Attach > Project**.
+- Project knowledge screen: a button to read the project again in the header; "Choose project" left the menu (tap the title); "Summarise past conversations" is off while summaries are off; search results have **Clear search**.
+
+### Fixed
+
+- Messages pointed to a settings section that does not exist ("Conversation summaries"); they now name Settings > Contextualise > Project knowledge > Write summaries of finished conversations.
+
 ## 0.22.2 - 2026-11-02
 
 ### Fixed

@@ -352,14 +352,14 @@ export const areaRpc = defineRpc({
 export const describeProjectRpc = defineRpc({ name: "knowledge.describe", input: z.object({ repoKey: z.string() }), output: z.object({ started: z.boolean() }) });
 export const explainAreaRpc = defineRpc({ name: "knowledge.explain-area", input: z.object({ repoKey: z.string(), path: z.string() }), output: z.object({ started: z.boolean() }) });
 
-// Attach > Project knowledge: one entry from any indexed project, sent in full with the prompt.
+// Attach > Project: one entry from any indexed project, sent in full with the prompt.
 export const searchKnowledgeAttachmentsRpc = defineRpc({ name: "knowledge.attach-search", input: z.object({ query: z.string() }), output: PluginAttachmentSearchPayloadSchema });
 
 export const knowledgeAttachmentSource = defineAttachmentSource({
   id: "knowledge",
-  title: "Project knowledge",
+  title: "Project",
   icon: "BookOpen",
-  pickerTitle: "Attach project knowledge",
+  pickerTitle: "Attach project",
   searchPlaceholder: "Search docs, ADRs, code, and past tasks",
   search: searchKnowledgeAttachmentsRpc,
 });

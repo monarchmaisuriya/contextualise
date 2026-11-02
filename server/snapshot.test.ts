@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import type { AgentMember, TagSummary } from "../shared/contracts";
 import type { AgentTimelineItem } from "./paseo-types";
-import { describeMembers, lastTurns, matchTags, renderConversation, renderSnapshot, renderTerminal, SNAPSHOT_HEADER } from "./snapshot";
+import { describeMembers, lastTurns, matchTags, renderConversation, renderSnapshot, renderTerminal, renderTimelineItems, SNAPSHOT_HEADER } from "./snapshot";
 
 const user = (text: string) => ({ type: "user_message", text }) as AgentTimelineItem;
 const reply = (text: string) => ({ type: "assistant_message", text }) as AgentTimelineItem;
@@ -171,4 +171,19 @@ test("fetched items are listed with their source, redacted, and counted; pending
   expect(text).toContain("(still being fetched)");
   expect(text).toContain("(fetch failed: no access)");
   expect(describeMembers(withNotes)).toBe("3 items");
+});
+
+test("a full conversation keeps tool calls with what they ran, cuts long ones, and redacts secrets", () => {
+  const text = renderTimelineItems([
+    user("Deploy it"),
+    { type: "tool_call", name: "shell", status: "completed", detail: { type: "shell", command: "export GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789 && npm run deploy" } } as unknown as AgentTimelineItem,
+    { type: "reasoning", text: "thinking" } as AgentTimelineItem,
+    reply("x".repeat(5_000)),
+  ]);
+  expect(text).toContain("**User:** Deploy it");
+  expect(text).toContain("**Tool shell (completed):**");
+  expect(text).toContain("npm run deploy");
+  expect(text).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123456789");
+  expect(text).not.toContain("thinking");
+  expect(text).toMatch(/\*\*Agent:\*\* x{3000} \[…\]$/);
 });

@@ -5,7 +5,13 @@ import { z } from "zod";
 import { areaLabel } from "../../shared/diagram";
 import { type FileConnections, KNOWLEDGE_KINDS, KNOWLEDGE_TOOLS, type KnowledgeEntry, type KnowledgeTool, type SearchHit } from "../../shared/knowledge";
 import type { AgentScope, TokenAuthority } from "./auth";
-import { projectRoot } from "./git";
+
+// Reads a conversation an agent was given in an attachment. Not one of KNOWLEDGE_TOOLS: those only
+// read a project's index and are approved automatically; this reads another agent's work, so each
+// call is left to M.
+export const CONVERSATION_TOOL = "conversation_read";
+export type ConversationReader = (agentId: string, upTo: string, before: string | null) => Promise<{ text: string; before: string | null }>;
+import { type ProjectRoot, projectRoot } from "./git";
 import type { Impact, KnowledgeService } from "./service";
 import type { UsageLog } from "./usage";
 
@@ -106,10 +112,21 @@ export class KnowledgeMcp {
     private readonly usage: Pick<UsageLog, "recordCall">,
     // While off, every tool answers that it is off, reading and counting nothing.
     private readonly knowledgeOn: () => Promise<boolean> = async () => true,
+    // A project linked to the workspace now, by its key; null when it is not (or no longer) linked.
+    private readonly linkedProject: (workspaceId: string, repoKey: string) => Promise<ProjectRoot | null> = async () => null,
+    private readonly readConversation: ConversationReader | null = null,
   ) {}
 
   private build(scope: AgentScope, agent: string): McpServer {
-    const repo = projectRoot(scope.repoKey, scope.top);
+    const own = projectRoot(scope.repoKey, scope.top);
+    // Another project only while it is linked to the agent's workspace, checked on every call, so
+    // removing a link stops its knowledge at once.
+    const repoOf = async (project: string | undefined): Promise<ProjectRoot> => {
+      if (!project || project === scope.repoKey) return own;
+      const linked = scope.workspace ? await this.linkedProject(scope.workspace, project) : null;
+      if (!linked) throw new Error(`${project} is not linked to this agent's workspace; leave project out to use this agent's own project`);
+      return linked;
+    };
     // Counting is advisory: it never delays or fails the call, and a failed count is logged.
     const count = (name: KnowledgeTool) =>
       this.usage.recordCall(scope.repoKey, name, agent).catch((error: unknown) => console.error(`[contextualise] could not count a ${name} call for ${scope.repoKey}: ${String(error)}`));
@@ -123,15 +140,17 @@ export class KnowledgeMcp {
           "Search what this repository knows about itself: why things were decided (ADRs, with status), its conventions and architecture docs, other docs, and what agents did here before (request, files, outcome). Code symbols (functions, classes, types) are included but rank below the project's own writing; symbols in test files appear only when you ask for kinds [\"code\"] or pass paths. Use grep for exact code text. Returns ids for knowledge_read.",
         inputSchema: {
           query: z.string().min(1).max(200),
+          project: z.string().min(1).max(600).optional().describe("A linked project's key (listed under Linked projects); this agent's own project when left out"),
           kinds: z.array(z.enum(KNOWLEDGE_KINDS)).max(KNOWLEDGE_KINDS.length).optional().describe("Limit to these kinds; all kinds when left out (test-file symbols only with code)"),
           paths: z.array(z.string().min(1).max(300)).max(20).optional().describe("Limit to these files, folders, or globs (src/api/**), relative to the project root"),
           limit: z.number().int().min(1).max(20).optional(),
         },
       },
-      async ({ query, kinds, paths, limit }) => {
+      async ({ query, kinds, paths, limit, project }) => {
         if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
         void count("knowledge_search");
         try {
+          const repo = await repoOf(project);
           const hits = await this.service.search(repo, query, kinds ?? [], limit ?? 8, paths ?? []);
           return text(hits.length > 0 ? hits.map(describeHit).join("\n") : `Nothing in ${scope.repoKey} matches "${query}". Try other words, or fewer.`);
         } catch (error) {
@@ -143,13 +162,13 @@ export class KnowledgeMcp {
       tool("knowledge_read"),
       {
         description: "Read one entry found by knowledge_search: a document section, a code symbol's signature, or a finished task's request, files, commands, and outcome.",
-        inputSchema: { id: z.string().min(1).max(600) },
+        inputSchema: { id: z.string().min(1).max(600), project: z.string().min(1).max(600).optional().describe("A linked project's key (listed under Linked projects); this agent's own project when left out"), },
       },
-      async ({ id }) => {
+      async ({ id, project }) => {
         if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
         void count("knowledge_read");
         try {
-          return text(describeEntry(await this.service.read(repo, id, { connections: true })));
+          return text(describeEntry(await this.service.read(await repoOf(project), id, { connections: true })));
         } catch (error) {
           return failure(error);
         }
@@ -159,12 +178,13 @@ export class KnowledgeMcp {
       tool("knowledge_outline"),
       {
         description: "List one file's sections (documents) or functions, classes, methods, and types (code), with line numbers, to see what it holds before reading it. Given a main area's folder (from the project map), describe that area instead: what it uses, what uses it, its key names, and its main files.",
-        inputSchema: { path: z.string().min(1).max(300).describe("A file path, or a main area's folder, relative to the project root") },
+        inputSchema: { path: z.string().min(1).max(300).describe("A file path, or a main area's folder, relative to the project root"), project: z.string().min(1).max(600).optional().describe("A linked project's key (listed under Linked projects); this agent's own project when left out"), },
       },
-      async ({ path }) => {
+      async ({ path, project }) => {
         if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
         void count("knowledge_outline");
         try {
+          const repo = await repoOf(project);
           const folder = path.replace(/^\.?\//, "").replace(/\/+$/, "");
           const facts = await this.service.structure(repo);
           if (facts.areas.some((area) => area.path === folder && folder !== "")) return text(describeArea(await this.service.area(repo, folder)));
@@ -181,13 +201,13 @@ export class KnowledgeMcp {
       tool("knowledge_history"),
       {
         description: "List the finished tasks that changed a file or any file in a folder, newest first: what was asked, the outcome, and when.",
-        inputSchema: { path: z.string().min(1).max(300).describe("A file or folder relative to the project root"), limit: z.number().int().min(1).max(20).optional() },
+        inputSchema: { path: z.string().min(1).max(300).describe("A file or folder relative to the project root"), limit: z.number().int().min(1).max(20).optional(), project: z.string().min(1).max(600).optional().describe("A linked project's key (listed under Linked projects); this agent's own project when left out"), },
       },
-      async ({ path, limit }) => {
+      async ({ path, limit, project }) => {
         if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
         void count("knowledge_history");
         try {
-          const tasks = await this.service.history(repo, path, limit ?? 8);
+          const tasks = await this.service.history(await repoOf(project), path, limit ?? 8);
           return text(
             tasks.length > 0
               ? tasks.map((task) => `[${task.id}] ${task.endedAt.slice(0, 10)} ${task.generatedTitle ?? task.title} (${task.outcome})${task.needsCheck ? " [needs check: its files changed since]" : ""}${task.summary ? `\n  ${task.summary}` : ""}`).join("\n")
@@ -202,18 +222,40 @@ export class KnowledgeMcp {
       tool("knowledge_impact"),
       {
         description: "Before or after changing code: given files or folders, list the files that use them directly, how many more depend on those, the areas touched, and the test files to run.",
-        inputSchema: { paths: z.array(z.string().min(1).max(300)).min(1).max(50).describe("Files or folders relative to the project root") },
+        inputSchema: { paths: z.array(z.string().min(1).max(300)).min(1).max(50).describe("Files or folders relative to the project root"), project: z.string().min(1).max(600).optional().describe("A linked project's key (listed under Linked projects); this agent's own project when left out"), },
       },
-      async ({ paths }) => {
+      async ({ paths, project }) => {
         if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
         void count("knowledge_impact");
         try {
-          return text(describeImpact(await this.service.impact(repo, paths)));
+          return text(describeImpact(await this.service.impact(await repoOf(project), paths)));
         } catch (error) {
           return failure(error);
         }
       },
     );
+    const reader = this.readConversation;
+    if (reader) {
+      mcp.registerTool(
+        CONVERSATION_TOOL,
+        {
+          description:
+            "Read a conversation M attached (Attach > Agent conversation): its messages and tool calls, newest page first, up to when it was attached. Pass the grant written in the attachment; pass `before` from the last answer to read earlier.",
+          inputSchema: { grant: z.string().min(1).max(1_000), before: z.string().min(1).max(500).optional() },
+        },
+        async ({ grant, before }) => {
+          if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
+          const granted = this.tokens.verifyGrant(grant);
+          if (!granted) return failure("This grant is not valid. Use the grant written in an attached conversation.");
+          try {
+            const page = await reader(granted.agentId, granted.upTo, before ?? null);
+            return text(`${page.text || "(nothing on this page)"}${page.before ? `\n\nEarlier messages exist: call ${CONVERSATION_TOOL} again with before: "${page.before}".` : "\n\nThis is the start of the conversation."}`);
+          } catch (error) {
+            return failure(error);
+          }
+        },
+      );
+    }
     return mcp;
   }
 
