@@ -386,12 +386,12 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     void base.refresh(repo, 0);
     return { started: true };
   });
-  // One "Whole project" row: the project's own writing in one attachment, built from its index.
-  const projectItem = (found: { repoKey: string; name: string; top: string }, store: KnowledgeStore, updating: boolean, pickerTitleMaxChars: number) => {
+  // One whole-project row: the project's own writing in one attachment, built from its index.
+  const projectItem = (found: { repoKey: string; name: string; top: string }, store: KnowledgeStore, updating: boolean, pickerTitleMaxChars: number, label: (word: string) => string) => {
     const pack = projectPack(store, found);
     return {
       id: `${found.repoKey}|project`,
-      identifier: "Whole project",
+      identifier: label("Whole project"),
       title: capTitle(found.name, pickerTitleMaxChars),
       subtitle: `${updating ? "Updating · " : ""}${pack.documents === 0 ? "No design documents, rules, or decisions" : pack.included === pack.documents ? `${pack.documents} document${pack.documents === 1 ? "" : "s"}` : `${pack.included} of ${pack.documents} documents`} · about ${pack.tokens.toLocaleString("en-US")} tokens · ${found.top}`.slice(0, 200),
       url: DOCS_URL,
@@ -407,7 +407,9 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   server.handle(searchKnowledgeAttachmentsRpc, async ({ query }, { paseo }) => {
     remember(paseo);
     if (!(await knowledgeOn())) return { items: [] };
-    const { pickerTitleMaxChars } = await deps.settings();
+    const { pickerTitleMaxChars, pickerPrefix } = await deps.settings();
+    // Rows start with their title unless the "Label before each title" setting asks for a word.
+    const label = (word: string) => (pickerPrefix === "none" ? "" : word);
     const words = query.trim().toLowerCase();
     const projects = await Promise.all(
       (await base.projects()).map(async (found) => {
@@ -417,7 +419,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       }),
     );
     const wholes = await Promise.all(
-      projects.filter(({ found }) => words === "" || found.name.toLowerCase().includes(words)).map(async ({ found, repo, updating }) => projectItem(found, await base.open(repo), updating, pickerTitleMaxChars)),
+      projects.filter(({ found }) => words === "" || found.name.toLowerCase().includes(words)).map(async ({ found, repo, updating }) => projectItem(found, await base.open(repo), updating, pickerTitleMaxChars, label)),
     );
     if (words === "") return { items: wholes };
     const entries = await Promise.all(
@@ -428,7 +430,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
           .filter((hit) => bodies.has(hit.id))
           .map((hit) => ({
             id: `${found.repoKey}|${hit.id}`,
-            identifier: KIND_LABELS[hit.kind],
+            identifier: label(KIND_LABELS[hit.kind]),
             title: capTitle(hit.title, pickerTitleMaxChars),
             // The snippet shows why the row matched, and Paseo's picker filters rows by their own text.
             subtitle: `${found.name} · ${hit.path}${hit.line > 0 ? `:${hit.line}` : ""}${hit.needsCheck ? " · needs check" : ""}${updating ? " · updating" : ""} · ${hit.snippet.replace(/\s+/g, " ").trim()}`.slice(0, 200),
