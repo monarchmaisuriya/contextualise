@@ -6,7 +6,7 @@ import { Text, View } from "react-native";
 import { addLinkRpc, newLinkedChatRpc, removeLinkRpc, workspaceLinksRpc } from "../shared/linked-projects";
 import { errorText } from "./errors";
 import { ICONS } from "./icons";
-import { Button, IconButton, ListRow, SearchField, StateView, type Styles } from "./kit";
+import { Button, IconButton, ListRow, SearchField, Segmented, StateView, type Styles } from "./kit";
 
 export const linksQuery = (workspaceId: string) => ["contextualise", "links", workspaceId];
 // Rows drawn at once; with hundreds of projects the search narrows the rest.
@@ -24,6 +24,14 @@ function linksChanged(): void {
   for (const listener of listeners) listener();
 }
 
+// The tab last chosen, kept while the app runs, so the popover opens where M left it.
+type AttachKind = "projects" | "workspaces";
+const KINDS = [
+  { label: "Projects", value: "projects" },
+  { label: "Workspaces", value: "workspaces" },
+] as const;
+let lastKind: AttachKind = "projects";
+
 // What was typed is a folder, not a search: it starts like a path.
 const typedFolder = (text: string) => (/^[~/.]/.test(text.trim()) ? text.trim() : null);
 
@@ -39,6 +47,7 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
   const remove = useRpc(removeLinkRpc);
   const newChat = useRpc(newLinkedChatRpc);
   const [search, setSearch] = useState("");
+  const [kind, setKind] = useState<AttachKind>(lastKind);
   const change = useMutation({
     mutationFn: (run: () => Promise<unknown>) => run(),
     onSuccess: (payload) => {
@@ -58,11 +67,16 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
   });
   const data = query.data;
   const links = data?.links ?? [];
-  const suggestions = data?.suggestions ?? [];
   const words = search.trim().toLowerCase();
-  const matches = suggestions.filter((found) => words === "" || found.name.toLowerCase().includes(words) || found.path.toLowerCase().includes(words));
+  const has = (...texts: (string | null)[]) => words === "" || texts.some((text) => text?.toLowerCase().includes(words));
+  // One row shape for both tabs: a project by its folder, a workspace by its title, branch, and project.
+  const rows =
+    kind === "projects"
+      ? (data?.suggestions ?? []).filter((found) => has(found.name, found.path)).map((found) => ({ key: found.path, title: found.name, meta: found.path, path: found.path, attachedWorkspaceId: undefined }))
+      : (data?.workspaces ?? []).filter((found) => has(found.name, found.project, found.branch, found.path)).map((found) => ({ key: found.workspaceId, title: found.name, meta: [found.branch, found.project].filter(Boolean).join(" · "), path: found.path, attachedWorkspaceId: found.workspaceId }));
   const folder = typedFolder(search);
-  const attach = (path: string) => change.mutate(() => add({ workspaceId, path }));
+  const attach = (path: string, attachedWorkspaceId?: string) => change.mutate(() => add({ workspaceId, path, ...(attachedWorkspaceId ? { attachedWorkspaceId } : {}) }));
+  const noun = kind === "projects" ? "project" : "workspace";
   return (
     <View style={{ gap: 8 }}>
       {query.error ? <StateView state="error" text={`Could not load attached projects: ${errorText(query.error)}`} styles={styles} /> : null}
@@ -86,14 +100,24 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
           ))}
         </View>
       ) : null}
-      <SearchField value={search} onChange={setSearch} placeholder={suggestions.length > 0 ? "Attach a project, or type a folder path" : "Type a folder path to attach"} label="Project to attach" styles={styles} />
+      <Segmented
+        options={KINDS}
+        value={kind}
+        onChange={(next) => {
+          lastKind = next;
+          setKind(next);
+        }}
+        label="What to attach"
+        styles={styles}
+      />
+      <SearchField value={search} onChange={setSearch} placeholder={`Attach a ${noun}, or type a folder path`} label={`${noun} to attach`} styles={styles} />
       <ScrollView style={{ maxHeight: 240 }} keyboardShouldPersistTaps="handled">
-        {folder && !matches.some((found) => found.path === folder) ? <ListRow title={`Attach folder ${folder}`} icon={ICONS.attach} onPress={() => attach(folder)} disabled={change.isPending} styles={styles} /> : null}
-        {matches.slice(0, SHOWN).map((found) => (
-          <ListRow key={found.path} title={found.name} meta={found.path} icon={ICONS.attach} onPress={() => attach(found.path)} disabled={change.isPending} accessibilityLabel={`Attach ${found.path}`} styles={styles} />
+        {folder && !rows.some((row) => row.path === folder) ? <ListRow title={`Attach folder ${folder}`} icon={ICONS.attach} onPress={() => attach(folder)} disabled={change.isPending} styles={styles} /> : null}
+        {rows.slice(0, SHOWN).map((row) => (
+          <ListRow key={row.key} title={row.title} meta={row.meta} icon={kind === "projects" ? ICONS.attach : ICONS.workspace} onPress={() => attach(row.path, row.attachedWorkspaceId)} disabled={change.isPending} accessibilityLabel={`Attach ${row.title}`} styles={styles} />
         ))}
-        {matches.length === 0 && !folder && data ? <Text style={[styles.note, { paddingHorizontal: 12, paddingVertical: 8 }]}>{words ? `No project matches "${search.trim()}"` : "No other projects"}</Text> : null}
-        {matches.length > SHOWN ? <Text style={[styles.note, { paddingHorizontal: 12, paddingVertical: 8 }]}>{`${matches.length - SHOWN} more; type to narrow`}</Text> : null}
+        {rows.length === 0 && !folder && data ? <Text style={[styles.note, { paddingHorizontal: 12, paddingVertical: 8 }]}>{words ? `No ${noun} matches "${search.trim()}"` : `No other ${noun}s`}</Text> : null}
+        {rows.length > SHOWN ? <Text style={[styles.note, { paddingHorizontal: 12, paddingVertical: 8 }]}>{`${rows.length - SHOWN} more; type to narrow`}</Text> : null}
       </ScrollView>
       {data?.sharedFolder && links.length > 0 ? (
         <View style={styles.inline}>

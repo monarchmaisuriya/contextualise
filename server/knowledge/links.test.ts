@@ -45,6 +45,19 @@ describe("linkableFolder", () => {
     await expect(linkableFolder(join(workspace, "src"), workspace)).rejects.toThrow("overlaps");
     await expect(linkableFolder(root, workspace)).rejects.toThrow("overlaps");
   });
+
+  it("refuses Paseo's home and its data, but allows a worktree workspace's own folder in it", async () => {
+    const home = join(root, "paseo");
+    const worktree = join(home, "worktrees", "22x8cau0", "lavish-otter");
+    mkdirSync(join(worktree, "src"), { recursive: true });
+    mkdirSync(join(home, "plugin-data", "contextualise"), { recursive: true });
+    expect(await linkableFolder(worktree, workspace, [home])).toBe(worktree);
+    expect(await linkableFolder(join(worktree, "src"), workspace, [home])).toBe(join(worktree, "src"));
+    for (const refused of [home, join(home, "worktrees"), join(home, "worktrees", "22x8cau0"), join(home, "plugin-data", "contextualise"), root]) await expect(linkableFolder(refused, workspace, [home])).rejects.toThrow(/overlaps/);
+    // A link that looks like a worktree but leads into Paseo's data is judged by where it leads.
+    symlinkSync(join(home, "plugin-data"), join(home, "worktrees", "22x8cau0", "sneaky"));
+    await expect(linkableFolder(join(home, "worktrees", "22x8cau0", "sneaky", "contextualise"), workspace, [home])).rejects.toThrow("Paseo's own data folder");
+  });
 });
 
 describe("WorkspaceLinks", () => {

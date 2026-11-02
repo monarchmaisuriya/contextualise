@@ -12,6 +12,9 @@ const linkSchema = z.object({
   // The project key Contextualise gives the folder, for its knowledge; null when it has none.
   repoKey: z.string().min(1).max(600).nullable(),
   addedAt: z.string(),
+  // Set when a workspace was attached (its folder, not a project's): the link lapses when Paseo no
+  // longer has that workspace, so a later worktree reusing the folder never inherits it.
+  workspaceId: z.string().min(1).max(200).optional(),
 });
 export type WorkspaceLink = z.infer<typeof linkSchema>;
 // Project grants already used, newest last; a grant expires within an hour, so a few hundred is plenty.
@@ -19,7 +22,7 @@ const USED_GRANTS_KEPT = 500;
 const fileSchema = z.object({ version: z.literal(1), workspaces: z.record(z.string(), z.array(linkSchema).max(MAX_LINKS)), usedGrants: z.array(z.string()).max(USED_GRANTS_KEPT).default([]) });
 type LinksFile = z.infer<typeof fileSchema>;
 
-const within = (path: string, folder: string) => path === folder || path.startsWith(folder.endsWith(sep) ? folder : `${folder}${sep}`);
+export const within = (path: string, folder: string) => path === folder || path.startsWith(folder.endsWith(sep) ? folder : `${folder}${sep}`);
 
 // The folder M asked to link, as a real path, or why it cannot be linked. A link adds the whole
 // folder to every chat in the workspace, so the home folder, the filesystem root, the workspace's own
@@ -37,7 +40,12 @@ export async function linkableFolder(path: string, workspaceFolder: string, prot
   if (within(own, real) || within(real, own)) throw new Error(`${real} overlaps this workspace's own folder, which chats here can already edit`);
   for (const folder of protectedFolders) {
     const kept = await realpath(folder).catch(() => folder);
-    if (within(kept, real) || within(real, kept)) throw new Error(`${real} overlaps Paseo's own data folder (${kept}), which cannot be linked`);
+    // One exception inside Paseo's home: a worktree workspace's folder, <home>/worktrees/<id>/<slug>
+    // or deeper, measured on the real path so a link there into anything else stays refused. The
+    // worktrees folder is fixed here, never read from Paseo's config, where "." would open all of home.
+    const worktrees = await realpath(join(kept, "worktrees")).catch(() => join(kept, "worktrees"));
+    const inWorktree = real.startsWith(`${worktrees}${sep}`) && real.slice(worktrees.length + 1).split(sep).length >= 2;
+    if (within(kept, real) || (within(real, kept) && !inWorktree)) throw new Error(`${real} overlaps Paseo's own data folder (${kept}), which cannot be linked`);
   }
   return real;
 }

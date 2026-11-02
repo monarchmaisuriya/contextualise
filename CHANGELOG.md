@@ -4,6 +4,10 @@ All notable changes follow [semantic versioning](https://semver.org).
 
 ## Unreleased
 
+### Added
+
+- **Attach a workspace, not only a project:** the Attached button has Projects and Workspaces tabs. Workspaces lists every other workspace with its branch, worktrees included, so new chats here can edit that exact checkout (for example another project's `fix/pr-948` worktree). A worktree folder inside Paseo's home is allowed; the rest of Paseo's home stays refused. An attached workspace lapses when Paseo no longer has it, so a later worktree reusing its folder never inherits it.
+
 ### Changed
 
 - **Attach > Agent conversation is now Attach > Chat,** and Attach > Project comes right after it.

@@ -24,7 +24,7 @@ describe("contributeKnowledge", () => {
   const rpcs = new Map<string, Handler>();
   const on = new Map<string, Handler[]>();
   const respondToPermission = vi.fn(async () => {});
-  const workspaceEntries: { id: string; workspaceDirectory: string; background?: boolean; projectId?: string }[] = [];
+  const workspaceEntries: { id: string; workspaceDirectory: string; background?: boolean; projectId?: string; name?: string; projectDisplayName?: string; workspaceKind?: string; gitRuntime?: { currentBranch: string } }[] = [];
   const projectEntries: { projectId: string; projectDisplayName: string; projectCustomName?: string | null; projectRootPath: string }[] = [];
   const agentEntries: { agent: Record<string, unknown> }[] = [];
   let agentsDown = false;
@@ -611,6 +611,29 @@ describe("contributeKnowledge", () => {
         rmSync(old, { recursive: true, force: true });
         rmSync(worker, { recursive: true, force: true });
       }
+    });
+
+    it("offers other workspaces' own folders, worktrees inside Paseo's home included, and attaches one until Paseo no longer has it", async () => {
+      mkdirSync(join(home, "worktrees", "22x8cau0", "lavish-otter"), { recursive: true });
+      const worktree = realpathSync(join(home, "worktrees", "22x8cau0", "lavish-otter"));
+      workspaceEntries.push(
+        { id: "wt", workspaceDirectory: worktree, projectId: "p-api", name: "lavish-otter", projectDisplayName: "api", workspaceKind: "worktree", gitRuntime: { currentBranch: "fix/pr-948" } },
+        { id: "wbg", workspaceDirectory: api, projectId: "p-api", name: "worker", projectDisplayName: "api", background: true },
+      );
+      const listed = async () => (await call("links.list", { workspaceId: "w1" })) as { links: { path: string; name: string; workspaceId?: string }[]; workspaces: { workspaceId: string; name: string; branch: string | null; path: string }[] };
+      // Not this workspace, not a background one; the worktree with its branch.
+      expect((await listed()).workspaces.map((entry) => entry.workspaceId).sort()).toEqual(["w2", "wt"]);
+      expect((await listed()).workspaces.find((entry) => entry.workspaceId === "wt")).toEqual({ workspaceId: "wt", name: "lavish-otter", project: "api", path: worktree, branch: "fix/pr-948" });
+      // The path must be that workspace's own folder.
+      await expect(call("links.add", { workspaceId: "w1", path: web2, attachedWorkspaceId: "wt" })).rejects.toThrow("is not the folder of workspace wt");
+      await call("links.add", { workspaceId: "w1", path: worktree, attachedWorkspaceId: "wt" });
+      expect((await listed()).links).toMatchObject([{ path: worktree, name: "api / lavish-otter", workspaceId: "wt" }]);
+      expect((await listed()).workspaces.map((entry) => entry.workspaceId)).not.toContain("wt");
+      expect((await createIn(top)).config.providerOptions).toEqual({ additionalDirectories: [worktree] });
+      // Archived: its folder may belong to another worktree later, so the link lapses.
+      workspaceEntries.splice(workspaceEntries.findIndex((entry) => entry.id === "wt"), 1);
+      expect((await listed()).links).toEqual([]);
+      expect((await createIn(top)).config.providerOptions).toBeUndefined();
     });
 
     it("lists a workspace's links with whether its folder is shared, and works while knowledge is off", async () => {
