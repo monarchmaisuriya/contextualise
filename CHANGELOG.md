@@ -2,6 +2,12 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.23.2 - 2026-11-02
+
+### Fixed
+
+- **Attach > Project lists every project you work in:** it now offers every Paseo project that has a workspace, not only projects an agent had already run in. A project read for the first time shows as "Updating" until it is read. Projects whose workspaces were all archived are left out. If Paseo cannot list its projects, the projects already read are offered.
+
 ## 0.23.1 - 2026-11-02
 
 ### Fixed

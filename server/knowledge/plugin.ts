@@ -384,20 +384,26 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     return found.repo;
   };
 
-  // Every Paseo project that has a workspace M can see, by its own folder, except the workspace's own
-  // project, folders already linked, and folders a link would refuse. Paseo also lists projects whose
-  // workspaces were all archived, so the workspaces decide. From Paseo, not the knowledge index, so
-  // projects never indexed are offered too, also while knowledge is off. A failure offers none.
+  // Every Paseo project that has a workspace M can see, with its name and own folder. Paseo also lists
+  // projects whose workspaces were all archived, so the workspaces decide. The projects M works in come
+  // from here, not from the knowledge index, which holds only projects an agent has already run in.
+  const paseoProjects = async (paseo: PaseoApi) => {
+    const withWorkspaces = new Set<string>();
+    for await (const entry of allWorkspaces(paseo, false)) withWorkspaces.add(entry.projectId);
+    return (await paseo.projects.list()).projects
+      .filter((project) => withWorkspaces.has(project.projectId))
+      .map((project) => ({ projectId: project.projectId, name: project.projectCustomName || project.projectDisplayName, root: project.projectRootPath }));
+  };
+  // Every Paseo project to link, except the workspace's own project, folders already linked, and
+  // folders a link would refuse. A failure offers none.
   const suggestionsFor = async (paseo: PaseoApi, workspace: { projectId: string }, folder: string, linked: ReadonlySet<string>) => {
     try {
-      const withWorkspaces = new Set<string>();
-      for await (const entry of allWorkspaces(paseo, false)) withWorkspaces.add(entry.projectId);
       const home = await paseoHome();
       const offered: { name: string; path: string }[] = [];
-      for (const project of (await paseo.projects.list()).projects) {
-        if (project.projectId === workspace.projectId || !withWorkspaces.has(project.projectId)) continue;
-        const path = await linkableFolder(project.projectRootPath, folder, [home]).catch(() => null);
-        if (path && !linked.has(path)) offered.push({ name: project.projectCustomName || project.projectDisplayName, path });
+      for (const project of await paseoProjects(paseo)) {
+        if (project.projectId === workspace.projectId) continue;
+        const path = await linkableFolder(project.root, folder, [home]).catch(() => null);
+        if (path && !linked.has(path)) offered.push({ name: project.name, path });
       }
       // Two projects of one name are told apart by their folder.
       return offered.map((entry) => (offered.filter((other) => other.name === entry.name).length > 1 ? { ...entry, name: `${entry.name} (${entry.path})` } : entry)).sort((a, b) => a.name.localeCompare(b.name));
@@ -580,6 +586,23 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     };
   };
 
+  // Every Paseo project M works in, as the project Contextualise reads for its folder (folders it never
+  // reads, such as the home folder, are left out). One not read before is read now: the picker shows it
+  // as updating until it is. If Paseo cannot list its projects, the projects already read are offered.
+  const attachableProjects = async (paseo: PaseoApi): Promise<{ repoKey: string; name: string; top: string }[]> => {
+    try {
+      const found = new Map<string, { repoKey: string; name: string; top: string }>();
+      for (const project of await paseoProjects(paseo)) {
+        const repo = await base.repoFor(project.root).catch(() => null);
+        if (repo && !found.has(repo.key)) found.set(repo.key, { repoKey: repo.key, name: project.name, top: repo.top });
+      }
+      return [...found.values()];
+    } catch (error) {
+      console.error(`[contextualise] could not list Paseo's projects for Attach; offering the projects already read: ${String(error)}`);
+      return base.projects();
+    }
+  };
+
   // Every project's check for changed files starts at once, and the picker waits at most ATTACH_WAIT_MS
   // for them: a project still updating after that answers from its index as it is, says so, and
   // carries on in the background. With no words it offers each whole project; with words, the projects
@@ -592,7 +615,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     const label = (word: string) => (pickerPrefix === "none" ? "" : word);
     const words = query.trim().toLowerCase();
     const projects = await Promise.all(
-      (await base.projects()).map(async (found) => {
+      (await attachableProjects(paseo)).map(async (found) => {
         const repo = projectRoot(found.repoKey, found.top);
         const state = await base.refresh(repo, ATTACH_WAIT_MS).catch(() => "failed" as const);
         return { found, repo, updating: state === "updating" };
