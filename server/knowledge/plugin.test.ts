@@ -488,11 +488,21 @@ describe("contributeKnowledge", () => {
       expect(other.config.systemPrompt ?? "").not.toContain("## Attached projects");
     });
 
-    it("gives a provider other than Claude or Codex no folder options, and says why", async () => {
+    it("gives a provider other than Claude, Codex, or OpenCode no folder options, and says why", async () => {
       await call("links.add", { workspaceId: "w1", path: api });
-      const created = await createIn(top, { provider: "opencode" });
+      const created = await createIn(top, { provider: "pi" });
       expect(created.config.providerOptions).toBeUndefined();
-      expect(created.config.systemPrompt).toContain("only to Claude and Codex chats, not opencode");
+      expect(created.config.systemPrompt).toContain("only to Claude, Codex, and OpenCode chats, not pi");
+    });
+
+    it("lets a new OpenCode chat edit the attached folder, and tells a plan-mode one it may not", async () => {
+      await call("links.add", { workspaceId: "w1", path: api });
+      const created = await createIn(top, { provider: "opencode", modeId: "build" });
+      expect(created.config.providerOptions).toEqual({ permission: { external_directory: { [`${api}/*`]: "allow" } } });
+      expect(created.config.systemPrompt).toContain("You can read and edit them as well as your own folder");
+      expect(created.env?.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD).toBeUndefined();
+      const planning = await createIn(top, { provider: "opencode", modeId: "plan" });
+      expect(planning.config.systemPrompt).toContain("may ask M before or stop edits there");
     });
 
     it("adds no folder when several workspaces share the chat's folder, background ones included, unless Contextualise created the chat", async () => {

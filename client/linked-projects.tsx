@@ -27,7 +27,7 @@ function linksChanged(): void {
 // What was typed is a folder, not a search: it starts like a path.
 const typedFolder = (text: string) => (/^[~/.]/.test(text.trim()) ? text.trim() : null);
 
-// One workspace's attached projects: the folders every new Claude or Codex chat in it can read and
+// One workspace's attached projects: the folders every new Claude, Codex, or OpenCode chat in it can read and
 // edit. Used by the composer pill's popover (with `agentId`, so it can start chats like that one) and
 // by the workspace panel.
 export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { workspaceId: string; agentId?: string; styles: Styles; openAgent?: (agentId: string) => void }) {
@@ -86,10 +86,10 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
               </View>
             ))}
           </View>
-          <Text style={styles.note}>New Claude and Codex chats here can search, read, and edit these. Chats already running search them at once, and keep the folders they started with.</Text>
+          <Text style={styles.note}>New Claude, Codex, and OpenCode chats here can search, read, and edit these. Chats already running search them at once, and keep the folders they started with.</Text>
         </>
       ) : (
-        <Text style={styles.note}>Attach another project, and every new Claude or Codex chat in this workspace can search, read, and edit it too. Picking a project in Attach &gt; Project attaches it as well. Other workspaces are not affected.</Text>
+        <Text style={styles.note}>Attach another project, and every new Claude, Codex, or OpenCode chat in this workspace can search, read, and edit it too. Picking a project in Attach &gt; Project attaches it as well. Other workspaces are not affected.</Text>
       )}
       <SectionHeader label="Add a project" count={suggestions.length > 0 ? suggestions.length : undefined} styles={styles} />
       <SearchField value={search} onChange={setSearch} placeholder={suggestions.length > 0 ? `Search ${suggestions.length} projects, or type a folder path` : "Type a folder path, e.g. ~/Develop/api"} label="Project to attach" styles={styles} />

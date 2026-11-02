@@ -249,7 +249,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       }
       return {
         workspaceId,
-        chat: { ...chat, granted: linkedProviderOptions(provider, undefined, []) !== null, links: found.map((link) => ({ path: link.path, name: basename(link.path), repoKey: link.repoKey })) },
+        chat: { ...chat, links: found.map((link) => ({ path: link.path, name: basename(link.path), repoKey: link.repoKey })) },
       };
     } catch (error) {
       console.error(`[contextualise] could not prepare attached projects for an agent in ${cwd}: ${String(error)}`);
@@ -259,12 +259,13 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     }
   };
   // Adds the linked folders to the chat's provider options and says so in the prompt. Claude also
-  // reads each linked folder's CLAUDE.md, as it does its own.
+  // reads each linked folder's CLAUDE.md, as it does its own. OpenCode gets the rules only as the chat
+  // starts: Paseo does not send them again on resume.
   const withLinks = (request: PluginBeforeRequests["agent.create"], chat: Omit<LinkedForChat, "knowledgeTools">): PluginBeforeRequests["agent.create"] => {
     const { config } = request;
-    const section = linksSection({ ...chat, knowledgeTools: KNOWLEDGE_SERVER in (config.mcpServers ?? {}) }, SECTION_START, SECTION_END);
+    const { options, granted } = chat.links.length > 0 ? linkedProviderOptions(config.provider, config.providerOptions, chat.links.map((link) => link.path), config.modeId) : { options: null, granted: false };
+    const section = linksSection({ ...chat, granted, knowledgeTools: KNOWLEDGE_SERVER in (config.mcpServers ?? {}) }, SECTION_START, SECTION_END);
     if (!section) return request;
-    const options = chat.links.length > 0 ? linkedProviderOptions(config.provider, config.providerOptions, chat.links.map((link) => link.path)) : null;
     return {
       ...request,
       ...(options && config.provider === "claude" ? { env: { ...request.env, CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "1" } } : {}),

@@ -14,6 +14,10 @@ const codexOptions = z
     sandbox_workspace_write: z.object({ writable_roots: z.array(z.string()).optional(), network_access: z.boolean().optional() }).strict().optional(),
   })
   .strict();
+// Paseo 0.14.0's OpenCode check (agent/providers/opencode/options.js), reduced to the keys a link touches.
+const openCodeAction = z.enum(["ask", "allow", "deny"]);
+const openCodeRule = z.union([openCodeAction, z.record(z.string(), openCodeAction)]);
+const openCodeOptions = z.object({ permission: z.union([openCodeAction, z.object({ edit: openCodeRule.optional(), bash: openCodeRule.optional(), external_directory: openCodeRule.optional() }).strict()]).optional() }).strict();
 
 describe("linkableFolder", () => {
   let root: string;
@@ -78,19 +82,40 @@ describe("WorkspaceLinks", () => {
 
 describe("linkedProviderOptions", () => {
   it("adds the folders to Claude's additional directories, keeping what was set and passing Paseo's check", () => {
-    const options = linkedProviderOptions("claude", { additionalDirectories: ["/x", "/a"], allowedTools: ["Read"] }, ["/a", "/b"]);
+    const { options, granted } = linkedProviderOptions("claude", { additionalDirectories: ["/x", "/a"], allowedTools: ["Read"] }, ["/a", "/b"]);
     expect(options).toEqual({ additionalDirectories: ["/x", "/a", "/b"], allowedTools: ["Read"] });
+    expect(granted).toBe(true);
     expect(claudeOptions.safeParse(options).success).toBe(true);
   });
 
   it("adds the folders to Codex's writable roots, keeping its other sandbox settings and passing Paseo's check", () => {
-    const options = linkedProviderOptions("codex", { sandbox_mode: "workspace-write", sandbox_workspace_write: { network_access: true } }, ["/a"]);
+    const { options } = linkedProviderOptions("codex", { sandbox_mode: "workspace-write", sandbox_workspace_write: { network_access: true } }, ["/a"]);
     expect(options).toEqual({ sandbox_mode: "workspace-write", sandbox_workspace_write: { network_access: true, writable_roots: ["/a"] } });
     expect(codexOptions.safeParse(options).success).toBe(true);
-    expect(codexOptions.safeParse(linkedProviderOptions("codex", undefined, ["/a"])).success).toBe(true);
+    expect(codexOptions.safeParse(linkedProviderOptions("codex", undefined, ["/a"]).options).success).toBe(true);
+  });
+
+  it("allows each folder for OpenCode as the last outside-folder rule, keeping the chat's other rules and passing Paseo's check", () => {
+    const fresh = linkedProviderOptions("opencode", undefined, ["/a", "/b"], "build");
+    expect(fresh).toEqual({ options: { permission: { external_directory: { "/a/*": "allow", "/b/*": "allow" } } }, granted: true });
+    // A later "*": "deny" must not win over the folder: the folder's entry moves after it.
+    const kept = linkedProviderOptions("opencode", { permission: { bash: "ask", external_directory: { "/a/*": "ask", "*": "deny" } } }, ["/a"]);
+    expect(kept.options).toEqual({ permission: { bash: "ask", external_directory: { "*": "deny", "/a/*": "allow" } } });
+    expect(Object.keys((kept.options?.permission as { external_directory: object }).external_directory)).toEqual(["*", "/a/*"]);
+    // "ask" for every outside folder stays the rule for all but the attached ones.
+    expect(linkedProviderOptions("opencode", { permission: { external_directory: "ask" } }, ["/a"]).options).toEqual({ permission: { external_directory: { "*": "ask", "/a/*": "allow" } } });
+    for (const result of [fresh, kept]) expect(openCodeOptions.safeParse(result.options).success).toBe(true);
+  });
+
+  it("never widens M's explicit OpenCode choices, and says edits may not be allowed in plan mode or when edits ask", () => {
+    expect(linkedProviderOptions("opencode", { permission: { external_directory: "deny" } }, ["/a"])).toEqual({ options: null, granted: false });
+    expect(linkedProviderOptions("opencode", { permission: "ask" }, ["/a"])).toEqual({ options: null, granted: false });
+    expect(linkedProviderOptions("opencode", { permission: "allow" }, ["/a"])).toEqual({ options: null, granted: true });
+    expect(linkedProviderOptions("opencode", undefined, ["/a"], "plan").granted).toBe(false);
+    expect(linkedProviderOptions("opencode", { permission: { edit: "ask" } }, ["/a"]).granted).toBe(false);
   });
 
   it("gives any other provider nothing, so Paseo's strict check cannot fail the chat", () => {
-    expect(linkedProviderOptions("opencode", {}, ["/a"])).toBeNull();
+    expect(linkedProviderOptions("pi", {}, ["/a"])).toEqual({ options: null, granted: false });
   });
 });

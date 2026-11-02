@@ -2,6 +2,12 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## Unreleased
+
+### Added
+
+- **OpenCode chats can edit attached projects:** a new OpenCode chat in a workspace with attached projects gets an "allow" rule for each attached folder in OpenCode's outside-folder permission, placed last so it wins, with its other rules kept. Your own choices are never widened: if you set outside folders to "deny", or one answer for every permission, they are left as they are. Its prompt says it can edit them, or, in plan mode or with edits set to ask or deny, that edits there may need you.
+
 ## 0.24.0 - 2026-11-02
 
 ### Added
