@@ -2,6 +2,12 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.23.1 - 2026-11-02
+
+### Fixed
+
+- **Linked projects offer every project:** "Add a project" lists every Paseo project that has a workspace, by its own folder, not only projects Contextualise has indexed, and also while Project knowledge is off. Projects whose workspaces were all archived, the workspace's own project, and folders that cannot be linked are left out.
+
 ## 0.23.0 - 2026-11-02
 
 ### Added

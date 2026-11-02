@@ -160,10 +160,10 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     });
 
   // Every Paseo workspace, page by page.
-  async function* allWorkspaces(paseo: PaseoApi) {
+  async function* allWorkspaces(paseo: PaseoApi, includeBackground = true) {
     for (let cursor: string | undefined; ; ) {
-      // Background workspaces too: one could share a linked workspace's folder.
-      const page = await paseo.workspaces.list({ includeBackground: true, page: { limit: 200, ...(cursor ? { cursor } : {}) } });
+      // Background workspaces too, by default: one could share a linked workspace's folder.
+      const page = await paseo.workspaces.list({ includeBackground, page: { limit: 200, ...(cursor ? { cursor } : {}) } });
       yield* page.entries;
       if (!page.pageInfo.hasMore || !page.pageInfo.nextCursor || page.pageInfo.nextCursor === cursor) return;
       cursor = page.pageInfo.nextCursor;
@@ -384,16 +384,38 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     return found.repo;
   };
 
-  // Linked projects work while project knowledge is off; only the suggested projects and each link's
-  // project key come from the knowledge index, and are left out then.
+  // Every Paseo project that has a workspace M can see, by its own folder, except the workspace's own
+  // project, folders already linked, and folders a link would refuse. Paseo also lists projects whose
+  // workspaces were all archived, so the workspaces decide. From Paseo, not the knowledge index, so
+  // projects never indexed are offered too, also while knowledge is off. A failure offers none.
+  const suggestionsFor = async (paseo: PaseoApi, workspace: { projectId: string }, folder: string, linked: ReadonlySet<string>) => {
+    try {
+      const withWorkspaces = new Set<string>();
+      for await (const entry of allWorkspaces(paseo, false)) withWorkspaces.add(entry.projectId);
+      const home = await paseoHome();
+      const offered: { name: string; path: string }[] = [];
+      for (const project of (await paseo.projects.list()).projects) {
+        if (project.projectId === workspace.projectId || !withWorkspaces.has(project.projectId)) continue;
+        const path = await linkableFolder(project.projectRootPath, folder, [home]).catch(() => null);
+        if (path && !linked.has(path)) offered.push({ name: project.projectCustomName || project.projectDisplayName, path });
+      }
+      // Two projects of one name are told apart by their folder.
+      return offered.map((entry) => (offered.filter((other) => other.name === entry.name).length > 1 ? { ...entry, name: `${entry.name} (${entry.path})` } : entry)).sort((a, b) => a.name.localeCompare(b.name));
+    } catch (error) {
+      console.error(`[contextualise] could not list Paseo's projects to suggest links: ${String(error)}`);
+      return [];
+    }
+  };
+  // Linked projects work while project knowledge is off; only each link's project key comes from the
+  // knowledge index, and is left out then.
   const linksPayload = async (paseo: PaseoApi, workspaceId: string): Promise<WorkspaceLinksPayload> => {
-    const folder = workspaceFolder(await workspaceById(paseo, workspaceId));
+    const workspace = await workspaceById(paseo, workspaceId);
+    const folder = workspaceFolder(workspace);
     const found = await links.list(workspaceId);
-    const taken = new Set([...found.map((link) => link.path), await realFolder(folder)]);
     return {
       links: found.map((link) => ({ ...link, name: basename(link.path) })),
       sharedFolder: (await workspacesAt(paseo, folder)).length > 1,
-      suggestions: (await knowledgeOn()) ? (await base.projects()).filter((found) => !taken.has(found.top)).map((found) => ({ name: found.name, path: found.top })) : [],
+      suggestions: await suggestionsFor(paseo, workspace, folder, new Set(found.map((link) => link.path))),
     };
   };
   server.handle(workspaceLinksRpc, async ({ workspaceId }, { paseo }) => linksPayload(remember(paseo), workspaceId));

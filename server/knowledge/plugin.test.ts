@@ -24,7 +24,8 @@ describe("contributeKnowledge", () => {
   const rpcs = new Map<string, Handler>();
   const on = new Map<string, Handler[]>();
   const respondToPermission = vi.fn(async () => {});
-  const workspaceEntries: { id: string; workspaceDirectory: string; background?: boolean }[] = [];
+  const workspaceEntries: { id: string; workspaceDirectory: string; background?: boolean; projectId?: string }[] = [];
+  const projectEntries: { projectId: string; projectDisplayName: string; projectCustomName?: string | null; projectRootPath: string }[] = [];
   const agentEntries: { agent: Record<string, unknown> }[] = [];
   let agentsDown = false;
   const timeline = [
@@ -34,6 +35,7 @@ describe("contributeKnowledge", () => {
   const paseo = {
     config: { get: async () => ({ requestId: "r", config: { plugins } }) },
     // Like Paseo, background workspaces are listed only when asked for.
+    projects: { list: async () => ({ requestId: "r", projects: projectEntries }) },
     workspaces: { list: async (options?: { includeBackground?: boolean }) => ({ entries: workspaceEntries.filter((entry) => options?.includeBackground || !entry.background), pageInfo: { hasMore: false, nextCursor: null } }) },
     agents: {
       list: async () => {
@@ -367,7 +369,8 @@ describe("contributeKnowledge", () => {
       api = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-linked-api-")));
       web2 = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-linked-web2-")));
       workspaceEntries.length = 0;
-      workspaceEntries.push({ id: "w1", workspaceDirectory: top }, { id: "w2", workspaceDirectory: web2 });
+      workspaceEntries.push({ id: "w1", workspaceDirectory: top, projectId: "p-web" }, { id: "w2", workspaceDirectory: web2, projectId: "p-web2" });
+      projectEntries.length = 0;
     });
     afterEach(() => {
       rmSync(api, { recursive: true, force: true });
@@ -445,10 +448,37 @@ describe("contributeKnowledge", () => {
       }
     });
 
+    it("suggests every Paseo project that has a visible workspace, indexed or not and with knowledge off, except this workspace's own and those it cannot link", async () => {
+      values = { ...values, knowledgeEnabled: false };
+      const old = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-linked-old-")));
+      const worker = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-linked-worker-")));
+      try {
+        workspaceEntries.push({ id: "wa", workspaceDirectory: api, projectId: "p-api" }, { id: "wb", workspaceDirectory: worker, projectId: "p-worker", background: true }, { id: "wg", workspaceDirectory: join(api, "gone"), projectId: "p-gone" });
+        projectEntries.push(
+          { projectId: "p-web", projectDisplayName: "web", projectRootPath: top },
+          { projectId: "p-api", projectDisplayName: "api", projectCustomName: "Backend", projectRootPath: api },
+          { projectId: "p-web2", projectDisplayName: "web2", projectRootPath: web2 },
+          // No workspace left, only a background one, a folder that is gone, and one holding this workspace.
+          { projectId: "p-old", projectDisplayName: "old", projectRootPath: old },
+          { projectId: "p-worker", projectDisplayName: "worker", projectRootPath: worker },
+          { projectId: "p-gone", projectDisplayName: "gone", projectRootPath: join(api, "gone") },
+          { projectId: "p-parent", projectDisplayName: "parent", projectRootPath: dirname(top) },
+        );
+        workspaceEntries.push({ id: "wp", workspaceDirectory: dirname(top), projectId: "p-parent" });
+        const suggested = async () => ((await call("links.list", { workspaceId: "w1" })) as { suggestions: { name: string; path: string }[] }).suggestions;
+        expect(await suggested()).toEqual([{ name: "Backend", path: api }, { name: "web2", path: web2 }]);
+        await call("links.add", { workspaceId: "w1", path: api });
+        expect(await suggested()).toEqual([{ name: "web2", path: web2 }]);
+      } finally {
+        rmSync(old, { recursive: true, force: true });
+        rmSync(worker, { recursive: true, force: true });
+      }
+    });
+
     it("lists a workspace's links with whether its folder is shared, and works while knowledge is off", async () => {
       values = { ...values, knowledgeEnabled: false };
       const listed = (await call("links.add", { workspaceId: "w1", path: api })) as { links: { path: string; name: string; repoKey: string | null }[]; sharedFolder: boolean; suggestions: unknown[] };
-      expect(listed).toMatchObject({ links: [{ path: api, name: basename(api), repoKey: null }], sharedFolder: false, suggestions: [] });
+      expect(listed).toMatchObject({ links: [{ path: api, name: basename(api), repoKey: null }], sharedFolder: false });
       workspaceEntries.push({ id: "w4", workspaceDirectory: top });
       expect(((await call("links.list", { workspaceId: "w1" })) as { sharedFolder: boolean }).sharedFolder).toBe(true);
     });

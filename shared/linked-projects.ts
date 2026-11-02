@@ -23,7 +23,7 @@ export const workspaceLinksSchema = z.object({
   // The workspace's folder is shared with other workspaces, so chats started from Paseo's own "+"
   // cannot be told apart and get no links; "New linked chat" still does.
   sharedFolder: z.boolean(),
-  // Projects Contextualise knows, with the folder last seen for each, to pick from when adding.
+  // Every Paseo project with a workspace, by its own folder, to pick from when adding.
   suggestions: z.array(z.object({ name: z.string(), path: z.string() })),
 });
 export type WorkspaceLinksPayload = z.infer<typeof workspaceLinksSchema>;
