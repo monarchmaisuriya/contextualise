@@ -2,7 +2,7 @@ import { Pressable, Text, View } from "react-native";
 import type { TileText } from "../knowledge/pulse-text";
 import { barHeights } from "../knowledge/pulse-text";
 import type { Styles } from "../kit";
-import { BAR_HEIGHT, TILE_NUMBER } from "./rules";
+import { BAR_HEIGHT, TEXT } from "./rules";
 
 // A number to read at a glance, what it counts, and its label. Two to a row on a phone and four on
 // a desktop; one to a row when the space is narrower than two can share.
@@ -12,9 +12,9 @@ export function Tile({ label, text, onPress, styles }: { label: string; text: Ti
   const said = `${label}: ${text.value} ${text.sentence}`;
   const body = (
     <>
-      <Text style={styles.sm}>{label}</Text>
-      <Text style={{ color, fontSize: TILE_NUMBER, fontWeight: "600" }}>{text.value}</Text>
-      <Text style={styles.sm} numberOfLines={2}>
+      <Text style={styles.note}>{label}</Text>
+      <Text style={{ ...TEXT.figure, color }}>{text.value}</Text>
+      <Text style={styles.note} numberOfLines={2}>
         {text.sentence}
       </Text>
     </>
@@ -37,8 +37,8 @@ export function DayBars({ label, counts, total, color, styles }: { label: string
   return (
     <View style={{ gap: 4 }}>
       <View style={styles.row}>
-        <Text style={[styles.sm, styles.grow]}>{label}</Text>
-        <Text style={styles.sm}>{total}</Text>
+        <Text style={[styles.note, styles.grow]}>{label}</Text>
+        <Text style={styles.note}>{total}</Text>
       </View>
       <View style={{ flexDirection: "row", alignItems: "flex-end", height: BAR_HEIGHT, gap: counts.length > 30 ? 1 : 2 }} accessible accessibilityLabel={`${label}: ${total} over ${counts.length} days`}>
         {heights.map((height, index) => (

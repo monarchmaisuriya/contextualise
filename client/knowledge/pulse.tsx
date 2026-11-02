@@ -51,7 +51,7 @@ export function Pulse({ repoKey, hostKey, navigation, onReadTask, onReadReadme, 
       ) : null}
 
       <View style={[styles.row, pad, { marginTop: 8 }]}>
-        <Text style={[styles.section, styles.grow, { marginTop: 0 }]} accessibilityRole="header">
+        <Text style={[styles.heading, styles.grow]} accessibilityRole="header">
           Pulse
         </Text>
         <Segmented options={PULSE_DAYS.map((value) => ({ label: `${value} days`, value: String(value) }))} value={String(days)} onChange={(value) => setDays(Number(value) as Days)} label="Days shown" styles={styles} />
@@ -75,8 +75,8 @@ export function Pulse({ repoKey, hostKey, navigation, onReadTask, onReadReadme, 
           {pulse.data ? <DayBars label="Agent tasks" counts={pulse.data.agentWork.perDay.counts} total={`${pulse.data.agentWork.done + pulse.data.agentWork.failed + pulse.data.agentWork.canceled}`} color={styles.colors.foreground} styles={styles} /> : null}
           {changes.data?.available ? <DayBars label="Commits" counts={changes.data.perDay.counts} total={`${changes.data.commits}${changes.data.commitsTruncated ? "+" : ""}`} color={styles.colors.foregroundMuted} styles={styles} /> : null}
           <View style={styles.row}>
-            <Text style={[styles.sm, styles.grow]}>{days - 1} days ago</Text>
-            <Text style={styles.sm}>today</Text>
+            <Text style={[styles.note, styles.grow]}>{days - 1} days ago</Text>
+            <Text style={styles.note}>today</Text>
           </View>
         </View>
       ) : null}
@@ -85,7 +85,7 @@ export function Pulse({ repoKey, hostKey, navigation, onReadTask, onReadReadme, 
       {changes.data && changes.data.hotspots.length > 0 ? (
         <>
           <SectionHeader label="Risky to change" styles={styles} />
-          <Text style={[styles.sm, pad]}>Code changed in these {days} days, ranked by changes times the files that use it.</Text>
+          <Text style={[styles.note, pad]}>Code changed in these {days} days, ranked by changes times the files that use it.</Text>
           {changes.data.hotspots.map((hotspot) => (
             <ListRow key={hotspot.path} title={hotspot.path} meta={hotspotMeta(hotspot)} onPress={() => onOpenFile(hotspot.path)} styles={styles} />
           ))}

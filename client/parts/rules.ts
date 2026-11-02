@@ -1,15 +1,27 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 
 // The layout rules the kit's parts follow, kept free of React Native so they can be tested. Values
-// are Paseo's own scale (measured from its 0.14 bundle): three type sizes, rows 44 tall on phones
+// are Paseo's own scale (measured from its 0.14 bundle): its type sizes, rows 44 tall on phones
 // (a full touch target) and 36 on desktop, flat rows on desktop and rounded ones on phones.
 type Colors = PluginTheme["colors"];
 
-export const TYPE = { lg: 16, base: 14, sm: 12 } as const;
+// Each kind of text has one size, line height, and weight; screens name the kind, never a size.
+// Headings are small and medium like Paseo's section titles; prose is the size Paseo's Markdown
+// renders at, so agent-written text reads the same as a README beside it.
+export const TEXT = {
+  // The one subject of a view: a project, tag, or area name.
+  title: { fontSize: 16, lineHeight: 22, fontWeight: "600" },
+  heading: { fontSize: 12, lineHeight: 16, fontWeight: "500" },
+  // Rows, controls, tabs, and short lines.
+  body: { fontSize: 14, lineHeight: 20, fontWeight: "400" },
+  prose: { fontSize: 15, lineHeight: 21, fontWeight: "400" },
+  // Row meta, hints, and lines that explain a section.
+  note: { fontSize: 12, lineHeight: 18, fontWeight: "400" },
+  // A tile's number, read at a glance.
+  figure: { fontSize: 22, lineHeight: 28, fontWeight: "600" },
+} as const;
 // Paseo's compact control height: search fields and buttons are never shorter.
 export const CONTROL_HEIGHT = 32;
-// The one size outside TYPE: a tile's number, which has to read at a glance beside 14 px text.
-export const TILE_NUMBER = 22;
 export const BAR_HEIGHT = 28;
 export const PROSE_MAX_WIDTH = 820;
 export const SEARCH_MAX_WIDTH = 420;

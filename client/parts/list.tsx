@@ -38,12 +38,12 @@ export function ListRow({ title, meta, icon, trailing, onPress, selected = false
   const below = metaPlacement(styles.compact) === "below";
   const titleColor = actionColor(styles.colors, { danger });
   const titleText = (
-    <Text style={[styles.base, { color: titleColor }, below ? null : styles.grow]} numberOfLines={1}>
+    <Text style={[styles.body, { color: titleColor }, below ? null : styles.grow]} numberOfLines={1}>
       {title}
     </Text>
   );
   const metaText = meta ? (
-    <Text style={[styles.sm, below ? null : { flexShrink: 1, maxWidth: "40%", textAlign: "right" }]} numberOfLines={1}>
+    <Text style={[styles.note, below ? null : { flexShrink: 1, maxWidth: "40%", textAlign: "right" }]} numberOfLines={1}>
       {meta}
     </Text>
   ) : null;
@@ -94,7 +94,7 @@ export function ListRow({ title, meta, icon, trailing, onPress, selected = false
 export function SectionHeader({ label, count, action, styles }: { label: string; count?: number; action?: { label: string; onPress(): void }; styles: Styles }) {
   return (
     <View style={[styles.row, { paddingHorizontal: 12, marginVertical: 8 }]}>
-      <Text style={[styles.section, styles.grow, { marginTop: 0 }]} accessibilityRole="header" numberOfLines={1}>
+      <Text style={[styles.heading, styles.grow]} accessibilityRole="header" numberOfLines={1}>
         {label}
         {count !== undefined ? ` ${count}` : ""}
       </Text>

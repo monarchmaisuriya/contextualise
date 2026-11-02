@@ -4,43 +4,43 @@ import { type QueryKey, useInfiniteQuery, useMutation, useQueryClient } from "@t
 import { useMemo } from "react";
 import type { TagSummary } from "../shared/contracts";
 import { errorText } from "./errors";
-import { pageInset, TYPE } from "./parts/rules";
+import { pageInset, TEXT } from "./parts/rules";
 import { plural } from "./plural";
 import { tagsChanged } from "./tag-events";
 
 export const TAGS_QUERY = ["contextualise", "tags"];
 export type Theme = PluginScreenProps["theme"];
 
-// Three type sizes only: lg once per view for the subject (a tag or project name), base for
-// everything else, sm for hints and errors.
+// Text styles by kind (rules.ts TEXT), never by size: a screen says what a line is, and its size,
+// weight, and line height follow. `muted` is body text with nothing to act on (an empty state).
 export function useStyles(theme: Theme, compact: boolean) {
   return useMemo(
     () => ({
       compact,
-      lg: { color: theme.colors.foreground, fontSize: TYPE.lg, fontWeight: "600" as const },
-      base: { color: theme.colors.foreground, fontSize: TYPE.base },
-      sm: { color: theme.colors.foregroundMuted, fontSize: TYPE.sm },
+      title: { ...TEXT.title, color: theme.colors.foreground },
+      heading: { ...TEXT.heading, color: theme.colors.foregroundMuted },
+      body: { ...TEXT.body, color: theme.colors.foreground },
+      muted: { ...TEXT.body, color: theme.colors.foregroundMuted },
+      prose: { ...TEXT.prose, color: theme.colors.foreground },
+      note: { ...TEXT.note, color: theme.colors.foregroundMuted },
+      danger: { ...TEXT.note, color: theme.colors.statusDanger },
       screen: { flex: 1, backgroundColor: theme.colors.surface0 },
       content: { padding: pageInset(compact), gap: 8, width: "100%" as const },
-      text: { color: theme.colors.foreground, fontSize: TYPE.base },
-      section: { color: theme.colors.foregroundMuted, fontSize: TYPE.base, fontWeight: "500" as const, marginTop: 8 },
-      muted: { color: theme.colors.foregroundMuted, fontSize: TYPE.base },
-      danger: { color: theme.colors.statusDanger, fontSize: TYPE.sm },
       // Something to look at again, not an error: a stale source, an unfinished task.
-      link: { color: theme.colors.accent, fontSize: TYPE.base },
+      link: { ...TEXT.body, color: theme.colors.accent },
       row: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },
       wrap: { flexDirection: "row" as const, flexWrap: "wrap" as const, gap: 6 },
       grow: { flex: 1, minWidth: 0 },
-      input: { flex: 1, minWidth: 120, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 6, paddingHorizontal: 12, paddingVertical: 6, fontSize: TYPE.base, color: theme.colors.foreground, backgroundColor: theme.colors.surface1 },
+      input: { flex: 1, minWidth: 120, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 6, paddingHorizontal: 12, paddingVertical: 6, fontSize: TEXT.body.fontSize, color: theme.colors.foreground, backgroundColor: theme.colors.surface1 },
       button: { height: 32, paddingHorizontal: 12, borderRadius: 12, justifyContent: "center" as const, backgroundColor: theme.colors.accent },
-      buttonText: { color: theme.colors.accentForeground, fontSize: TYPE.base },
+      buttonText: { ...TEXT.body, color: theme.colors.accentForeground },
       ghost: { height: 32, paddingHorizontal: 12, borderRadius: 12, justifyContent: "center" as const },
-      ghostText: { color: theme.colors.foreground, fontSize: TYPE.base },
+      ghostText: { ...TEXT.body, color: theme.colors.foreground },
       // Chips show state without accent: outlined when off, a quiet fill when on.
       chip: { height: 28, paddingHorizontal: 10, borderRadius: 999, borderWidth: 1, borderColor: theme.colors.border },
       chipOn: { height: 28, paddingHorizontal: 10, borderRadius: 999, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 },
-      chipText: { color: theme.colors.foregroundMuted, fontSize: TYPE.base },
-      chipOnText: { color: theme.colors.foreground, fontSize: TYPE.base },
+      chipText: { ...TEXT.body, color: theme.colors.foregroundMuted },
+      chipOnText: { ...TEXT.body, color: theme.colors.foreground },
       iconButton: { width: 32, height: 32, borderRadius: 8, alignItems: "center" as const, justifyContent: "center" as const },
       inline: { flexDirection: "row" as const, alignItems: "center" as const, gap: 6 },
       // Icon colors: icons take a color value, not a text style.

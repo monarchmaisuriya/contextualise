@@ -4,7 +4,7 @@ import { Pressable, Text, View } from "react-native";
 import { type FetchResult, VENDOR_LABELS } from "../shared/contracts";
 import { tokenEstimate } from "../shared/tokens";
 import { ICONS, VENDOR_ICONS } from "./icons";
-import { TYPE } from "./parts/rules";
+import { TEXT } from "./parts/rules";
 
 // The row a fetch leaves in the agent that asked for it; a later fetch of the same item replaces it.
 export function FetchResultRow({
@@ -16,11 +16,11 @@ export function FetchResultRow({
 }: PluginTimelineItemProps<FetchResult> & { openItem(tag: string, noteId: string): void; openTags(agentId: string): void }) {
   const result = item.data;
   const ready = result.status === "ready";
-  const link = { color: theme.colors.accent, fontSize: TYPE.base };
+  const link = { ...TEXT.body, color: theme.colors.accent };
   return (
     <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8, paddingVertical: 4 }}>
       <Icon name={ready ? VENDOR_ICONS[result.vendor] : ICONS.failed} size={14} color={ready ? theme.colors.foregroundMuted : theme.colors.statusDanger} />
-      <Text style={{ color: theme.colors.foreground, fontSize: TYPE.base, flexShrink: 1 }} numberOfLines={1}>
+      <Text style={{ ...TEXT.body, color: theme.colors.foreground, flexShrink: 1 }} numberOfLines={1}>
         {ready ? `Fetched "${result.title}" into "${result.tag}"` : `Could not fetch ${VENDOR_LABELS[result.vendor]} ${result.ref}`}
         <Text style={{ color: ready ? theme.colors.foregroundMuted : theme.colors.statusDanger }}> · {ready ? tokenEstimate(result.chars) : (result.error ?? "unknown reason")}</Text>
       </Text>

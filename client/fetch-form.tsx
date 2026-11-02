@@ -58,11 +58,11 @@ export function FetchForm({ tagNames, styles, notifyAgentId, onDone, onCancel }:
       <TextInput style={[styles.input, FULL_WIDTH_FIELD]} value={ref} onChangeText={setRef} placeholder="PROJ-123 or a link" autoCapitalize="none" autoCorrect={false} accessibilityLabel="Item to fetch" onSubmitEditing={() => !blocked && fetching.mutate(undefined)} />
       <View style={styles.inline}>
         <Icon name={route.error ? ICONS.failed : route.data ? VENDOR_ICONS[route.data.vendor] : ICONS.info} size={14} color={route.error ? styles.colors.statusDanger : styles.colors.foregroundMuted} />
-        <Text style={[route.error ? styles.danger : styles.sm, styles.grow]}>{hint}</Text>
+        <Text style={[route.error ? styles.danger : styles.note, styles.grow]}>{hint}</Text>
       </View>
       {tagNames.length > 1 ? (
         <View style={[styles.wrap, { alignItems: "center" }]}>
-          <Text style={styles.sm}>Into</Text>
+          <Text style={styles.note}>Into</Text>
           {tagNames.map((name) => (
             <Chip key={name} label={name} on={name === tag} onPress={() => setTag(name)} accessibilityLabel={`Fetch into ${name}`} styles={styles} />
           ))}
@@ -71,7 +71,7 @@ export function FetchForm({ tagNames, styles, notifyAgentId, onDone, onCancel }:
         <TextInput style={[styles.input, FULL_WIDTH_FIELD]} value={tag} onChangeText={setTag} placeholder="Into tag, for example auth-rewrite" accessibilityLabel="Tag to fetch into" />
       ) : null}
       <View style={styles.row}>
-        <Text style={styles.sm}>With</Text>
+        <Text style={styles.note}>With</Text>
         <Segmented options={AGENT_CHOICES} value={provider ?? "default"} onChange={(value) => setProvider(value === "default" ? undefined : value)} label="Fetch with" styles={styles} />
       </View>
       <View style={styles.row}>

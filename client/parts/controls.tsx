@@ -4,7 +4,7 @@ import { Pressable, Text, View } from "react-native";
 import { errorText } from "../errors";
 import { ICONS } from "../icons";
 import type { Styles } from "../kit";
-import { CONTROL_HEIGHT, searchWidth, segmentedScrolls } from "./rules";
+import { CONTROL_HEIGHT, searchWidth, segmentedScrolls, TEXT } from "./rules";
 
 // Ghost by default; primary (accent fill) is for the one main action of a view.
 export function Button({ label, icon, onPress, styles, disabled, kind = "ghost" }: { label: string; icon?: string; onPress(): void; styles: Styles; disabled?: boolean; kind?: "ghost" | "primary" }) {
@@ -64,7 +64,7 @@ export function SearchField({ value, onChange, placeholder, label, styles }: { v
     <View style={[styles.inline, styles.input, searchWidth(styles.compact), { flex: 0, minWidth: 0, minHeight: CONTROL_HEIGHT, gap: 8 }, focused ? { backgroundColor: styles.colors.surface2 } : null]}>
       <Icon name={ICONS.search} size={14} color={styles.colors.foregroundMuted} />
       <TextInput
-        style={[styles.grow, styles.text, { padding: 0 }]}
+        style={[styles.grow, { color: styles.colors.foreground, fontSize: TEXT.body.fontSize, padding: 0 }]}
         value={value}
         onChangeText={onChange}
         onFocus={() => setFocused(true)}
@@ -98,7 +98,7 @@ export function Segmented<Value extends string>({ options, value, onChange, labe
             accessibilityState={{ selected }}
             accessibilityLabel={option.label}
           >
-            <Text style={[styles.base, { color: selected ? styles.colors.foreground : styles.colors.foregroundMuted }]} numberOfLines={1}>
+            <Text style={[styles.body, { color: selected ? styles.colors.foreground : styles.colors.foregroundMuted }]} numberOfLines={1}>
               {option.label}
             </Text>
           </Pressable>

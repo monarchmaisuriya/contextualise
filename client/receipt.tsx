@@ -1,7 +1,7 @@
 import type { PluginTimelineItemProps } from "@getpaseo/plugin/client";
 import { Pressable, Text, View } from "react-native";
 import type { Receipt } from "../shared/contracts";
-import { TYPE } from "./parts/rules";
+import { TEXT } from "./parts/rules";
 import { plural } from "./plural";
 
 function counts(entry: Receipt["entries"][number]): string {
@@ -26,13 +26,13 @@ export function ReceiptRow({ theme, item, agentId, openTags }: PluginTimelineIte
   return (
     <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8, paddingVertical: 4 }}>
       {item.data.entries.map((entry) => (
-        <Text key={entry.name} style={{ color: entry.changed ? theme.colors.foreground : theme.colors.foregroundMuted, fontSize: TYPE.base }}>
+        <Text key={entry.name} style={{ ...TEXT.body, color: entry.changed ? theme.colors.foreground : theme.colors.foregroundMuted }}>
           {describe(item.data.action, entry)}
           {counts(entry) ? <Text style={{ color: theme.colors.foregroundMuted }}> · {counts(entry)}</Text> : null}
         </Text>
       ))}
       <Pressable onPress={() => openTags(agentId)} hitSlop={8} accessibilityRole="link" accessibilityLabel="Open tags">
-        <Text style={{ color: theme.colors.accent, fontSize: TYPE.base }}>Open tags</Text>
+        <Text style={{ ...TEXT.body, color: theme.colors.accent }}>Open tags</Text>
       </Pressable>
     </View>
   );
