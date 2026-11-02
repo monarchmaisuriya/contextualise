@@ -33,8 +33,9 @@ export function followAgentPills(client: PluginClientContext, openTagsFor: (agen
       />
     );
     // Paseo's popover already pads its content, as Shell Yeah's relies on; no second padding here.
+    // Desktop gets Shell Yeah's popover width (396), so the tag box is not cut short.
     return (
-      <View>
+      <View style={layout.compact ? undefined : { width: 396 }}>
         <AgentTags agentId={agentId} fallbackWorkspaceId={workspaceId} styles={styles} footer={footer} />
       </View>
     );
