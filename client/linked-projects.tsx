@@ -105,7 +105,7 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
         // Two equal choices, so neither is primary.
         <View style={[styles.row, { borderTopWidth: 1, borderColor: styles.colors.border, paddingTop: 8, justifyContent: "space-evenly" }]}>
           <Button label="New chat" icon={ICONS.add} styles={styles} onPress={() => starting.mutate(false)} disabled={starting.isPending} />
-          <Button label="Fork with projects" icon={ICONS.link} styles={styles} onPress={() => starting.mutate(true)} disabled={starting.isPending} />
+          <Button label="Fork Chat" icon={ICONS.fork} styles={styles} onPress={() => starting.mutate(true)} disabled={starting.isPending} />
         </View>
       ) : null}
     </View>
