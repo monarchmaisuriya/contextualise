@@ -120,6 +120,7 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
         }}
         label="What to attach"
         styles={styles}
+        stretch
       />
       <SearchField value={search} onChange={searchFor} placeholder={`Attach a ${noun}, or type a folder path`} label={`${noun} to attach`} styles={styles} />
       <ScrollView
