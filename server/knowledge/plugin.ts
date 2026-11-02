@@ -1,28 +1,32 @@
 import { readFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import { dirname, join } from "node:path";
-import type { PluginServerContext } from "@getpaseo/plugin/server";
+import type { PluginRpcContract } from "@getpaseo/plugin";
+import type { PluginHandlerContext, PluginServerContext } from "@getpaseo/plugin/server";
 import { type SnapshotSettings, splitGlobs } from "../../shared/contracts";
-import { areaRpc, BRIEF_ID, browseKnowledgeRpc, describeProjectRpc, explainAreaRpc, fileConnectionsRpc, generateKnowledgeRpc, KIND_LABELS, knowledgeAgentsNowRpc, knowledgeChangesRpc, knowledgeOverviewRpc, knowledgePulseRpc, knowledgeUsageRpc, projectForWorkspaceRpc, type SearchHit, listProjectsRpc, listTasksRpc, memoriseStatusRpc, pinEntryRpc, projectFactsRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc, setProjectEnabledRpc } from "../../shared/knowledge";
+import { areaRpc, browseKnowledgeRpc, describeProjectRpc, explainAreaRpc, fileConnectionsRpc, generateKnowledgeRpc, KIND_LABELS, knowledgeAgentsNowRpc, knowledgeChangesRpc, knowledgeOverviewRpc, knowledgePulseRpc, knowledgeUsageRpc, projectForWorkspaceRpc, listProjectsRpc, listTasksRpc, memoriseStatusRpc, pinEntryRpc, projectFactsRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc, setProjectEnabledRpc } from "../../shared/knowledge";
 import type { PaseoApi } from "../paseo-types";
 import { capTitle } from "../rows";
 import { requestedTool } from "../vendor-fetch";
 import { loadTokenSecret, TokenAuthority } from "./auth";
 import { KnowledgeBase } from "./base";
 import { currentBlobs } from "./indexer";
-import { type ProjectRoot, projectRoot } from "./git";
-import { KNOWLEDGE_SERVER, KNOWLEDGE_TOOLS, KnowledgeMcp, knowledgeServerEntry } from "./mcp";
+import { projectRoot } from "./git";
+import { KNOWLEDGE_OFF, KNOWLEDGE_SERVER, KNOWLEDGE_TOOLS, KnowledgeMcp, knowledgeServerEntry } from "./mcp";
 import { Generator } from "./generate";
 import { MemoriseLink, memorySuggestions } from "./memorise";
 import { ProjectPrefsStore } from "./prefs";
 import { UsageLog } from "./usage";
 import { overviewFor, withoutMarkers } from "./overview";
+import { projectPack } from "./pack";
 import { type LiveAgent, needsYou } from "../agent-state";
 import { waitingAgents } from "./pulse";
 import { unavailableSection, withoutSection, withSection } from "./section";
 import { KnowledgeService } from "./service";
 import { SymbolReader } from "./symbols";
+import type { KnowledgeStore } from "./store";
 import { buildTask, type TimelineEntry } from "./task-log";
+import type { z } from "zod";
 import { runWorker } from "../workers";
 
 const PLUGIN_ID = "contextualise";
@@ -32,7 +36,6 @@ const TIMELINE_PAGE = 200;
 const MAX_TIMELINE_PAGES = 10;
 const DOCS_URL = "https://github.com/monarchmaisuriya/contextualise#project-knowledge";
 const ATTACH_RESULTS = 20;
-const OVERVIEW_TASKS = 10;
 
 interface KnowledgeDeps {
   resolveRoot: () => Promise<string>;
@@ -124,12 +127,32 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   const generator = new Generator({ base, prefs, root: deps.resolveRoot, settings: deps.settings, runWorker, readTimeline });
   const service = new KnowledgeService(base, async () => ((await memoriseAvailable()) ? (repoKey, path) => link.related(repoKey, path) : null));
 
+  // Off means off: nothing is read, indexed, recorded, or offered. Settings that cannot be read count
+  // as off.
+  const knowledgeOn = async () => {
+    try {
+      return (await deps.settings()).knowledgeEnabled;
+    } catch {
+      return false;
+    }
+  };
+
+  // Every knowledge RPC but the Memorise check (Settings asks it) fails while knowledge is off, so
+  // no screen can read or re-index a project then.
+  const handleOn = <Input extends z.ZodType, Output extends z.ZodType>(contract: PluginRpcContract<Input, Output>, handler: (input: z.output<Input>, context: PluginHandlerContext) => z.input<Output> | Promise<z.input<Output>>) =>
+    server.handle(contract, async (input, context) => {
+      if (!(await knowledgeOn())) throw new Error(KNOWLEDGE_OFF);
+      return handler(input, context);
+    });
+
   const runtime = (async () => {
     const root = await deps.resolveRoot();
     const tokens = new TokenAuthority(await loadTokenSecret(join(root, "knowledge")));
     const { knowledgePort } = await deps.settings();
     try {
-      const http: Server | null = await new KnowledgeMcp(tokens, service, usage).listen(knowledgePort);
+      // It listens while knowledge is off too, answering that it is off: agents keep their stored tool
+      // address, and OpenCode will not load an agent whose tool server refuses connections.
+      const http: Server | null = await new KnowledgeMcp(tokens, service, usage, knowledgeOn).listen(knowledgePort);
       console.log(`[contextualise] knowledge tools on 127.0.0.1:${knowledgePort}`);
       return { tokens, port: knowledgePort, http, problem: null };
     } catch (error) {
@@ -160,6 +183,11 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   };
   server.on("workspace.created", async ({ workspace }, { paseo }) => {
     remember(paseo);
+    if (!(await knowledgeOn())) {
+      // Recorded by the next agent created once knowledge is on again.
+      rootsKnown = null;
+      return;
+    }
     await base.markRoot(workspace.cwd).catch((error: unknown) => console.error(`[contextualise] could not record ${workspace.cwd} as a project root: ${String(error)}`));
   });
 
@@ -242,30 +270,30 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     return found.repo;
   };
 
-  server.handle(listProjectsRpc, async (_input, { paseo }) => ({
+  handleOn(listProjectsRpc, async (_input, { paseo }) => ({
     projects: await Promise.all((await base.projects()).map(async (project) => ({ ...project, ...(await prefs.get(project.repoKey)), generation: generator.status(project.repoKey) }))),
     memorise: await link.state(remember(paseo)),
   }));
-  server.handle(generateKnowledgeRpc, async ({ repoKey, generate }, { paseo }) => {
+  handleOn(generateKnowledgeRpc, async ({ repoKey, generate }, { paseo }) => {
     generator.run(remember(paseo), await project(repoKey), generate);
     return { started: true };
   });
-  server.handle(setProjectEnabledRpc, async ({ repoKey, enabled }) => ({ enabled: (await prefs.setEnabled((await project(repoKey)).key, enabled)).enabled }));
-  server.handle(pinEntryRpc, async ({ repoKey, id, pinned }) => ({ pins: (await prefs.setPinned((await project(repoKey)).key, id, pinned)).pins }));
+  handleOn(setProjectEnabledRpc, async ({ repoKey, enabled }) => ({ enabled: (await prefs.setEnabled((await project(repoKey)).key, enabled)).enabled }));
+  handleOn(pinEntryRpc, async ({ repoKey, id, pinned }) => ({ pins: (await prefs.setPinned((await project(repoKey)).key, id, pinned)).pins }));
   server.handle(memoriseStatusRpc, async (_input, { paseo }) => ({ state: await link.state(remember(paseo)) }));
-  server.handle(searchKnowledgeRpc, async ({ repoKey, query, kinds, limit }, { paseo }) => {
+  handleOn(searchKnowledgeRpc, async ({ repoKey, query, kinds, limit }, { paseo }) => {
     remember(paseo);
     return { hits: query.trim() ? await service.search(await project(repoKey), query, kinds, limit) : [] };
   });
-  server.handle(readKnowledgeRpc, async ({ repoKey, id }, { paseo }) => {
+  handleOn(readKnowledgeRpc, async ({ repoKey, id }, { paseo }) => {
     remember(paseo);
     return service.read(await project(repoKey), id, { connections: true });
   });
-  server.handle(listTasksRpc, async ({ repoKey, limit, offset }) => service.tasks(await project(repoKey), limit, offset));
-  server.handle(projectFactsRpc, async ({ repoKey }) => service.facts(await project(repoKey)));
+  handleOn(listTasksRpc, async ({ repoKey, limit, offset }) => service.tasks(await project(repoKey), limit, offset));
+  handleOn(projectFactsRpc, async ({ repoKey }) => service.facts(await project(repoKey)));
   // Paseo's panel state hooks throw in screens and this plugin shares components between both, so the
   // client sends the workspace id and the folder is looked up here.
-  server.handle(projectForWorkspaceRpc, async ({ workspaceId }, { paseo }) => {
+  handleOn(projectForWorkspaceRpc, async ({ workspaceId }, { paseo }) => {
     for (let cursor: string | undefined; ; ) {
       const page = await remember(paseo).workspaces.list({ page: { limit: 200, ...(cursor ? { cursor } : {}) } });
       const found = page.entries.find((entry) => entry.id === workspaceId);
@@ -275,7 +303,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       cursor = page.pageInfo.nextCursor;
     }
   });
-  server.handle(knowledgeUsageRpc, async ({ repoKey }) => usage.lastDays((await project(repoKey)).key));
+  handleOn(knowledgeUsageRpc, async ({ repoKey }) => usage.lastDays((await project(repoKey)).key));
   // The live agents working in a project: not archived, not Paseo's own, and in a folder of the
   // project. An agent whose folder cannot be resolved (gone, unreadable, git refusing it) is not
   // counted here and is logged; it cannot fail the answer for every project.
@@ -296,7 +324,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     }
     return found;
   };
-  server.handle(knowledgeAgentsNowRpc, async ({ repoKey }, { paseo }) => {
+  handleOn(knowledgeAgentsNowRpc, async ({ repoKey }, { paseo }) => {
     remember(paseo);
     const repo = await project(repoKey);
     let agents: LiveAgent[];
@@ -315,11 +343,11 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       waiting: waitingAgents(agents),
     };
   });
-  server.handle(knowledgePulseRpc, async ({ repoKey, days, utcOffsetMinutes }) => service.pulse(await project(repoKey), days, utcOffsetMinutes));
-  server.handle(knowledgeChangesRpc, async ({ repoKey, days, utcOffsetMinutes }) => service.changes(await project(repoKey), days, utcOffsetMinutes));
-  server.handle(fileConnectionsRpc, async ({ repoKey, path }) => service.connections(await project(repoKey), path));
+  handleOn(knowledgePulseRpc, async ({ repoKey, days, utcOffsetMinutes }) => service.pulse(await project(repoKey), days, utcOffsetMinutes));
+  handleOn(knowledgeChangesRpc, async ({ repoKey, days, utcOffsetMinutes }) => service.changes(await project(repoKey), days, utcOffsetMinutes));
+  handleOn(fileConnectionsRpc, async ({ repoKey, path }) => service.connections(await project(repoKey), path));
   // The same overview as the agent hook's, without its refresh or its count of agents given knowledge.
-  server.handle(knowledgeOverviewRpc, async ({ repoKey }, { paseo }) => {
+  handleOn(knowledgeOverviewRpc, async ({ repoKey }, { paseo }) => {
     remember(paseo);
     const repo = await project(repoKey);
     const map = await overviewFor({
@@ -332,71 +360,82 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     });
     return { ...map, text: map.text === null ? null : withoutMarkers(map.text) };
   });
-  server.handle(describeProjectRpc, async ({ repoKey }, { paseo }) => {
+  handleOn(describeProjectRpc, async ({ repoKey }, { paseo }) => {
     generator.startDescribe(remember(paseo), await project(repoKey));
     return { started: true };
   });
-  server.handle(explainAreaRpc, async ({ repoKey, path }, { paseo }) => {
+  handleOn(explainAreaRpc, async ({ repoKey, path }, { paseo }) => {
     const repo = await project(repoKey);
     // Checked here so an unknown area fails the request instead of a background job.
     await service.area(repo, path);
     generator.startExplain(remember(paseo), repo, path);
     return { started: true };
   });
-  server.handle(areaRpc, async ({ repoKey, path }) => service.area(await project(repoKey), path));
-  server.handle(browseKnowledgeRpc, async ({ repoKey, kind, limit, offset }, { paseo }) => {
+  handleOn(areaRpc, async ({ repoKey, path }) => service.area(await project(repoKey), path));
+  handleOn(browseKnowledgeRpc, async ({ repoKey, kind, limit, offset }, { paseo }) => {
     remember(paseo);
     return service.browse(await project(repoKey), kind, limit, offset);
   });
-  server.handle(reindexRpc, async ({ repoKey }, { paseo }) => {
+  handleOn(reindexRpc, async ({ repoKey }, { paseo }) => {
     remember(paseo);
     const repo = await project(repoKey);
     base.invalidate(repo.key);
     void base.refresh(repo, 0);
     return { started: true };
   });
-  // A project's essentials, newest work last: its description, design docs, team rules, decisions,
-  // and recent work.
-  const overview = async (repo: ProjectRoot): Promise<SearchHit[]> => {
-    const parts = await Promise.all([service.browse(repo, "architecture", 10, 0), service.browse(repo, "convention", 10, 0), service.browse(repo, "adr", 20, 0)]);
-    // The project description by its id: area explanations are descriptions too, and sort before it.
-    const description = await service.read(repo, BRIEF_ID).catch(() => null);
-    const { tasks } = await service.tasks(repo, OVERVIEW_TASKS);
-    return [
-      ...(description ? [{ ...description, snippet: description.body.replace(/\s+/g, " ").trim().slice(0, 200) }] : []),
-      ...parts.flatMap((part) => part.hits),
-      ...tasks.map((task) => ({ id: task.id, kind: "task" as const, path: task.files[0] ?? "", line: 0, title: task.generatedTitle ?? task.title, snippet: task.summary ?? task.request, needsCheck: task.needsCheck, relatedMemories: [] })),
-    ];
+  // One "Whole project" row: the project's own writing in one attachment, built from its index.
+  const projectItem = (found: { repoKey: string; name: string; top: string }, store: KnowledgeStore, pickerTitleMaxChars: number) => {
+    const pack = projectPack(store, found);
+    return {
+      id: `${found.repoKey}|project`,
+      identifier: "Whole project",
+      title: capTitle(found.name, pickerTitleMaxChars),
+      subtitle: `${pack.documents === 0 ? "No design documents, rules, or decisions" : pack.included === pack.documents ? `${pack.documents} document${pack.documents === 1 ? "" : "s"}` : `${pack.included} of ${pack.documents} documents`} · about ${pack.tokens.toLocaleString("en-US")} tokens · ${found.top}`.slice(0, 200),
+      url: DOCS_URL,
+      text: pack.text,
+      resourceType: "knowledge",
+    };
   };
 
+  // The picker never waits on a project's re-check: it answers from each index as it is, every project
+  // at once, and a search starts the re-check in the background for the next one. With no words it
+  // offers each whole project; with words, the projects whose name has them, then matching entries.
   server.handle(searchKnowledgeAttachmentsRpc, async ({ query }, { paseo }) => {
     remember(paseo);
+    if (!(await knowledgeOn())) return { items: [] };
     const { pickerTitleMaxChars } = await deps.settings();
-    const items = [];
-    for (const found of await base.projects()) {
-      const repo = projectRoot(found.repoKey, found.top);
-      // With no search words, each project's essentials are offered instead of nothing.
-      const hits = query.trim() ? await service.search(repo, query, [], ATTACH_RESULTS) : await overview(repo);
-      for (const hit of hits) {
-        const entry = await service.read(repo, hit.id);
-        items.push({
-          id: `${found.repoKey}|${hit.id}`,
-          identifier: KIND_LABELS[hit.kind],
-          title: capTitle(hit.title, pickerTitleMaxChars),
-          // The snippet shows why the row matched, and Paseo's picker filters rows by their own text.
-          subtitle: `${found.name} · ${hit.path}${hit.line > 0 ? `:${hit.line}` : ""}${hit.needsCheck ? " · needs check" : ""} · ${hit.snippet.replace(/\s+/g, " ").trim()}`.slice(0, 200),
-          url: DOCS_URL,
-          text: `Project knowledge from ${found.repoKey} (${hit.path}${hit.line > 0 ? `:${hit.line}` : ""}), quoted from the repository:\n\n${entry.body}`,
-          resourceType: "knowledge",
-        });
-      }
-    }
+    const words = query.trim().toLowerCase();
+    const projects = await base.projects();
+    const wholes = await Promise.all(
+      projects.filter((found) => words === "" || found.name.toLowerCase().includes(words)).map(async (found) => projectItem(found, await base.open(projectRoot(found.repoKey, found.top)), pickerTitleMaxChars)),
+    );
+    if (words === "") return { items: wholes };
+    const entries = await Promise.all(
+      projects.map(async (found) => {
+        const repo = projectRoot(found.repoKey, found.top);
+        const hits = await service.search(repo, query, [], ATTACH_RESULTS, [], 0);
+        const bodies = await service.bodies(repo, hits.map((hit) => hit.id), 0);
+        return hits
+          .filter((hit) => bodies.has(hit.id))
+          .map((hit) => ({
+            id: `${found.repoKey}|${hit.id}`,
+            identifier: KIND_LABELS[hit.kind],
+            title: capTitle(hit.title, pickerTitleMaxChars),
+            // The snippet shows why the row matched, and Paseo's picker filters rows by their own text.
+            subtitle: `${found.name} · ${hit.path}${hit.line > 0 ? `:${hit.line}` : ""}${hit.needsCheck ? " · needs check" : ""} · ${hit.snippet.replace(/\s+/g, " ").trim()}`.slice(0, 200),
+            url: DOCS_URL,
+            text: `Project knowledge from ${found.repoKey} (${hit.path}${hit.line > 0 ? `:${hit.line}` : ""}), quoted from the repository:\n\n${bodies.get(hit.id)}`,
+            resourceType: "knowledge",
+          }));
+      }),
+    );
     // Every project's results are kept; Paseo's picker scrolls.
-    return { items };
+    return { items: [...wholes, ...entries.flat()] };
   });
 
   let titles: { at: number; map: Promise<Map<string, string>> } | null = null;
-  const generatedTitles = () => {
+  const generatedTitles = async (): Promise<ReadonlyMap<string, string>> => {
+    if (!(await knowledgeOn())) return new Map();
     if (!titles || Date.now() - titles.at > TITLES_CACHE_MS) {
       titles = {
         at: Date.now(),

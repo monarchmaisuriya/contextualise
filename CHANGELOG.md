@@ -2,6 +2,22 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.22.0 - 2026-11-02
+
+### Added
+
+- Attach > Project knowledge offers each **whole project** in one attachment: its description, main areas, the full text of its conventions, architecture documents, and decisions not superseded, and its recent work, up to 60,000 characters (about 15,000 tokens). A document that does not fit is left out whole and named; the row shows the document count and size first.
+
+### Changed
+
+- The "Project knowledge" switch (was "Give new agents knowledge of the project") now turns all of it off:
+  - nothing is read, checked, recorded, or summarised;
+  - Attach offers nothing;
+  - the sidebar row is hidden, and the screen and workspace tab say it is off, with **Turn on**.
+
+  The knowledge tool server keeps listening, so agents already given it still load; while off, its tools answer that knowledge is off. What was read is kept.
+- Attach > Project knowledge opens on the whole-project rows and never waits for a project to be checked again. Typed searches query every project at once from what is already read, and start the check in the background. On six real projects, opening went from 1 to 3.8 s (up to about 18 s in the worst case) to about 0.1 s, and a typed search from about 0.4 s to 0.1 s. Picker rows now read their documents and texts in one pass per project instead of one per entry.
+
 ## 0.21.1 - 2026-11-02
 
 ### Fixed

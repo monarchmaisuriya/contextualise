@@ -1,12 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { snapshotSettingsSchema, type SnapshotSettings } from "../../shared/contracts";
 import { KnowledgeBase } from "./base";
 import { KNOWLEDGE_SERVER } from "./mcp";
-import { contributeKnowledge } from "./plugin";
+import { contributeKnowledge, type KnowledgeContribution } from "./plugin";
 import { SECTION_END, SECTION_START } from "./section";
 import { KnowledgeStore } from "./store";
 
@@ -17,7 +18,7 @@ describe("contributeKnowledge", () => {
   let top: string;
   let values: SnapshotSettings;
   let settingsProblem: Error | null;
-  let stop: () => Promise<void>;
+  let contribution: KnowledgeContribution;
   let plugins: Record<string, unknown>;
   const before = new Map<string, Handler>();
   const rpcs = new Map<string, Handler>();
@@ -43,6 +44,7 @@ describe("contributeKnowledge", () => {
   };
   const create = (cwd: string, config: Record<string, unknown> = {}) =>
     (before.get("agent.create") as (input: unknown, context: unknown) => Promise<{ config: { systemPrompt?: string; mcpServers: Record<string, unknown> } }>)({ request: { config: { provider: "claude", cwd, ...config } } }, { paseo });
+  const attach = (query: string) => (rpcs.get("knowledge.attach-search") as (input: unknown, context: unknown) => Promise<{ items: { identifier: string; title: string; subtitle: string; text: string }[] } | undefined>)({ query }, { paseo });
   const emit = async (name: string, event: unknown) => {
     for (const handler of on.get(name) ?? []) await (handler as (event: unknown, context: unknown) => Promise<void>)(event, { paseo });
   };
@@ -71,16 +73,16 @@ describe("contributeKnowledge", () => {
       on: (name: string, handler: Handler) => on.set(name, [...(on.get(name) ?? []), handler]),
       handle: (contract: { name: string }, handler: Handler) => rpcs.set(contract.name, handler),
     };
-    stop = contributeKnowledge(server as never, {
+    contribution = contributeKnowledge(server as never, {
       resolveRoot: async () => join(home, "plugin-data", "contextualise"),
       settings: async () => {
         if (settingsProblem) throw settingsProblem;
         return values;
       },
-    }).stop;
+    });
   });
   afterEach(async () => {
-    await stop();
+    await contribution.stop();
     rmSync(home, { recursive: true, force: true });
     rmSync(top, { recursive: true, force: true });
   });
@@ -232,25 +234,58 @@ describe("contributeKnowledge", () => {
     expect(items[0].text).toContain("quoted from the repository:\n\nOne daemon.");
   });
 
-  it("offers each project's essentials in Attach when nothing is typed", async () => {
+  it("offers each whole project in Attach when nothing is typed, built from the index without a re-check", async () => {
     await create(top);
     await emit("agent.turn_ended", { agent: { id: "a1", provider: "codex", cwd: top, title: null }, outcome: { kind: "completed" } });
-    const { items } = (await (rpcs.get("knowledge.attach-search") as (input: unknown, context: unknown) => Promise<{ items: { identifier: string; title: string }[] }>)({ query: "" }, { paseo }))!;
-    expect(items.map((item) => [item.identifier, item.title])).toEqual([
-      ["Design", "Overview"],
-      ["Past work", "Document the queue"],
-    ]);
-  });
-
-  it("offers the project description first in Attach, not an area explanation", async () => {
-    await create(top);
     const dir = join(home, "plugin-data", "contextualise", "knowledge");
     const store = new KnowledgeStore(join(dir, readdirSync(dir).find((name) => name.endsWith(".sqlite")) as string));
     store.replaceSource({ path: "(area)/api", kind: "brief", blob: "g", chunks: [{ title: "About api", body: "Serves requests.", line: 1 }] });
     store.replaceSource({ path: "(brief)", kind: "brief", blob: "g", chunks: [{ title: "About this project", body: "An API.", line: 1 }] });
     store.close();
-    const { items } = (await (rpcs.get("knowledge.attach-search") as (input: unknown, context: unknown) => Promise<{ items: { identifier: string; title: string }[] }>)({ query: "" }, { paseo }))!;
-    expect(items.map((item) => item.title)).toEqual(["About this project", "Overview"]);
+    const refresh = vi.spyOn(KnowledgeBase.prototype, "refresh");
+    const { items } = (await attach(""))!;
+    expect(refresh).not.toHaveBeenCalled();
+    refresh.mockRestore();
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ identifier: "Whole project", title: expect.stringMatching(/^contextualise-plugin-repo-/) });
+    expect(items[0].subtitle).toMatch(/^1 document · about \d+ tokens · /);
+    expect(items[0].text).toContain("An API.");
+    expect(items[0].text).not.toContain("Serves requests.");
+    expect(items[0].text).toContain("### ARCHITECTURE.md\n#### Overview\nOne daemon.");
+    expect(items[0].text).toContain("Document the queue (completed)");
+  });
+
+  it("answers a typed search from the index as it is, without waiting for a re-check", async () => {
+    await create(top);
+    const refresh = vi.spyOn(KnowledgeBase.prototype, "refresh").mockImplementation((_repo, maxWaitMs) => (maxWaitMs === 0 ? Promise.resolve("updating" as const) : new Promise(() => {})));
+    const { items } = (await attach("daemon"))!;
+    expect(refresh.mock.calls.every(([, maxWaitMs]) => maxWaitMs === 0)).toBe(true);
+    refresh.mockRestore();
+    expect(items.map((item) => item.identifier)).toEqual(["Design"]);
+    expect((await attach("plugin-repo"))!.items[0].identifier).toBe("Whole project");
+  });
+
+  it("does nothing while knowledge is off: no RPC answers, Attach offers nothing, no folder is recorded, and no titles are read", async () => {
+    await create(top);
+    values = { ...values, knowledgeEnabled: false };
+    for (const [name, handler] of rpcs) {
+      if (name === "knowledge.attach-search" || name === "knowledge.memorise-status") continue;
+      await expect((handler as (input: unknown, context: unknown) => Promise<unknown>)({}, { paseo }), name).rejects.toThrow("Project knowledge is off. Turn it on in Settings > Contextualise.");
+    }
+    expect(await attach("")).toEqual({ items: [] });
+    const folders = join(home, "plugin-data", "contextualise", "knowledge", "folders.json");
+    const folder = join(home, "notes");
+    mkdirSync(folder);
+    await emit("workspace.created", { workspace: { cwd: folder } });
+    expect(existsSync(folders)).toBe(false);
+    expect(await contribution.generatedTitles()).toEqual(new Map());
+  });
+
+  it("keeps the tool server listening while knowledge is off, so agents given its address still load", async () => {
+    await create(top);
+    values = { ...values, knowledgeEnabled: false };
+    const listening = await new Promise<boolean>((done) => connect(values.knowledgePort, "127.0.0.1").on("connect", function (this: Socket) { this.destroy(); done(true); }).on("error", () => done(false)));
+    expect(listening).toBe(true);
   });
 
   it("refuses to explain an unknown area before starting anything, and starts writing a description", async () => {
@@ -279,16 +314,13 @@ describe("contributeKnowledge", () => {
     expect(await call("knowledge.usage", { repoKey })).toMatchObject({ agentsGiven: 1 });
   });
 
-  it("previews off when knowledge or the project is off, and no text at 0 lines", async () => {
+  it("previews off when the project is off, and no text at 0 lines", async () => {
     await create(top);
     const call = (name: string, input: unknown) => (rpcs.get(name) as (input: unknown, context: unknown) => Promise<unknown>)(input, { paseo });
     const { projects } = (await call("knowledge.projects", {})) as { projects: { repoKey: string }[] };
     const repoKey = projects[0].repoKey;
     values = { ...values, knowledgeMapLines: 0 };
     expect(await call("knowledge.overview", { repoKey })).toEqual({ state: "given", text: null, lines: 0 });
-    values = { ...values, knowledgeEnabled: false };
-    expect(await call("knowledge.overview", { repoKey })).toEqual({ state: "off", text: null, lines: 0 });
-    values = { ...values, knowledgeEnabled: true };
     await call("knowledge.project-enabled", { repoKey, enabled: false });
     expect(await call("knowledge.overview", { repoKey })).toEqual({ state: "off", text: null, lines: 0 });
   });

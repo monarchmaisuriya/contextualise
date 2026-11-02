@@ -237,8 +237,8 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
       <SettingsSection title="Project knowledge">
         <SettingsCard>
           <SettingsSwitch
-            label="Give new agents knowledge of the project"
-            hint="Each new agent gets a short overview of its project and can search its documents, code, and past work, with or without git."
+            label="Project knowledge"
+            hint="Each new agent gets a short overview of its project and can search its documents, code, and past work, with or without git. Off stops all of it: nothing is read or offered, and what was read is kept for when you switch it back on."
             value={values.knowledgeEnabled}
             disabled={settings.saving}
             onValueChange={(value) => persist({ ...values, knowledgeEnabled: value })}

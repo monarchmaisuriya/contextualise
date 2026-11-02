@@ -97,11 +97,15 @@ function describeArea(found: Awaited<ReturnType<KnowledgeService["area"]>>): str
   ].join("\n");
 }
 
+export const KNOWLEDGE_OFF = "Project knowledge is off. Turn it on in Settings > Contextualise.";
+
 export class KnowledgeMcp {
   constructor(
     private readonly tokens: TokenAuthority,
     private readonly service: KnowledgeService,
     private readonly usage: Pick<UsageLog, "recordCall">,
+    // While off, every tool answers that it is off, reading and counting nothing.
+    private readonly knowledgeOn: () => Promise<boolean> = async () => true,
   ) {}
 
   private build(scope: AgentScope, agent: string): McpServer {
@@ -125,6 +129,7 @@ export class KnowledgeMcp {
         },
       },
       async ({ query, kinds, paths, limit }) => {
+        if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
         void count("knowledge_search");
         try {
           const hits = await this.service.search(repo, query, kinds ?? [], limit ?? 8, paths ?? []);
@@ -141,6 +146,7 @@ export class KnowledgeMcp {
         inputSchema: { id: z.string().min(1).max(600) },
       },
       async ({ id }) => {
+        if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
         void count("knowledge_read");
         try {
           return text(describeEntry(await this.service.read(repo, id, { connections: true })));
@@ -156,6 +162,7 @@ export class KnowledgeMcp {
         inputSchema: { path: z.string().min(1).max(300).describe("A file path, or a main area's folder, relative to the project root") },
       },
       async ({ path }) => {
+        if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
         void count("knowledge_outline");
         try {
           const folder = path.replace(/^\.?\//, "").replace(/\/+$/, "");
@@ -177,6 +184,7 @@ export class KnowledgeMcp {
         inputSchema: { path: z.string().min(1).max(300).describe("A file or folder relative to the project root"), limit: z.number().int().min(1).max(20).optional() },
       },
       async ({ path, limit }) => {
+        if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
         void count("knowledge_history");
         try {
           const tasks = await this.service.history(repo, path, limit ?? 8);
@@ -197,6 +205,7 @@ export class KnowledgeMcp {
         inputSchema: { paths: z.array(z.string().min(1).max(300)).min(1).max(50).describe("Files or folders relative to the project root") },
       },
       async ({ paths }) => {
+        if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
         void count("knowledge_impact");
         try {
           return text(describeImpact(await this.service.impact(repo, paths)));

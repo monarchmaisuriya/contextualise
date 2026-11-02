@@ -1,4 +1,5 @@
 import type { PluginClientContext, PluginSidebarItemProps } from "@getpaseo/plugin/client";
+import { useSettings } from "@getpaseo/plugin/client";
 import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { readable } from "./client/errors";
 import { FetchResultRow } from "./client/fetch-result";
@@ -22,6 +23,7 @@ import {
   pinAgentRpc,
   removeTagRpc,
   RECEIPT_KIND,
+  snapshotSettings,
   receiptSchema,
   tagAttachmentSource,
   terminalAttachmentSource,
@@ -33,7 +35,10 @@ function TagsSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps) 
   return <SidebarRow icon={ICONS.tags} active={currentScreen?.screenId === "tags"} onPress={() => openScreen({ screenId: "tags" })} />;
 }
 
+// Hidden while project knowledge is off.
 function KnowledgeSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
+  const settings = useSettings(snapshotSettings);
+  if (settings.status === "ready" && !settings.values.knowledgeEnabled) return null;
   return <SidebarRow icon={ICONS.knowledge} active={currentScreen?.screenId === "knowledge"} onPress={() => openScreen({ screenId: "knowledge" })} />;
 }
 

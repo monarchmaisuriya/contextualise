@@ -73,8 +73,9 @@ export class KnowledgeService {
     return (await this.currentAndState(repo)).store;
   }
 
-  private async currentAndState(repo: ProjectRoot): Promise<{ store: KnowledgeStore; fresh: boolean }> {
-    const state = await this.base.refresh(repo, SEARCH_WAIT_MS).catch(() => "failed" as const);
+  // `waitMs` 0 answers from the index as it is and leaves the re-check running in the background.
+  private async currentAndState(repo: ProjectRoot, waitMs = SEARCH_WAIT_MS): Promise<{ store: KnowledgeStore; fresh: boolean }> {
+    const state = await this.base.refresh(repo, waitMs).catch(() => "failed" as const);
     return { store: await this.base.open(repo), fresh: state === "fresh" };
   }
 
@@ -136,8 +137,8 @@ export class KnowledgeService {
   }
 
   // `paths` narrows results to files matching any of them: a glob (src/api/**), a file, or a folder.
-  async search(repo: ProjectRoot, query: string, kinds: readonly KnowledgeKind[], limit: number, paths: readonly string[] = []): Promise<SearchHit[]> {
-    const store = await this.current(repo);
+  async search(repo: ProjectRoot, query: string, kinds: readonly KnowledgeKind[], limit: number, paths: readonly string[] = [], waitMs = SEARCH_WAIT_MS): Promise<SearchHit[]> {
+    const { store } = await this.currentAndState(repo, waitMs);
     const wantsTasks = kinds.length === 0 || kinds.includes("task");
     const blobs = wantsTasks ? store.fileBlobs() : new Map<string, string>();
     const within = (path: string) => paths.length === 0 || paths.some((wanted) => path === wanted || path.startsWith(`${wanted.replace(/\/+$/, "")}/`)) || anyGlob(paths, path);
@@ -163,9 +164,21 @@ export class KnowledgeService {
     return this.withRelated(repo.key, [...sources, ...tasks]);
   }
 
+  // The text of several entries at once, as `read` gives it, for lists that quote every hit. Ids
+  // that no longer exist are left out.
+  async bodies(repo: ProjectRoot, ids: readonly string[], waitMs = SEARCH_WAIT_MS): Promise<Map<string, string>> {
+    const { store } = await this.currentAndState(repo, waitMs);
+    const bodies = store.bodies(ids.filter((id) => !id.startsWith("task:")));
+    for (const id of ids.filter((id) => id.startsWith("task:"))) {
+      const task = store.task(id);
+      if (task) bodies.set(id, taskText(task));
+    }
+    return bodies;
+  }
+
   // `connections` adds a code entry's links, for callers that show them (the agent tools and the reader).
-  async read(repo: ProjectRoot, id: string, { connections = false }: { connections?: boolean } = {}): Promise<KnowledgeEntry> {
-    const { store, fresh } = await this.currentAndState(repo);
+  async read(repo: ProjectRoot, id: string, { connections = false, waitMs = SEARCH_WAIT_MS }: { connections?: boolean; waitMs?: number } = {}): Promise<KnowledgeEntry> {
+    const { store, fresh } = await this.currentAndState(repo, waitMs);
     if (id.startsWith("task:")) {
       const task = store.task(id);
       if (!task) throw new Error(`No task ${id} in ${repo.key}; search again for current ids`);
