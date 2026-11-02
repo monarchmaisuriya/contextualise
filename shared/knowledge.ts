@@ -358,7 +358,9 @@ export const searchKnowledgeAttachmentsRpc = defineRpc({ name: "knowledge.attach
 export const knowledgeAttachmentSource = defineAttachmentSource({
   id: "knowledge",
   title: "Project",
-  icon: "BookOpen",
+  // A folder of code, unlike Shell Yeah's Command output beside it in Attach. A Lucide export of the
+  // installed Paseo 0.14.0 app (app-dist web bundle).
+  icon: "FolderCode",
   pickerTitle: "Attach project",
   searchPlaceholder: "Search docs, ADRs, code, and past tasks",
   search: searchKnowledgeAttachmentsRpc,

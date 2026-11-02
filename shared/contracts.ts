@@ -328,9 +328,9 @@ export const agentAttachmentSource = defineAttachmentSource({
 export const terminalAttachmentSource = defineAttachmentSource({
   id: "terminal",
   title: "Terminal output",
-  // Not SquareTerminal: Shell Yeah's "Command output" uses it, and the two would look alike in Attach.
-  // A Lucide export of the installed Paseo 0.14.0 app (app-dist web bundle).
-  icon: "ScrollText",
+  // A terminal prompt, but not SquareTerminal: Shell Yeah's "Command output" uses that, and the two
+  // would look alike in Attach. A Lucide export of the installed Paseo 0.14.0 app (app-dist web bundle).
+  icon: "Terminal",
   pickerTitle: "Attach terminal output",
   searchPlaceholder: "Search terminals by name or workspace",
   search: searchTerminalsRpc,

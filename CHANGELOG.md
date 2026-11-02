@@ -7,7 +7,7 @@ All notable changes follow [semantic versioning](https://semver.org).
 ### Changed
 
 - **Attach > Agent conversation is now Attach > Chat,** and Attach > Project comes right after it.
-- **Terminal output has its own icon** (a scroll of text), so it no longer looks like Shell Yeah's Command output.
+- **New icons in Attach:** Terminal output shows a terminal prompt and Project a folder of code, so neither looks like Shell Yeah's Command output.
 - **The Attached button is cleaner:** attached projects, one search box, and New chat. How attaching works moved to Settings > Contextualise > Attached projects.
 
 ### Added
