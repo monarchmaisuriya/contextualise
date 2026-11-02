@@ -48,7 +48,7 @@ export class TagStore {
     return this.enqueue(async () => (await this.load()).pinnedAgents);
   }
 
-  // Pinned agents come first in Attach > Agent conversation; the order is the order they were pinned.
+  // Pinned agents come first in Attach > Chat; the order is the order they were pinned.
   pinAgent(agentId: string, pinned: boolean): Promise<{ pinned: boolean; changed: boolean }> {
     return this.enqueue(async () => {
       const file = await this.load();

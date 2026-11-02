@@ -54,9 +54,10 @@ export default function contribute(client: PluginClientContext) {
     client.addWorkspacePanel({ id: "knowledge", title: "Project knowledge", icon: ICONS.knowledge, Component: WorkspaceKnowledgePanel }),
     client.addSettingsScreen({ id: "snapshot", title: "Contextualise", icon: LOGO, Component: SnapshotSettingsScreen }),
     client.addAttachmentSource(tagAttachmentSource),
+    // Paseo's Attach menu lists sources in this order: Project sits right after Chat.
     client.addAttachmentSource(agentAttachmentSource),
-    client.addAttachmentSource(terminalAttachmentSource),
     client.addAttachmentSource(knowledgeAttachmentSource),
+    client.addAttachmentSource(terminalAttachmentSource),
     // Tagging no longer adds timeline rows; this still draws the rows v0.2.1 added.
     client.addTimelineRenderer({ kind: RECEIPT_KIND, version: 1, schema: receiptSchema, Component: (props) => <ReceiptRow {...props} openTags={openTagsFor} /> }),
     client.addTimelineRenderer({ kind: FETCH_RESULT_KIND, version: 1, schema: fetchResultSchema, Component: (props) => <FetchResultRow {...props} openItem={openItem} openTags={openTagsFor} /> }),
@@ -123,7 +124,7 @@ export default function contribute(client: PluginClientContext) {
     ...([true, false] as const).map((pinned) =>
       client.addCommandCenterItem({
         id: pinned ? "pin-agent" : "unpin-agent",
-        title: pinned ? "Pin this agent (first in Attach > Agent conversation)" : "Unpin this agent",
+        title: pinned ? "Pin this agent (first in Attach > Chat)" : "Unpin this agent",
         icon: pinned ? ICONS.pin : ICONS.unpin,
         keywords: ["pin", "unpin", "favorite", "contextualise"],
         context: "agent",

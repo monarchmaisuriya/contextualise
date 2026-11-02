@@ -252,7 +252,7 @@ export class KnowledgeMcp {
         CONVERSATION_TOOL,
         {
           description:
-            "Read a conversation M attached (Attach > Agent conversation): its messages and tool calls, newest page first, up to when it was attached. Pass the grant written in the attachment; pass `before` from the last answer to read earlier.",
+            "Read a conversation M attached (Attach > Chat): its messages and tool calls, newest page first, up to when it was attached. Pass the grant written in the attachment; pass `before` from the last answer to read earlier.",
           inputSchema: { grant: z.string().min(1).max(1_000), before: z.string().min(1).max(500).optional() },
         },
         async ({ grant, before }) => {

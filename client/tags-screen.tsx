@@ -73,7 +73,7 @@ function AgentRow({ agent, tag, styles, navigation }: { agent: AgentMember; tag:
   return <AgentLine agent={agent} when={ago(agent.taggedAt)} trailing={trailing} styles={styles} navigation={navigation} />;
 }
 
-// Pinned agents come first in Attach > Agent conversation. One Paseo no longer has stays until unpinned.
+// Pinned agents come first in Attach > Chat. One Paseo no longer has stays until unpinned.
 function PinnedAgents({ pins, styles, navigation }: { pins: readonly PinnedAgent[]; styles: Styles; navigation: Navigation }) {
   const pin = useRpc(pinAgentRpc);
   const unpinning = useTagChange((agentId: string) => pin({ agentId, pinned: false }));

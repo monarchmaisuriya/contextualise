@@ -16,7 +16,7 @@ Tags share names with Paseo's own workspace labels. A workspace labeled "Auth Re
 
 The Tags screen, in the sidebar footer, lists every tag with its labeled workspaces, tagged agents, links, and fetched items, with a filter, sort, and expand control in one row. Preview on a tag shows exactly what attaching it sends, with Copy; less frequent actions (fetch an item, add a link, refresh or remove an item) sit behind each row's ⋮ button. Archived agents stay in their tags; agents Paseo no longer has are shown as missing until you remove them.
 
-Pin the agents you attach often, from the Tags pill or the Command Center. Pinned agents come first in Attach > Agent conversation and are listed at the top of the Tags screen.
+Pin the agents you attach often, from the Tags pill or the Command Center. Pinned agents come first in Attach > Chat and are listed at the top of the Tags screen.
 
 ## Fetching vendor items
 
@@ -27,7 +27,7 @@ Pin the agents you attach often, from the Tags pill or the Command Center. Pinne
 The composer's Attach menu gets four sources:
 
 - **Tag**: the tag's workspaces, links, and each tagged agent's most recent turns.
-- **Agent conversation**: one agent's most recent turns, from any workspace or provider. Clicking the attachment opens that agent.
+- **Chat**: one agent's most recent turns, from any workspace or provider. Clicking the attachment opens that agent.
 - **Terminal output**: the newest lines of any terminal.
 - **Project knowledge**: one document section, code symbol, or finished task from any indexed repository.
 

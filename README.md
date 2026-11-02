@@ -19,7 +19,7 @@ Every agent's composer has a **Tags** pill next to Tasks and Subagents. Its labe
 - remove a tag (tap a filled chip),
 - add an existing tag (tap a plain chip, marked +),
 - add new tags (type names, separated by commas),
-- pin or unpin the agent with the pin icon (pinned agents come first in Attach > Agent conversation),
+- pin or unpin the agent with the pin icon (pinned agents come first in Attach > Chat),
 - fetch an item into one of its tags (**Fetch an item**),
 - open the Tags screen.
 
@@ -127,7 +127,7 @@ These are rebuilt whenever files change. On a 7,000-file Python repository the f
   - At most 20 runs a day (a setting).
   - A session is summarised again only after new turns.
 - **Never generated here:** decisions, pitfalls, and preferences; Memorise keeps those.
-- **Generated titles** also name agents in plain folders in Attach > Agent conversation, where Paseo has only the first request.
+- **Generated titles** also name agents in plain folders in Attach > Chat, where Paseo has only the first request.
 
 **Where to look.** Project knowledge in the sidebar footer (or "Open project knowledge" in the Command Center) shows each project, opening on the one you looked at last; tap the project name to pick another. Each workspace also has a Project knowledge tab for its own project ("Open project knowledge for this workspace" in the Command Center, or the new-tab menu). Both show:
 
@@ -184,7 +184,7 @@ In the composer, Attach offers four sources:
 | Source | Sends |
 | --- | --- |
 | **Tag** | The tag's workspaces (project, name, folder), its links, its fetched items, and each tagged agent's most recent turns |
-| **Agent conversation** | One agent's most recent turns, from any workspace or provider on this host |
+| **Chat** | One agent's most recent turns, from any workspace or provider on this host |
 | **Terminal output** | The newest lines of any terminal on this host |
 | **Project knowledge** | A whole project (its description, areas, design documents, rules, decisions, and recent work), or one document section, code symbol, or finished task from any indexed repository |
 

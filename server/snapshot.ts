@@ -131,7 +131,7 @@ function renderNote(note: NoteMember): string {
   return `### ${note.title} (${source}, fetched ${note.fetchedAt?.slice(0, 10) ?? "unknown"})\n\n${redactSecrets(note.text.trim())}\n\n`;
 }
 
-// One agent's recent conversation, for the "Agent conversation" attachment.
+// One agent's recent conversation, for the "Chat" attachment.
 export function renderConversation(member: AgentMember, workspaceName: string | null, reading: AgentReading, maxChars: number): string {
   const where = workspaceName ? `Workspace: ${workspaceName}\n\n` : "";
   const head = `${agentHeading(member, "#")}${SNAPSHOT_HEADER}\n\n${where}`;

@@ -37,7 +37,7 @@ export function AgentTags({ agentId, fallbackWorkspaceId, styles, footer }: { ag
   const pin = useRpc(pinAgentRpc);
   const pinned = query.data?.pinnedAgents.some((entry) => entry.agentId === agentId) ?? false;
   const pinning = useTagChange(() => pin({ agentId, pinned: !pinned }), (result) =>
-    toast.show(result.pinned ? "Pinned: this agent comes first in Attach > Agent conversation" : "Unpinned", { variant: "success" }),
+    toast.show(result.pinned ? "Pinned: this agent comes first in Attach > Chat" : "Unpinned", { variant: "success" }),
   );
   const { mine, others } = popoverTags(tags, agentId, names);
   const submit = () => {

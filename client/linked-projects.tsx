@@ -67,47 +67,44 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
     <View style={{ gap: 8 }}>
       {query.error ? <StateView state="error" text={`Could not load attached projects: ${errorText(query.error)}`} styles={styles} /> : null}
       {links.length > 0 ? (
-        <>
-          <SectionHeader label="Attached to this workspace" count={links.length} styles={styles} />
-          <View style={{ gap: 4 }}>
-            {links.map((link) => (
-              // Attached rows stand out: a fill and a folder-with-check icon.
-              <View key={link.path} style={[styles.row, { paddingVertical: 6, paddingLeft: 12, paddingRight: 4, borderRadius: 8, backgroundColor: styles.colors.surface2 }]}>
-                <Icon name={ICONS.attached} size={16} color={styles.colors.accent} />
-                <View style={styles.grow}>
-                  <Text style={styles.body} numberOfLines={1}>
-                    {link.name}
-                  </Text>
-                  <Text style={styles.note} numberOfLines={1}>
-                    {link.path}
-                  </Text>
-                </View>
-                <IconButton icon={ICONS.close} label={`Remove ${link.name} from this workspace`} onPress={() => change.mutate(() => remove({ workspaceId, path: link.path }))} disabled={change.isPending} styles={styles} />
+        <View style={{ gap: 4 }}>
+          <SectionHeader label="Attached" count={links.length} styles={styles} />
+          {links.map((link) => (
+            // Attached rows stand out: a fill and a folder-with-check icon.
+            <View key={link.path} style={[styles.row, { paddingVertical: 6, paddingLeft: 12, paddingRight: 4, borderRadius: 8, backgroundColor: styles.colors.surface2 }]}>
+              <Icon name={ICONS.attached} size={16} color={styles.colors.accent} />
+              <View style={styles.grow}>
+                <Text style={styles.body} numberOfLines={1}>
+                  {link.name}
+                </Text>
+                <Text style={styles.note} numberOfLines={1}>
+                  {link.path}
+                </Text>
               </View>
-            ))}
-          </View>
-          <Text style={styles.note}>New Claude, Codex, and OpenCode chats here can search, read, and edit these. Chats already running search them at once, and keep the folders they started with.</Text>
-        </>
-      ) : (
-        <Text style={styles.note}>Attach another project, and every new Claude, Codex, or OpenCode chat in this workspace can search, read, and edit it too. Picking a project in Attach &gt; Project attaches it as well. Other workspaces are not affected.</Text>
-      )}
-      <SectionHeader label="Add a project" count={suggestions.length > 0 ? suggestions.length : undefined} styles={styles} />
-      <SearchField value={search} onChange={setSearch} placeholder={suggestions.length > 0 ? `Search ${suggestions.length} projects, or type a folder path` : "Type a folder path, e.g. ~/Develop/api"} label="Project to attach" styles={styles} />
-      <ScrollView style={{ maxHeight: 280 }} keyboardShouldPersistTaps="handled">
+              <IconButton icon={ICONS.close} label={`Remove ${link.name} from this workspace`} onPress={() => change.mutate(() => remove({ workspaceId, path: link.path }))} disabled={change.isPending} styles={styles} />
+            </View>
+          ))}
+        </View>
+      ) : null}
+      <SearchField value={search} onChange={setSearch} placeholder={suggestions.length > 0 ? "Attach a project, or type a folder path" : "Type a folder path to attach"} label="Project to attach" styles={styles} />
+      <ScrollView style={{ maxHeight: 240 }} keyboardShouldPersistTaps="handled">
         {folder && !matches.some((found) => found.path === folder) ? <ListRow title={`Attach folder ${folder}`} icon={ICONS.attach} onPress={() => attach(folder)} disabled={change.isPending} styles={styles} /> : null}
         {matches.slice(0, SHOWN).map((found) => (
           <ListRow key={found.path} title={found.name} meta={found.path} icon={ICONS.attach} onPress={() => attach(found.path)} disabled={change.isPending} accessibilityLabel={`Attach ${found.path}`} styles={styles} />
         ))}
-        {matches.length === 0 && !folder && data ? <Text style={[styles.note, { paddingHorizontal: 12, paddingVertical: 8 }]}>{words ? `No project matches "${search.trim()}". Type a folder path, such as ~/Develop/api, to attach any folder.` : "No other Paseo project to attach. Type a folder path, such as ~/Develop/api."}</Text> : null}
+        {matches.length === 0 && !folder && data ? <Text style={[styles.note, { paddingHorizontal: 12, paddingVertical: 8 }]}>{words ? `No project matches "${search.trim()}"` : "No other projects"}</Text> : null}
+        {matches.length > SHOWN ? <Text style={[styles.note, { paddingHorizontal: 12, paddingVertical: 8 }]}>{`${matches.length - SHOWN} more; type to narrow`}</Text> : null}
       </ScrollView>
-      {matches.length > SHOWN ? <Text style={styles.note}>{`Showing ${SHOWN} of ${matches.length}. Type to narrow the list.`}</Text> : null}
       {data?.sharedFolder && links.length > 0 ? (
-        <Text style={styles.note}>This workspace shares its folder with other workspaces, so chats started from Paseo's own new-chat button cannot be told apart and get no attached projects. Use New chat with attached projects.</Text>
+        <View style={styles.inline}>
+          <Icon name={ICONS.info} size={14} color={styles.colors.foregroundMuted} />
+          <Text style={[styles.note, styles.grow]}>Shared folder: start chats with New chat to get these projects.</Text>
+        </View>
       ) : null}
       {agentId && links.length > 0 ? (
         <View style={[styles.row, { borderTopWidth: 1, borderColor: styles.colors.border, paddingTop: 8, flexWrap: "wrap" }]}>
-          <Button label="New chat with attached projects" icon={ICONS.add} kind="primary" styles={styles} onPress={() => starting.mutate(false)} disabled={starting.isPending} />
-          <Button label="Continue this chat with them" icon={ICONS.link} styles={styles} onPress={() => starting.mutate(true)} disabled={starting.isPending} />
+          <Button label="New chat" icon={ICONS.add} kind="primary" styles={styles} onPress={() => starting.mutate(false)} disabled={starting.isPending} />
+          <Button label="Continue this chat in a new one" icon={ICONS.link} styles={styles} onPress={() => starting.mutate(true)} disabled={starting.isPending} />
         </View>
       ) : null}
     </View>
