@@ -13,6 +13,9 @@ export const linksQuery = (workspaceId: string) => ["contextualise", "links", wo
 const PAGE = 30;
 // How close to the end of the list, in points, counts as reaching it.
 const NEAR_END = 80;
+// Paseo caps a plugin popover at 440 points (app/src/plugins/popover.tsx). The list takes what the
+// tabs, search box, buttons, and each attached row (about 50) leave, so the heading stays in view.
+const listHeight = (attached: number) => (attached === 0 ? 260 : Math.max(120, 240 - 50 * attached));
 
 // Any link change in this client tells the composer pills to relabel.
 const listeners = new Set<() => void>();
@@ -120,7 +123,7 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
       />
       <SearchField value={search} onChange={searchFor} placeholder={`Attach a ${noun}, or type a folder path`} label={`${noun} to attach`} styles={styles} />
       <ScrollView
-        style={{ maxHeight: 240 }}
+        style={{ maxHeight: listHeight(links.length) }}
         keyboardShouldPersistTaps="handled"
         scrollEventThrottle={100}
         onScroll={({ nativeEvent: { layoutMeasurement, contentOffset, contentSize } }) => {
