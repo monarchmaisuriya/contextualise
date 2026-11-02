@@ -208,7 +208,7 @@ export class Generator {
   // A title and summary for one session, unless it already has one covering all its turns.
   async summarize(paseo: PaseoApi, project: ProjectRoot, agent: GenerationAgent): Promise<"done" | "skipped" | "capped"> {
     const values = await this.deps.settings();
-    if (!values.knowledgeGenerate || !(await this.deps.prefs.get(project.key)).enabled) return "skipped";
+    if (!values.knowledgeEnabled || !values.knowledgeGenerate || !(await this.deps.prefs.get(project.key)).enabled) return "skipped";
     const entries = await this.deps.readTimeline(paseo, agent.id);
     const turns = entries.filter((entry) => entry.item.type === "user_message").length;
     const store = await this.deps.base.open(project);

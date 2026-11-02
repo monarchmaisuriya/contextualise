@@ -102,6 +102,13 @@ describe("Generator", () => {
     expect(runWorker).not.toHaveBeenCalled();
   });
 
+  it("writes no summary while project knowledge is off, even with summaries on", async () => {
+    const repo = await project();
+    values = { ...values, knowledgeEnabled: false };
+    expect(await generator.summarize(paseo, repo, agents[0])).toBe("skipped");
+    expect(runWorker).not.toHaveBeenCalled();
+  });
+
   it("summarises a session once per set of turns, with secrets removed and the session's own provider", async () => {
     const repo = await project();
     const agent = agents[0];

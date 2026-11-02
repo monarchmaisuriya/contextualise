@@ -143,7 +143,15 @@ These are rebuilt whenever files change. On a 7,000-file Python repository the f
 
 Diagrams are drawn by Paseo's own Markdown renderer (Mermaid), so they follow the theme and open full screen. The project's documents render as Markdown; text an agent wrote stays plain text, so it cannot carry links or images.
 
-Attach > Project knowledge sends one entry (a document section, a code symbol, or a task) with your prompt.
+Attach > Project knowledge opens on one **Whole project** row per project: the project's description, its main areas, the full text of its conventions, architecture documents, and decisions not superseded, and its recent work, in one attachment of at most 60,000 characters (about 15,000 tokens). A document that does not fit is left out whole and named. The row says how many documents fit and its size before you send it. Typing searches every project at once and offers one entry (a document section, a code symbol, or a task) per row. The picker answers from what is already read and never waits for a project to be checked again; that check starts in the background, so a file changed in the last seconds may show its earlier text until the next search.
+
+**Turning it off.** The "Project knowledge" switch in Settings > Contextualise turns all of it off:
+- new agents get no map or tools;
+- nothing is read, checked, or recorded, and no summaries are written;
+- Attach > Project knowledge offers nothing;
+- the sidebar row is hidden, and the screen and tab say it is off, with **Turn on**.
+
+The knowledge tool server keeps listening so that agents already given it still load (OpenCode will not load an agent whose tool server refuses connections); while off, each of its tools answers that knowledge is off. What was read stays on disk, so turning it on again is instant.
 
 ### With Memorise
 
@@ -164,7 +172,7 @@ In the composer, Attach offers four sources:
 | **Tag** | The tag's workspaces (project, name, folder), its links, its fetched items, and each tagged agent's most recent turns |
 | **Agent conversation** | One agent's most recent turns, from any workspace or provider on this host |
 | **Terminal output** | The newest lines of any terminal on this host |
-| **Project knowledge** | One document section, code symbol, or finished task from any indexed repository |
+| **Project knowledge** | A whole project (its description, areas, design documents, rules, decisions, and recent work), or one document section, code symbol, or finished task from any indexed repository |
 
 Each picker row says what is inside before you send it: providers and member counts for a tag, workspace and length for a terminal, and for all of them an estimated size (`~1.2k tokens`: characters divided by 4, so code and non-English text can differ). Pinned agents come first and say "pinned".
 
@@ -195,7 +203,7 @@ Settings > Contextualise opens on eight switches and choices: knowledge on, incl
 
 | Section | Setting | Default |
 | --- | --- | --- |
-| Project knowledge | Give new agents knowledge of the project | on |
+| Project knowledge | Project knowledge (off stops all of it) | on |
 | | Index code symbols | on |
 | | Suggest memory fixes to Memorise | on (acts only when Memorise 0.10 or later runs) |
 | | Project map length (lines); 0 gives the tools without a map | 40 (0 to 150) |

@@ -236,6 +236,30 @@ export class KnowledgeStore {
     return rows.map((row) => ({ ...row, line: Number(row.line) })).sort((a, b) => a.line - b.line);
   }
 
+  // Every document of these kinds with its sections in file order, by path. One pass over the
+  // sections: their path and kind are not indexed, so a lookup per document would read them all each
+  // time. A long section is stored in parts under one line, kept in the order they were written.
+  documentsOf(kinds: readonly KnowledgeKind[]): Map<string, { kind: KnowledgeKind; sections: { title: string; body: string }[] }> {
+    const documents = new Map<string, { kind: KnowledgeKind; sections: { title: string; body: string }[] }>();
+    if (kinds.length === 0) return documents;
+    const rows = this.db
+      .prepare(`SELECT path, kind, title, body FROM chunks WHERE kind IN (${kinds.map(() => "?").join(", ")}) ORDER BY path, CAST(line AS INTEGER), rowid`)
+      .all(...kinds) as { path: string; kind: KnowledgeKind; title: string; body: string }[];
+    for (const row of rows) {
+      const document = documents.get(row.path) ?? { kind: row.kind, sections: [] };
+      document.sections.push({ title: row.title, body: row.body });
+      documents.set(row.path, document);
+    }
+    return documents;
+  }
+
+  // The text of each of these entries, in one pass over the sections (their id is not indexed).
+  bodies(ids: readonly string[]): Map<string, string> {
+    if (ids.length === 0) return new Map();
+    const rows = this.db.prepare(`SELECT id, body FROM chunks WHERE id IN (${ids.map(() => "?").join(", ")})`).all(...ids) as { id: string; body: string }[];
+    return new Map(rows.map((row) => [row.id, row.body]));
+  }
+
   read(id: string): StoredEntry | null {
     const row = this.db.prepare("SELECT id, kind, path, line, title, body FROM chunks WHERE id = ?").get(id) as unknown as StoredEntry | undefined;
     return row ? { ...row, line: Number(row.line) } : null;

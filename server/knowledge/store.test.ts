@@ -31,6 +31,12 @@ describe("KnowledgeStore", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("reads the text of several entries in one pass, leaving out ids that do not exist", () => {
+    store.replaceSource({ path: "README.md", kind: "doc", blob: "r", chunks: [{ title: "Api", body: "Read me.", line: 1 }, { title: "Api > Run", body: "npm start", line: 3 }] });
+    expect(store.bodies(["doc:README.md:3", "doc:README.md:1", "doc:gone.md:1"])).toEqual(new Map([["doc:README.md:1", "Read me."], ["doc:README.md:3", "npm start"]]));
+    expect(store.bodies([])).toEqual(new Map());
+  });
+
   it("keeps the links between files, replaces them together, and drops them on a reset", () => {
     store.replaceSource({ path: "src/a.ts", kind: "code", blob: "1", chunks: [] });
     store.replaceSource({ path: "src/b.ts", kind: "code", blob: "2", chunks: [] });

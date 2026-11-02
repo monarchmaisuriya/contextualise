@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadTokenSecret, TokenAuthority } from "./auth";
 import { KnowledgeBase } from "./base";
 import { projectRoot } from "./git";
-import { KNOWLEDGE_SERVER, KNOWLEDGE_TOOLS, KnowledgeMcp, knowledgeServerEntry } from "./mcp";
+import { KNOWLEDGE_OFF, KNOWLEDGE_SERVER, KNOWLEDGE_TOOLS, KnowledgeMcp, knowledgeServerEntry } from "./mcp";
 import { KnowledgeService } from "./service";
 import { SymbolReader } from "./symbols";
 
@@ -21,6 +21,7 @@ describe("knowledge tools", () => {
   let base: KnowledgeBase;
   let tokens: TokenAuthority;
   let related: ((repoKey: string, path: string) => Promise<{ id: string; subject: string }[]>) | null;
+  let knowledgeOn: boolean;
   const calls: [string, string, string][] = [];
   const clients: Client[] = [];
 
@@ -49,7 +50,8 @@ describe("knowledge tools", () => {
     related = null;
     tokens = new TokenAuthority(await loadTokenSecret(root));
     calls.length = 0;
-    http = await new KnowledgeMcp(tokens, new KnowledgeService(base, async () => related), { recordCall: async (repoKey, tool, token) => void calls.push([repoKey, tool, token]) }).listen(0);
+    knowledgeOn = true;
+    http = await new KnowledgeMcp(tokens, new KnowledgeService(base, async () => related), { recordCall: async (repoKey, tool, token) => void calls.push([repoKey, tool, token]) }, async () => knowledgeOn).listen(0);
   });
   afterEach(async () => {
     for (const client of clients.splice(0)) await client.close();
@@ -63,6 +65,19 @@ describe("knowledge tools", () => {
   it("offers only read tools", async () => {
     const client = await connect(tokens.mint({ repoKey: "local/abc", top }));
     expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([...KNOWLEDGE_TOOLS]);
+  });
+
+  it("answers every tool with knowledge off while it is off, reading and counting nothing", async () => {
+    const client = await connect(tokens.mint({ repoKey: "local/abc", top }));
+    knowledgeOn = false;
+    const inputs: Record<string, unknown> = { knowledge_search: { query: "sqlite" }, knowledge_read: { id: "x" }, knowledge_outline: { path: "docs" }, knowledge_history: { path: "docs" }, knowledge_impact: { paths: ["shared"] } };
+    for (const name of KNOWLEDGE_TOOLS) {
+      const result = await client.callTool({ name, arguments: inputs[name] as Record<string, unknown> });
+      expect(result, name).toMatchObject({ isError: true });
+      expect(textOf(result)).toBe(KNOWLEDGE_OFF);
+    }
+    expect(calls).toEqual([]);
+    expect(await base.projects()).toEqual([]);
   });
 
   it("tells the agent when to use its tools, so it can find them while they are deferred", async () => {

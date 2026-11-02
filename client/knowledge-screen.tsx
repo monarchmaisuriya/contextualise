@@ -1,7 +1,7 @@
 import { type PluginScreenProps, type PluginWorkspacePanelProps, useRpc, useSettings } from "@getpaseo/plugin/client";
 import { Icon, useToast } from "@getpaseo/plugin/client/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { snapshotSettings } from "../shared/contracts";
 import { BRIEF_ID, browseKnowledgeRpc, describeProjectRpc, explainAreaRpc, fileConnectionsRpc, generateKnowledgeRpc, KIND_LABELS, type KnowledgeKind, knowledgeOverviewRpc, knowledgeUsageRpc, listProjectsRpc, listTasksRpc, pinEntryRpc, type Project, projectForWorkspaceRpc, readKnowledgeRpc, reindexRpc, type SearchHit, searchKnowledgeRpc, setProjectEnabledRpc } from "../shared/knowledge";
@@ -431,11 +431,25 @@ export function KnowledgeView(props: ({ fixedRepoKey: string } | { hostId: strin
   );
 }
 
+// While "Project knowledge" is off nothing is read: the screens say so and offer to turn it on.
+function KnowledgeOn({ styles, children }: { styles: Styles; children: ReactNode }) {
+  const settings = useSettings(snapshotSettings);
+  if (settings.status === "loading") return <StateView state="loading" styles={styles} />;
+  if (settings.status !== "ready") return <StateView state="error" text={`Contextualise settings could not be read (${settings.error}); fix or reset them in Settings > Contextualise.`} styles={styles} />;
+  if (!settings.values.knowledgeEnabled) {
+    const turnOn = () => void settings.save({ ...settings.values, knowledgeEnabled: true }, settings.revision);
+    return <StateView state="empty" text="Project knowledge is off: agents get no project overview or search, and no project is read." actions={[{ label: "Turn on", icon: ICONS.knowledge, onPress: turnOn }]} styles={styles} />;
+  }
+  return <>{children}</>;
+}
+
 export function KnowledgeScreen({ theme, layout, host, params, navigation }: PluginScreenProps) {
   const styles = useStyles(theme, layout.compact);
   return (
     <Page styles={styles}>
-      <KnowledgeView styles={styles} navigation={navigation} hostId={host.id} initialRepoKey={params.repoKey} />
+      <KnowledgeOn styles={styles}>
+        <KnowledgeView styles={styles} navigation={navigation} hostId={host.id} initialRepoKey={params.repoKey} />
+      </KnowledgeOn>
     </Page>
   );
 }
@@ -446,14 +460,24 @@ export function KnowledgeScreen({ theme, layout, host, params, navigation }: Plu
 // always uses the phone layout.
 export function WorkspaceKnowledgePanel({ theme, workspaceId, navigation }: PluginWorkspacePanelProps) {
   const styles = useStyles(theme, true);
+  return (
+    <Page styles={styles}>
+      <KnowledgeOn styles={styles}>
+        <WorkspaceProject workspaceId={workspaceId} navigation={navigation} styles={styles} />
+      </KnowledgeOn>
+    </Page>
+  );
+}
+
+function WorkspaceProject({ workspaceId, navigation, styles }: { workspaceId: string; navigation: Navigation; styles: Styles }) {
   const projectFor = useRpc(projectForWorkspaceRpc);
   const owner = useQuery({ queryKey: ["contextualise", "knowledge", "project-for", workspaceId], queryFn: () => projectFor({ workspaceId }) });
   return (
-    <Page styles={styles}>
+    <>
       {owner.error ? <StateView state="error" text={errorText(owner.error)} styles={styles} /> : null}
       {owner.isPending ? <StateView state="loading" styles={styles} /> : null}
       {owner.data && owner.data.repoKey === null ? <StateView state="empty" text="This folder gets no project knowledge (it is your home folder, a drive root, or plugin data)." styles={styles} /> : null}
       {owner.data?.repoKey ? <KnowledgeView styles={styles} navigation={navigation} fixedRepoKey={owner.data.repoKey} /> : null}
-    </Page>
+    </>
   );
 }
