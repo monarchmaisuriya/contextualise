@@ -7,8 +7,8 @@ import { LinkedProjects, onLinksChanged } from "./linked-projects";
 
 const PILL_ID = "linked-projects";
 
-// An Attached pill on every active agent's composer. Its label counts the workspace's attached
-// projects; pressing it opens a popover to attach or detach them and to start a chat that has them.
+// An Attach pill on every active agent's composer, "Attached (n)" once the workspace has attached
+// projects or workspaces; pressing it opens a popover to attach or detach them and to start a chat that has them.
 export function followLinkPills(client: PluginClientContext): () => void {
   const pills = new Map<string, { registration: PluginButtonRegistration; workspaceId: string }>();
   const counts = new Map<string, number>();
@@ -39,7 +39,7 @@ export function followLinkPills(client: PluginClientContext): () => void {
 
   const label = (workspaceId: string) => {
     const count = counts.get(workspaceId) ?? 0;
-    return count > 0 ? `Attached ${count}` : "Attached";
+    return count > 0 ? `Attached (${count})` : "Attach";
   };
 
   function drop(agentId: string) {

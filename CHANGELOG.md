@@ -2,6 +2,12 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.25.1 - 2026-11-03
+
+### Changed
+
+- **The Attached button reads Attach** while nothing is attached, and **Attached (2)** once projects or workspaces are.
+
 ## 0.25.0 - 2026-11-02
 
 ### Added
