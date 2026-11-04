@@ -224,6 +224,20 @@ describe("attached files", () => {
       expect(row.identifier).toBe("File");
     });
 
+    it("tells rows apart whose titles would look the same, by the folder where their paths differ", async () => {
+      for (const kind of ["email-automation", "sms-automation"]) write(join(repo, "src", "modules", kind, "hooks", "useActivateAutomation.ts"));
+      write(join(repo, "src", "a", "index.ts"));
+      write(join(repo, "src", "b", "index.ts"));
+      const web = join(root, "web");
+      gitRepo(web);
+      write(join(web, "src", "a", "index.ts"));
+      const titles = async (query: string) =>
+        (await searchAttachedFiles([{ path: repo, name: "dashboard" }, { path: web, name: "web" }], new FolderListings(listFolderFiles), query, options)).map((row) => row.title).sort();
+      expect(await titles("useActivateAutomation")).toEqual(["email-automation/…/useActivateAutomation.ts", "sms-automation/…/useActivateAutomation.ts", "src/automation/useActivateAutomation.ts"]);
+      // Only titles that collide change; the same path in two projects is told apart by the project.
+      expect(await titles("index.ts")).toEqual(["dashboard/…/index.ts", "src/b/index.ts", "web/…/index.ts"]);
+    });
+
     // Paseo keeps a row when every word is in its label ("identifier title") or id, or else every word
     // is in its subtitle (app/src/components/ui/combobox-options.ts), each word inside one field.
     it("returns rows Paseo's own filter keeps", async () => {

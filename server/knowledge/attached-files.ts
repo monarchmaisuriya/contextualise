@@ -202,6 +202,32 @@ function attachedFileItem(entry: FolderEntry, options: { titleMaxChars: number; 
   };
 }
 
+// Rows whose titles read the same (one name under folders of one name, cut to the same end, or one
+// path in two projects) are retitled by the nearest folder where their paths differ, the project's
+// name counting as the top folder: "email-automation/…/useActivateAutomation.ts". Telling them apart
+// matters more than the title limit, so such a title may pass it.
+function tellApart(rows: readonly { entry: FolderEntry; row: PluginAttachmentItem }[]): void {
+  const byTitle = new Map<string, { entry: FolderEntry; row: PluginAttachmentItem }[]>();
+  for (const found of rows) byTitle.set(found.row.title, [...(byTitle.get(found.row.title) ?? []), found]);
+  for (const group of byTitle.values()) {
+    if (group.length < 2) continue;
+    const parts = group.map(({ entry }) => [entry.folder.name, ...(entry.path === "" ? [] : entry.path.split("/"))]);
+    const sharedEnd = (a: readonly string[], b: readonly string[]) => {
+      let shared = 0;
+      while (shared < a.length && shared < b.length && a[a.length - 1 - shared] === b[b.length - 1 - shared]) shared += 1;
+      return shared;
+    };
+    group.forEach(({ row }, index) => {
+      const own = parts[index];
+      const shared = Math.max(...parts.map((other, at) => (at === index ? 0 : sharedEnd(own, other))));
+      if (shared >= own.length) return;
+      const differs = own[own.length - 1 - shared];
+      const name = own[own.length - 1];
+      row.title = shared === 0 ? name : shared === 1 ? `${differs}/${name}` : `${differs}/…/${name}`;
+    });
+  }
+}
+
 // The rows for a search over the attached folders. A folder that cannot be listed is logged and left
 // out. Each row is checked on disk: a file deleted since it was listed is dropped, and anything that
 // is a folder now (a link to a folder) is offered as one. A path offered through two attached folders
@@ -224,11 +250,12 @@ export async function searchAttachedFiles(folders: readonly AttachedFolder[], li
       return info ? { ...entry, kind: info.isDirectory() ? ("folder" as const) : ("file" as const) } : null;
     }),
   );
-  const rows = new Map<string, PluginAttachmentItem>();
+  const rows = new Map<string, { entry: FolderEntry; row: PluginAttachmentItem }>();
   for (const entry of present) {
     if (!entry || rows.size >= PICKER_ROWS) continue;
     const row = attachedFileItem(entry, options);
-    if (!rows.has(row.id)) rows.set(row.id, row);
+    if (!rows.has(row.id)) rows.set(row.id, { entry, row });
   }
-  return [...rows.values()];
+  tellApart([...rows.values()]);
+  return [...rows.values()].map(({ row }) => row);
 }
