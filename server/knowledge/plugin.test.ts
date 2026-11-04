@@ -678,6 +678,10 @@ describe("contributeKnowledge", () => {
         expect(await available()).toBe(false);
       });
 
+      it("refuses the Project files tab for a workspace Paseo does not have", async () => {
+        await expect(call("links.workspace-files", { workspaceId: "gone", query: "" })).rejects.toThrow("Paseo has no workspace gone");
+      });
+
       it("leaves out the links of a workspace Paseo no longer has", async () => {
         await call("links.add", { workspaceId: "w2", path: api });
         workspaceEntries.splice(workspaceEntries.findIndex((entry) => entry.id === "w2"), 1);

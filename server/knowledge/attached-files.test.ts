@@ -238,6 +238,17 @@ describe("attached files", () => {
       expect(await titles("index.ts")).toEqual(["dashboard/…/index.ts", "src/b/index.ts", "web/…/index.ts"]);
     });
 
+    it("tells apart two attached folders of one name by the folders above them", async () => {
+      const first = join(root, "wt1", "api");
+      const second = join(root, "wt2", "api");
+      for (const folder of [first, second]) {
+        gitRepo(folder);
+        write(join(folder, "src", "queue.ts"));
+      }
+      const rows = await searchAttachedFiles([{ path: first, name: "api" }, { path: second, name: "api" }], new FolderListings(listFolderFiles), "queue.ts", options);
+      expect(rows.map((row) => row.title).sort()).toEqual(["wt1/…/queue.ts", "wt2/…/queue.ts"]);
+    });
+
     // Paseo keeps a row when every word is in its label ("identifier title") or id, or else every word
     // is in its subtitle (app/src/components/ui/combobox-options.ts), each word inside one field.
     it("returns rows Paseo's own filter keeps", async () => {

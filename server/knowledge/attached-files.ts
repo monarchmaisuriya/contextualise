@@ -189,15 +189,16 @@ export interface FoundEntry extends FolderEntry {
 }
 
 // Rows whose titles read the same (one name under folders of one name, cut to the same end, or one
-// path in two projects) are retitled by the nearest folder where their paths differ, the project's
-// name counting as the top folder: "email-automation/…/useActivateAutomation.ts". Telling them apart
-// matters more than the title limit, so such a title may pass it.
+// path in two projects) are retitled by the nearest folder of their absolute paths where they differ:
+// "email-automation/…/useActivateAutomation.ts", or the project's folder, or a folder above it when
+// two attached folders share a name. Telling them apart matters more than the title limit, so such a
+// title may pass it.
 function tellApart(found: readonly FoundEntry[]): void {
   const byTitle = new Map<string, FoundEntry[]>();
   for (const entry of found) byTitle.set(entry.title, [...(byTitle.get(entry.title) ?? []), entry]);
   for (const group of byTitle.values()) {
     if (group.length < 2) continue;
-    const parts = group.map((entry) => [entry.folder.name, ...(entry.path === "" ? [] : entry.path.split("/"))]);
+    const parts = group.map((entry) => entry.absolute.split("/").filter((part) => part !== ""));
     const sharedEnd = (a: readonly string[], b: readonly string[]) => {
       let shared = 0;
       while (shared < a.length && shared < b.length && a[a.length - 1 - shared] === b[b.length - 1 - shared]) shared += 1;

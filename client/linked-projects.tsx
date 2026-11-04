@@ -4,6 +4,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { useState } from "react";
 import { Text, View } from "react-native";
 import { addLinkRpc, mentionPath, newLinkedChatRpc, removeLinkRpc, workspaceFilesRpc, workspaceLinksRpc } from "../shared/linked-projects";
+import { type AttachTab, attachTabs, shownTab } from "./attach-tabs";
 import { errorText } from "./errors";
 import { ICONS } from "./icons";
 import { Button, IconButton, ListRow, SearchField, Segmented, StateView, type Styles } from "./kit";
@@ -29,15 +30,8 @@ function linksChanged(): void {
   for (const listener of listeners) listener();
 }
 
-// The tab last chosen, kept while the app runs, so the popover opens where M left it. Project files
-// lists the attached projects' files, so it shows only once something is attached.
-type AttachKind = "projects" | "workspaces" | "files";
-const KINDS = [
-  { label: "Projects", value: "projects" },
-  { label: "Workspaces", value: "workspaces" },
-] as const;
-const WITH_FILES = [...KINDS, { label: "Project files", value: "files" }] as const;
-let lastKind: AttachKind = "projects";
+// The tab last chosen, kept while the app runs, so the popover opens where M left it.
+let lastTab: AttachTab = "projects";
 
 // What was typed is a folder, not a search: it starts like a path.
 const typedFolder = (text: string) => (/^[~/.]/.test(text.trim()) ? text.trim() : null);
@@ -54,7 +48,7 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
   const remove = useRpc(removeLinkRpc);
   const newChat = useRpc(newLinkedChatRpc);
   const [search, setSearch] = useState("");
-  const [chosen, setKind] = useState<AttachKind>(lastKind);
+  const [chosen, setTab] = useState<AttachTab>(lastTab);
   const [shown, setShown] = useState(PAGE);
   const searchFor = (text: string) => {
     setSearch(text);
@@ -79,32 +73,18 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
   });
   const data = query.data;
   const links = data?.links ?? [];
-  const kind: AttachKind = chosen === "files" && links.length === 0 ? "projects" : chosen;
-  // Searched on the daemon, ranked like Attach > Project file; picking a row copies its path the way
-  // `@` writes one, since a plugin cannot write into the message box.
-  const listFiles = useRpc(workspaceFilesRpc);
-  const files = useQuery({
-    queryKey: ["contextualise", "workspace-files", workspaceId, search.trim()],
-    queryFn: () => listFiles({ workspaceId, query: search.trim() }),
-    enabled: kind === "files",
-    placeholderData: keepPreviousData,
-  });
-  const copyPath = (path: string, title: string) =>
-    copyText(mentionPath(path)).then(
-      () => toast.show(`Copied ${title}; paste it into your message`, { variant: "success" }),
-      (error: unknown) => toast.error(`Could not copy the path: ${errorText(error)}`),
-    );
+  const attachedCount = data ? links.length : null;
+  const tab = shownTab(chosen, attachedCount);
   const words = search.trim().toLowerCase();
   const has = (...texts: (string | null)[]) => words === "" || texts.some((text) => text?.toLowerCase().includes(words));
   // One row shape for both tabs: a project by its folder, a workspace by its title, branch, and project.
   const rows =
-    kind === "projects"
+    tab === "projects"
       ? (data?.suggestions ?? []).filter((found) => has(found.name, found.path)).map((found) => ({ key: found.path, title: found.name, meta: found.path, path: found.path, attachedWorkspaceId: undefined }))
       : (data?.workspaces ?? []).filter((found) => has(found.name, found.project, found.branch, found.path)).map((found) => ({ key: found.workspaceId, title: found.name, meta: [found.branch, found.project].filter(Boolean).join(" · "), path: found.path, attachedWorkspaceId: found.workspaceId }));
   const folder = typedFolder(search);
   const attach = (path: string, attachedWorkspaceId?: string) => change.mutate(() => add({ workspaceId, path, ...(attachedWorkspaceId ? { attachedWorkspaceId } : {}) }));
-  const noun = kind === "projects" ? "project" : "workspace";
-  const fileRows = kind === "files" ? (files.data?.files ?? []) : [];
+  const noun = tab === "projects" ? "project" : "workspace";
   return (
     <View style={{ gap: 8 }}>
       {query.error ? <StateView state="error" text={`Could not load attached projects: ${errorText(query.error)}`} styles={styles} /> : null}
@@ -129,45 +109,38 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
         </View>
       ) : null}
       <Segmented
-        options={links.length > 0 ? WITH_FILES : KINDS}
-        value={kind}
+        options={attachTabs(attachedCount)}
+        value={tab}
         onChange={(next) => {
-          lastKind = next;
-          setKind(next);
+          lastTab = next;
+          setTab(next);
           setShown(PAGE);
         }}
-        label="What to attach"
+        label="Attached button tabs"
         styles={styles}
         stretch
       />
-      {kind === "files" ? (
-        <SearchField value={search} onChange={searchFor} placeholder="Search files and folders in attached projects" label="File or folder to copy" styles={styles} />
+      {tab === "files" ? (
+        <ProjectFiles workspaceId={workspaceId} attached={links.map((link) => link.path)} maxHeight={listHeight(links.length)} styles={styles} />
       ) : (
-        <SearchField value={search} onChange={searchFor} placeholder={`Attach a ${noun}, or type a folder path`} label={`${noun} to attach`} styles={styles} />
-      )}
-      <ScrollView
-        style={{ maxHeight: listHeight(links.length) }}
-        keyboardShouldPersistTaps="handled"
-        scrollEventThrottle={100}
-        onScroll={({ nativeEvent: { layoutMeasurement, contentOffset, contentSize } }) => {
-          if (shown < rows.length && layoutMeasurement.height + contentOffset.y >= contentSize.height - NEAR_END) setShown(shown + PAGE);
-        }}
-      >
-        {kind === "files" ? (
-          <>
-            {fileRows.map((row) => (
-              <ListRow key={row.path} title={row.title} meta={row.project} icon={row.kind === "folder" ? ICONS.folder : ICONS.file} onPress={() => void copyPath(row.path, row.title)} accessibilityLabel={`Copy the path of ${row.title}`} styles={styles} />
+        <>
+          <SearchField value={search} onChange={searchFor} placeholder={`Attach a ${noun}, or type a folder path`} label={`${noun} to attach`} styles={styles} />
+          <ScrollView
+            style={{ maxHeight: listHeight(links.length) }}
+            keyboardShouldPersistTaps="handled"
+            scrollEventThrottle={100}
+            onScroll={({ nativeEvent: { layoutMeasurement, contentOffset, contentSize } }) => {
+              if (shown < rows.length && layoutMeasurement.height + contentOffset.y >= contentSize.height - NEAR_END) setShown(shown + PAGE);
+            }}
+          >
+            {folder && !rows.some((row) => row.path === folder) ? <ListRow title={`Attach folder ${folder}`} icon={ICONS.attach} onPress={() => attach(folder)} disabled={change.isPending} styles={styles} /> : null}
+            {rows.slice(0, shown).map((row) => (
+              <ListRow key={row.key} title={row.title} meta={row.meta} icon={tab === "projects" ? ICONS.attach : ICONS.workspace} onPress={() => attach(row.path, row.attachedWorkspaceId)} disabled={change.isPending} accessibilityLabel={`Attach ${row.title}`} styles={styles} />
             ))}
-            {files.error ? <StateView state="error" text={`Could not list the attached projects' files: ${errorText(files.error)}`} styles={styles} /> : null}
-            {fileRows.length === 0 && !files.error ? <Text style={[styles.note, { paddingHorizontal: 12, paddingVertical: 8 }]}>{files.isFetching ? "Searching…" : words ? `No file or folder matches "${search.trim()}"` : "No files"}</Text> : null}
-          </>
-        ) : null}
-        {kind !== "files" && folder && !rows.some((row) => row.path === folder) ? <ListRow title={`Attach folder ${folder}`} icon={ICONS.attach} onPress={() => attach(folder)} disabled={change.isPending} styles={styles} /> : null}
-        {(kind === "files" ? [] : rows.slice(0, shown)).map((row) => (
-          <ListRow key={row.key} title={row.title} meta={row.meta} icon={kind === "projects" ? ICONS.attach : ICONS.workspace} onPress={() => attach(row.path, row.attachedWorkspaceId)} disabled={change.isPending} accessibilityLabel={`Attach ${row.title}`} styles={styles} />
-        ))}
-        {kind !== "files" && rows.length === 0 && !folder && data ? <Text style={[styles.note, { paddingHorizontal: 12, paddingVertical: 8 }]}>{words ? `No ${noun} matches "${search.trim()}"` : `No other ${noun}s`}</Text> : null}
-      </ScrollView>
+            {rows.length === 0 && !folder && data ? <Text style={[styles.note, { paddingHorizontal: 12, paddingVertical: 8 }]}>{words ? `No ${noun} matches "${search.trim()}"` : `No other ${noun}s`}</Text> : null}
+          </ScrollView>
+        </>
+      )}
       {data?.sharedFolder && links.length > 0 ? (
         <View style={styles.inline}>
           <Icon name={ICONS.info} size={14} color={styles.colors.foregroundMuted} />
@@ -182,5 +155,39 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
         </View>
       ) : null}
     </View>
+  );
+}
+
+// The Project files tab: files and folders of this workspace's attached projects, searched on the
+// daemon and ranked like Attach > Project file. Picking a row copies its path the way `@` writes one,
+// since a plugin cannot write into the message box. The attached folders are part of the query key,
+// so attaching or detaching one lists again.
+function ProjectFiles({ workspaceId, attached, maxHeight, styles }: { workspaceId: string; attached: readonly string[]; maxHeight: number; styles: Styles }) {
+  const toast = useToast();
+  const listFiles = useRpc(workspaceFilesRpc);
+  const [search, setSearch] = useState("");
+  const words = search.trim();
+  const files = useQuery({
+    queryKey: ["contextualise", "workspace-files", workspaceId, [...attached].sort().join("\n"), words],
+    queryFn: () => listFiles({ workspaceId, query: words }),
+    placeholderData: keepPreviousData,
+  });
+  const rows = files.data?.files ?? [];
+  const copyPath = (path: string, title: string) =>
+    copyText(mentionPath(path)).then(
+      () => toast.show(`Copied ${title}; paste it into your message`, { variant: "success" }),
+      (error: unknown) => toast.error(`Could not copy the path: ${errorText(error)}`),
+    );
+  return (
+    <>
+      <SearchField value={search} onChange={setSearch} placeholder="Search files and folders in attached projects" label="File or folder to copy" styles={styles} />
+      <ScrollView style={{ maxHeight }} keyboardShouldPersistTaps="handled">
+        {rows.map((row) => (
+          <ListRow key={row.path} title={row.title} meta={row.project} icon={row.kind === "folder" ? ICONS.folder : ICONS.file} onPress={() => void copyPath(row.path, row.title)} accessibilityLabel={`Copy the path of ${row.title} in ${row.project}`} styles={styles} />
+        ))}
+        {files.error ? <StateView state="error" text={`Could not list the attached projects' files: ${errorText(files.error)}`} styles={styles} /> : null}
+        {rows.length === 0 && !files.error ? <Text style={[styles.note, { paddingHorizontal: 12, paddingVertical: 8 }]}>{files.isFetching ? "Searching…" : words ? `No file or folder matches "${words}"` : "No files"}</Text> : null}
+      </ScrollView>
+    </>
   );
 }

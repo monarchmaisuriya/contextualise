@@ -195,18 +195,30 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     for await (const workspace of allWorkspaces(paseo)) if (workspace.id === workspaceId) return workspace;
     throw new Error(`Paseo has no workspace ${workspaceId}`);
   };
-  // A workspace's links, without any attached workspace Paseo no longer has (archived or deleted): its
-  // folder may since belong to another worktree.
-  const liveLinks = async (paseo: PaseoApi, workspaceId: string) => {
-    const found = await links.list(workspaceId);
-    if (!found.some((link) => link.workspaceId)) return found;
-    const live = new Set<string>();
-    for await (const entry of allWorkspaces(paseo)) live.add(entry.id);
-    return found.filter((link) => {
-      if (!link.workspaceId || live.has(link.workspaceId)) return true;
-      console.error(`[contextualise] left attached workspace ${link.workspaceId} (${link.path}) out: Paseo no longer has it`);
-      return false;
-    });
+  // The links that still count, by workspace, each with the name it is shown by: an attached workspace
+  // by its project and title, a folder by its own name. A link to an attached workspace Paseo no longer
+  // has (archived or deleted) is left out: its folder may since belong to another worktree. Given one
+  // workspace, which the caller knows Paseo has, only its links are read, and Paseo's workspaces only
+  // when one of them is an attached workspace; otherwise the links of workspaces Paseo no longer has
+  // are left out too. Every reader of attached projects goes through here.
+  const liveLinks = async (paseo: PaseoApi, only?: string): Promise<Map<string, (WorkspaceLink & { name: string })[]>> => {
+    const all = await links.all();
+    const scoped = only === undefined ? Object.entries(all) : [[only, all[only] ?? []] as const];
+    const labels = new Map<string, string>();
+    if (only === undefined || scoped.some(([, found]) => found.some((link) => link.workspaceId))) {
+      for await (const entry of allWorkspaces(paseo)) labels.set(entry.id, `${entry.projectCustomName ?? entry.projectDisplayName} / ${workspaceTitle(entry)}`);
+    }
+    const live = new Map<string, (WorkspaceLink & { name: string })[]>();
+    for (const [workspaceId, found] of scoped) {
+      if (only === undefined && !labels.has(workspaceId)) continue;
+      const kept = found.filter((link) => {
+        if (!link.workspaceId || labels.has(link.workspaceId)) return true;
+        console.error(`[contextualise] left attached workspace ${link.workspaceId} (${link.path}) out: Paseo no longer has it`);
+        return false;
+      });
+      live.set(workspaceId, kept.map((link) => ({ ...link, name: (link.workspaceId && labels.get(link.workspaceId)) || basename(link.path) })));
+    }
+    return live;
   };
   // The projects attached to a workspace now, as Contextualise reads them; a folder that no longer
   // reads as the project it was attached as is left out.
@@ -256,7 +268,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       // since it was linked is left out.
       const home = await paseoHome();
       const found = [];
-      for (const link of workspaceId ? await liveLinks(paseo, workspaceId) : []) {
+      for (const link of workspaceId ? ((await liveLinks(paseo, workspaceId)).get(workspaceId) ?? []) : []) {
         const still = await linkableFolder(link.path, cwd, [home]).catch(() => null);
         if (still === link.path) found.push(link);
         else console.error(`[contextualise] left linked folder ${link.path} out of a chat in ${cwd}: it moved, is gone, or now points elsewhere`);
@@ -579,36 +591,32 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   const linksPayload = async (paseo: PaseoApi, workspaceId: string): Promise<WorkspaceLinksPayload> => {
     const workspace = await workspaceById(paseo, workspaceId);
     const folder = workspaceFolder(workspace);
-    const found = await liveLinks(paseo, workspaceId);
-    const labels = new Map<string, string>();
-    for await (const entry of allWorkspaces(paseo)) labels.set(entry.id, `${entry.projectCustomName ?? entry.projectDisplayName} / ${workspaceTitle(entry)}`);
+    const found = (await liveLinks(paseo, workspaceId)).get(workspaceId) ?? [];
     const suggestions = await suggestionsFor(paseo, workspace, folder, new Set(found.map((link) => link.path)));
     return {
-      links: found.map((link) => ({ ...link, name: (link.workspaceId && labels.get(link.workspaceId)) || basename(link.path) })),
+      links: found,
       sharedFolder: (await workspacesAt(paseo, folder)).length > 1,
       suggestions,
       workspaces: await workspaceSuggestions(paseo, workspace, folder, found, new Set(suggestions.map((entry) => entry.path))),
     };
   };
   server.handle(workspaceLinksRpc, async ({ workspaceId }, { paseo }) => linksPayload(remember(paseo), workspaceId));
-  // Attach > Project file searches every workspace's attached folders: Paseo does not tell an Attach
-  // search which workspace it is for. Paseo's workspaces are read once per search, to leave out the
-  // links of a workspace it no longer has (archived or deleted), links to an attached workspace it no
-  // longer has, and to name the rest. A folder whose real path is no longer the one attached (moved,
-  // replaced by a link, gone) is left out.
+  // The folders whose files are offered: the live links of every workspace (Attach > Project file:
+  // Paseo does not tell an Attach search which workspace it is for), or of one. As when a chat starts,
+  // a folder whose real path is no longer the one attached (moved, replaced by a link, gone) is left
+  // out, and the log says so.
   const fileListings = new FolderListings();
-  const attachedFolders = async (paseo: PaseoApi, onlyWorkspace?: string): Promise<AttachedFolder[]> => {
-    const labels = new Map<string, string>();
-    for await (const entry of allWorkspaces(paseo)) labels.set(entry.id, `${entry.projectCustomName ?? entry.projectDisplayName} / ${workspaceTitle(entry)}`);
+  const attachedFolders = async (paseo: PaseoApi, only?: string): Promise<AttachedFolder[]> => {
     const named = new Map<string, string>();
-    for (const [workspaceId, found] of Object.entries(await links.all())) {
-      if (!labels.has(workspaceId) || (onlyWorkspace !== undefined && workspaceId !== onlyWorkspace)) continue;
-      for (const link of found) {
-        if (link.workspaceId && !labels.has(link.workspaceId)) continue;
-        if (!named.has(link.path)) named.set(link.path, (link.workspaceId && labels.get(link.workspaceId)) || basename(link.path));
-      }
-    }
-    return (await Promise.all([...named].map(async ([path, name]) => ((await realpath(path).catch(() => null)) === path ? { path, name } : null)))).filter((folder) => folder !== null);
+    for (const found of (await liveLinks(paseo, only)).values()) for (const link of found) if (!named.has(link.path)) named.set(link.path, link.name);
+    const checked = await Promise.all(
+      [...named].map(async ([path, name]) => {
+        if ((await realpath(path).catch(() => null)) === path) return { path, name };
+        console.error(`[contextualise] left attached folder ${path} out of its file search: it moved, is gone, or now points elsewhere`);
+        return null;
+      }),
+    );
+    return checked.filter((folder) => folder !== null);
   };
   server.handle(searchAttachedFilesRpc, async ({ query }, { paseo }) => {
     const { pickerTitleMaxChars, pickerPrefix } = await deps.settings();
@@ -617,8 +625,9 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   server.handle(attachedFilesAvailableRpc, async (_input, { paseo }) => ({ available: (await attachedFolders(remember(paseo))).length > 0 }));
   // The Attached button's Project files tab: the same search over this workspace's attached projects.
   server.handle(workspaceFilesRpc, async ({ workspaceId, query }, { paseo }) => {
+    await workspaceById(remember(paseo), workspaceId);
     const { pickerTitleMaxChars } = await deps.settings();
-    const found = await findAttachedFiles(await attachedFolders(remember(paseo), workspaceId), fileListings, query, pickerTitleMaxChars);
+    const found = await findAttachedFiles(await attachedFolders(paseo, workspaceId), fileListings, query, pickerTitleMaxChars);
     return { files: found.map((entry) => ({ path: entry.absolute, kind: entry.kind, title: entry.title, project: entry.folder.name })) };
   });
   server.handle(addLinkRpc, async ({ workspaceId, path, attachedWorkspaceId }, { paseo }) => {
