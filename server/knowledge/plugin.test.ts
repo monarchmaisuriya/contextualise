@@ -636,6 +636,50 @@ describe("contributeKnowledge", () => {
       expect((await createIn(top)).config.providerOptions).toBeUndefined();
     });
 
+    describe("Attach > Project file", () => {
+      type Row = { id: string; title: string; subtitle: string; text: string };
+      const searchFiles = async (query: string) => ((await call("links.files-search", { query })) as { items: Row[] }).items;
+      beforeEach(() => {
+        mkdirSync(join(api, "src"));
+        writeFileSync(join(api, "src", "queue.ts"), "export {}");
+      });
+
+      it("offers files from every workspace's attached projects by absolute path, and nothing without links, while knowledge is off", async () => {
+        values = { ...values, knowledgeEnabled: false };
+        expect(await searchFiles("queue")).toEqual([]);
+        await call("links.add", { workspaceId: "w2", path: api });
+        const [row] = await searchFiles("queue");
+        expect(row).toMatchObject({ id: join(api, "src", "queue.ts"), title: "src/queue.ts", subtitle: `${basename(api)} · src/queue.ts` });
+        expect(row.text).toContain("Its content is not included");
+        expect(row.text).not.toContain("export {}");
+      });
+
+      it("searches a folder inside another attached folder once, and leaves out a folder that moved or became a link", async () => {
+        await call("links.add", { workspaceId: "w1", path: api });
+        await call("links.add", { workspaceId: "w2", path: join(api, "src") });
+        expect((await searchFiles("queue")).map((row) => row.id)).toEqual([join(api, "src", "queue.ts")]);
+        rmSync(api, { recursive: true, force: true });
+        mkdirSync(join(web2, "src"), { recursive: true });
+        writeFileSync(join(web2, "src", "queue.ts"), "");
+        symlinkSync(web2, api);
+        expect(await searchFiles("queue")).toEqual([]);
+      });
+
+      it("leaves out the links of a workspace Paseo no longer has", async () => {
+        await call("links.add", { workspaceId: "w2", path: api });
+        workspaceEntries.splice(workspaceEntries.findIndex((entry) => entry.id === "w2"), 1);
+        expect(await searchFiles("queue")).toEqual([]);
+      });
+
+      it("leaves out an attached workspace's folder once Paseo no longer has that workspace, and names it after the workspace until then", async () => {
+        workspaceEntries.push({ id: "wt", workspaceDirectory: api, projectId: "p-api", name: "lavish-otter", projectDisplayName: "api", workspaceKind: "worktree" });
+        await call("links.add", { workspaceId: "w1", path: api, attachedWorkspaceId: "wt" });
+        expect((await searchFiles("queue")).map((row) => row.subtitle)).toEqual(["api / lavish-otter · src/queue.ts"]);
+        workspaceEntries.splice(workspaceEntries.findIndex((entry) => entry.id === "wt"), 1);
+        expect(await searchFiles("queue")).toEqual([]);
+      });
+    });
+
     it("lists a workspace's links with whether its folder is shared, and works while knowledge is off", async () => {
       values = { ...values, knowledgeEnabled: false };
       const listed = (await call("links.add", { workspaceId: "w1", path: api })) as { links: { path: string; name: string; repoKey: string | null }[]; sharedFolder: boolean; suggestions: unknown[] };

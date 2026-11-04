@@ -1,4 +1,4 @@
-import { defineRpc } from "@getpaseo/plugin";
+import { defineAttachmentSource, defineRpc, PluginAttachmentSearchPayloadSchema } from "@getpaseo/plugin";
 import { z } from "zod";
 
 // Linked projects: folders M links to one Paseo workspace. Every new Claude or Codex chat in that
@@ -45,4 +45,18 @@ export const newLinkedChatRpc = defineRpc({
   name: "links.new-chat",
   input: workspaceInput.extend({ fromAgentId: z.string().min(1).max(200), carryConversation: z.boolean() }),
   output: z.object({ agentId: z.string() }),
+});
+
+// Attach > Project file: files and folders of every workspace's attached projects (the search is not
+// told which workspace it is for). A row attaches the path, not the content.
+export const searchAttachedFilesRpc = defineRpc({ name: "links.files-search", input: z.object({ query: z.string() }), output: PluginAttachmentSearchPayloadSchema });
+
+export const attachedFileAttachmentSource = defineAttachmentSource({
+  id: "attached-file",
+  title: "Project file",
+  // An export of the installed Paseo 0.15.0 app's lucide table (app-dist web bundle).
+  icon: "FileSearch",
+  pickerTitle: "Attach a file or folder from an attached project",
+  searchPlaceholder: "Search files and folders in attached projects",
+  search: searchAttachedFilesRpc,
 });

@@ -77,6 +77,11 @@ export class WorkspaceLinks {
     return Object.keys((await this.load()).workspaces);
   }
 
+  // Every workspace's links, read once.
+  async all(): Promise<Record<string, WorkspaceLink[]>> {
+    return (await this.load()).workspaces;
+  }
+
   async list(workspaceId: string): Promise<WorkspaceLink[]> {
     return (await this.load()).workspaces[workspaceId] ?? [];
   }

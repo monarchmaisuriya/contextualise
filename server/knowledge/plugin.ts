@@ -6,13 +6,14 @@ import type { PluginRpcContract } from "@getpaseo/plugin";
 import type { PluginBeforeRequests, PluginHandlerContext, PluginServerContext } from "@getpaseo/plugin/server";
 import { type SnapshotSettings, splitGlobs } from "../../shared/contracts";
 import { areaRpc, browseKnowledgeRpc, describeProjectRpc, explainAreaRpc, fileConnectionsRpc, generateKnowledgeRpc, KIND_LABELS, knowledgeAgentsNowRpc, knowledgeChangesRpc, knowledgeOverviewRpc, knowledgePulseRpc, knowledgeUsageRpc, projectForWorkspaceRpc, listProjectsRpc, listTasksRpc, memoriseStatusRpc, pinEntryRpc, projectFactsRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc, setProjectEnabledRpc } from "../../shared/knowledge";
-import { addLinkRpc, LINK_WORKSPACE_ENV, newLinkedChatRpc, removeLinkRpc, type WorkspaceLinksPayload, workspaceLinksRpc } from "../../shared/linked-projects";
+import { addLinkRpc, LINK_WORKSPACE_ENV, newLinkedChatRpc, removeLinkRpc, searchAttachedFilesRpc, type WorkspaceLinksPayload, workspaceLinksRpc } from "../../shared/linked-projects";
 import type { PaseoApi } from "../paseo-types";
 import { readAgent } from "../sources";
 import { renderConversation, renderTimelineItems } from "../snapshot";
 import { capTitle, workspaceTitle } from "../rows";
 import { requestedTool } from "../vendor-fetch";
 import { loadTokenSecret, TokenAuthority } from "./auth";
+import { FolderListings, searchAttachedFiles } from "./attached-files";
 import { KnowledgeBase } from "./base";
 import { currentBlobs } from "./indexer";
 import { type ProjectRoot, projectRoot } from "./git";
@@ -590,6 +591,28 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     };
   };
   server.handle(workspaceLinksRpc, async ({ workspaceId }, { paseo }) => linksPayload(remember(paseo), workspaceId));
+  // Attach > Project file searches every workspace's attached folders: Paseo does not tell an Attach
+  // search which workspace it is for. Paseo's workspaces are read once per search, to leave out the
+  // links of a workspace it no longer has (archived or deleted), links to an attached workspace it no
+  // longer has, and to name the rest. A folder whose real path is no longer the one attached (moved,
+  // replaced by a link, gone) is left out.
+  const fileListings = new FolderListings();
+  server.handle(searchAttachedFilesRpc, async ({ query }, { paseo }) => {
+    remember(paseo);
+    const labels = new Map<string, string>();
+    for await (const entry of allWorkspaces(paseo)) labels.set(entry.id, `${entry.projectCustomName ?? entry.projectDisplayName} / ${workspaceTitle(entry)}`);
+    const named = new Map<string, string>();
+    for (const [workspaceId, found] of Object.entries(await links.all())) {
+      if (!labels.has(workspaceId)) continue;
+      for (const link of found) {
+        if (link.workspaceId && !labels.has(link.workspaceId)) continue;
+        if (!named.has(link.path)) named.set(link.path, (link.workspaceId && labels.get(link.workspaceId)) || basename(link.path));
+      }
+    }
+    const folders = (await Promise.all([...named].map(async ([path, name]) => ((await realpath(path).catch(() => null)) === path ? { path, name } : null)))).filter((folder) => folder !== null);
+    const { pickerTitleMaxChars, pickerPrefix } = await deps.settings();
+    return { items: await searchAttachedFiles(folders, fileListings, query, { titleMaxChars: pickerTitleMaxChars, prefix: pickerPrefix }) };
+  });
   server.handle(addLinkRpc, async ({ workspaceId, path, attachedWorkspaceId }, { paseo }) => {
     const folder = await linkableFolder(path, workspaceFolder(await workspaceById(remember(paseo), workspaceId)), [await paseoHome()]);
     if (attachedWorkspaceId) {
