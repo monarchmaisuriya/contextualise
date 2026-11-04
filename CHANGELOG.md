@@ -2,6 +2,14 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.26.0 - 2026-11-04
+
+### Added
+
+- **Attach > Project file:** search the files and folders of attached projects from the composer and attach one by its absolute path, as `@` does for the chat's own folder (Paseo's `@` list cannot be extended by a plugin). It covers every workspace's attached projects, since Paseo does not tell an Attach search which workspace it is for; each row names its project. Gitignored files are left out, and hidden files outside git. The content is not copied: the chat reads the file itself.
+- **Project files in the Attached button:** once a project is attached, the Attached button gets a Project files tab that lists and searches this workspace's attached projects. Picking a file or folder copies its path the way `@` writes one, to paste into your message (a plugin cannot write into the message box).
+- **Attach > Project file is listed only while a workspace has an attached project.** Paseo's Attach menu is one list for the whole app, so it cannot follow a single workspace.
+
 ## 0.25.1 - 2026-11-03
 
 ### Changed

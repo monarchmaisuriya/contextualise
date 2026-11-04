@@ -35,9 +35,11 @@ test("every name the plugin registers in the app is one Paseo accepts", async ()
       rpc: async (contract: { name: string }) =>
         contract.name.startsWith("settings.")
           ? { status: "ready", revision: "r", values: { showPill: true, pillLabel: "count" } }
-          : contract.name === "links.list"
+          : contract.name === "links.files-available"
+            ? { available: true }
+            : contract.name === "links.list"
             ? { links: [{ path: "/api", name: "api", repoKey: null, addedAt: "t" }], sharedFolder: false, suggestions: [] }
-            : { tags },
+              : { tags },
       addTimelineRenderer: (r: { kind: string; version: number }) => {
         expect(Number.isInteger(r.version) && r.version >= 1).toBe(true);
         return accept("timeline renderer kind", r.kind);
@@ -63,7 +65,8 @@ test("every name the plugin registers in the app is one Paseo accepts", async ()
   const cleanup = contribute(client as never);
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect([...(seen.get("timeline renderer kind") ?? [])]).toEqual(["receipt", "fetch-result"]);
-  expect(seen.get("addAttachmentSource")?.size).toBe(4);
+  // Attach > Project file is added once a workspace has an attached project.
+  expect([...(seen.get("addAttachmentSource") ?? [])]).toEqual(["tag", "agent", "knowledge", "terminal", "attached-file"]);
   expect([...(seen.get("addCommandCenterItem") ?? [])]).toEqual(["tag-agent", "pin-agent", "unpin-agent", "open-knowledge", "open-workspace-knowledge", "open-tags"]);
   expect([...(seen.get("slash command name") ?? [])]).toEqual(["tag", "untag", "tag-link", "tag-fetch"]);
   expect([...(seen.get("addWorkspacePanel") ?? [])]).toEqual(["knowledge"]);

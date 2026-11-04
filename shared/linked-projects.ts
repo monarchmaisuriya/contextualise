@@ -1,4 +1,4 @@
-import { defineRpc } from "@getpaseo/plugin";
+import { defineAttachmentSource, defineRpc, PluginAttachmentSearchPayloadSchema } from "@getpaseo/plugin";
 import { z } from "zod";
 
 // Linked projects: folders M links to one Paseo workspace. Every new Claude or Codex chat in that
@@ -46,3 +46,34 @@ export const newLinkedChatRpc = defineRpc({
   input: workspaceInput.extend({ fromAgentId: z.string().min(1).max(200), carryConversation: z.boolean() }),
   output: z.object({ agentId: z.string() }),
 });
+
+// Attach > Project file: files and folders of every workspace's attached projects (the search is not
+// told which workspace it is for). A row attaches the path, not the content.
+export const searchAttachedFilesRpc = defineRpc({ name: "links.files-search", input: z.object({ query: z.string() }), output: PluginAttachmentSearchPayloadSchema });
+
+// Whether any workspace has an attached folder Attach > Project file would search; the app lists that
+// source only then.
+export const attachedFilesAvailableRpc = defineRpc({ name: "links.files-available", input: z.object({}), output: z.object({ available: z.boolean() }) });
+
+export const attachedFileAttachmentSource = defineAttachmentSource({
+  id: "attached-file",
+  title: "Project file",
+  // An export of the installed Paseo 0.15.0 app's lucide table (app-dist web bundle).
+  icon: "FileSearch",
+  pickerTitle: "Attach a file or folder from an attached project",
+  searchPlaceholder: "Search files and folders in attached projects",
+  search: searchAttachedFilesRpc,
+});
+
+// The Attached button's Project files tab: files and folders of this workspace's attached projects,
+// best first. `path` is absolute; the title is the path in the project.
+export const workspaceFilesRpc = defineRpc({
+  name: "links.workspace-files",
+  input: workspaceInput.extend({ query: z.string().max(500) }),
+  output: z.object({ files: z.array(z.object({ path: z.string(), kind: z.enum(["file", "folder"]), title: z.string(), project: z.string() })) }),
+});
+
+// A path written the way Paseo's `@` writes one into a message (app/src/utils/file-mention-autocomplete.ts).
+export function mentionPath(path: string): string {
+  return `"${path.replace(/"/g, '\\"')}"`;
+}

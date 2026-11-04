@@ -20,6 +20,8 @@ const VERIFIED_LUCIDE = new Set([
   "FolderCheck", "FolderPlus",
   // Added 2026-11-02, same table.
   "GitFork",
+  // Added 2026-11-04, exports of the installed Paseo 0.15.0 app's lucide table (app-dist web bundle).
+  "File", "Folder",
 ]);
 
 test("every icon the plugin draws is a Lucide name Paseo can draw", () => {

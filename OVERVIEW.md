@@ -24,10 +24,11 @@ Pin the agents you attach often, from the Tags pill or the Command Center. Pinne
 
 ## Attaching context
 
-The composer's Attach menu gets four sources:
+The composer's Attach menu gets five sources:
 
 - **Tag**: the tag's workspaces, links, and each tagged agent's most recent turns.
 - **Chat**: one agent's most recent turns, from any workspace or provider. Clicking the attachment opens that agent.
+- **Project file**: a file or folder of any attached project, by its absolute path, for the chat to read itself (Paseo's `@` searches only the chat's own folder).
 - **Terminal output**: the newest lines of any terminal.
 - **Project knowledge**: one document section, code symbol, or finished task from any indexed repository.
 
