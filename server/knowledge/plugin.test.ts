@@ -665,6 +665,19 @@ describe("contributeKnowledge", () => {
         expect(await searchFiles("queue")).toEqual([]);
       });
 
+      it("lists only this workspace's attached files in the Project files tab, and says whether any workspace has attached projects", async () => {
+        const available = async () => ((await call("links.files-available", {})) as { available: boolean }).available;
+        type File = { path: string; kind: string; title: string; project: string };
+        const tab = async (workspaceId: string, query: string) => ((await call("links.workspace-files", { workspaceId, query })) as { files: File[] }).files;
+        expect(await available()).toBe(false);
+        await call("links.add", { workspaceId: "w2", path: api });
+        expect(await available()).toBe(true);
+        expect(await tab("w2", "queue")).toEqual([{ path: join(api, "src", "queue.ts"), kind: "file", title: "src/queue.ts", project: basename(api) }]);
+        expect(await tab("w1", "queue")).toEqual([]);
+        await call("links.remove", { workspaceId: "w2", path: api });
+        expect(await available()).toBe(false);
+      });
+
       it("leaves out the links of a workspace Paseo no longer has", async () => {
         await call("links.add", { workspaceId: "w2", path: api });
         workspaceEntries.splice(workspaceEntries.findIndex((entry) => entry.id === "w2"), 1);

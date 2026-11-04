@@ -6,14 +6,14 @@ import type { PluginRpcContract } from "@getpaseo/plugin";
 import type { PluginBeforeRequests, PluginHandlerContext, PluginServerContext } from "@getpaseo/plugin/server";
 import { type SnapshotSettings, splitGlobs } from "../../shared/contracts";
 import { areaRpc, browseKnowledgeRpc, describeProjectRpc, explainAreaRpc, fileConnectionsRpc, generateKnowledgeRpc, KIND_LABELS, knowledgeAgentsNowRpc, knowledgeChangesRpc, knowledgeOverviewRpc, knowledgePulseRpc, knowledgeUsageRpc, projectForWorkspaceRpc, listProjectsRpc, listTasksRpc, memoriseStatusRpc, pinEntryRpc, projectFactsRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc, setProjectEnabledRpc } from "../../shared/knowledge";
-import { addLinkRpc, LINK_WORKSPACE_ENV, newLinkedChatRpc, removeLinkRpc, searchAttachedFilesRpc, type WorkspaceLinksPayload, workspaceLinksRpc } from "../../shared/linked-projects";
+import { addLinkRpc, LINK_WORKSPACE_ENV, newLinkedChatRpc, attachedFilesAvailableRpc, removeLinkRpc, searchAttachedFilesRpc, workspaceFilesRpc, type WorkspaceLinksPayload, workspaceLinksRpc } from "../../shared/linked-projects";
 import type { PaseoApi } from "../paseo-types";
 import { readAgent } from "../sources";
 import { renderConversation, renderTimelineItems } from "../snapshot";
 import { capTitle, workspaceTitle } from "../rows";
 import { requestedTool } from "../vendor-fetch";
 import { loadTokenSecret, TokenAuthority } from "./auth";
-import { FolderListings, searchAttachedFiles } from "./attached-files";
+import { type AttachedFolder, FolderListings, findAttachedFiles, searchAttachedFiles } from "./attached-files";
 import { KnowledgeBase } from "./base";
 import { currentBlobs } from "./indexer";
 import { type ProjectRoot, projectRoot } from "./git";
@@ -597,21 +597,29 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   // longer has, and to name the rest. A folder whose real path is no longer the one attached (moved,
   // replaced by a link, gone) is left out.
   const fileListings = new FolderListings();
-  server.handle(searchAttachedFilesRpc, async ({ query }, { paseo }) => {
-    remember(paseo);
+  const attachedFolders = async (paseo: PaseoApi, onlyWorkspace?: string): Promise<AttachedFolder[]> => {
     const labels = new Map<string, string>();
     for await (const entry of allWorkspaces(paseo)) labels.set(entry.id, `${entry.projectCustomName ?? entry.projectDisplayName} / ${workspaceTitle(entry)}`);
     const named = new Map<string, string>();
     for (const [workspaceId, found] of Object.entries(await links.all())) {
-      if (!labels.has(workspaceId)) continue;
+      if (!labels.has(workspaceId) || (onlyWorkspace !== undefined && workspaceId !== onlyWorkspace)) continue;
       for (const link of found) {
         if (link.workspaceId && !labels.has(link.workspaceId)) continue;
         if (!named.has(link.path)) named.set(link.path, (link.workspaceId && labels.get(link.workspaceId)) || basename(link.path));
       }
     }
-    const folders = (await Promise.all([...named].map(async ([path, name]) => ((await realpath(path).catch(() => null)) === path ? { path, name } : null)))).filter((folder) => folder !== null);
+    return (await Promise.all([...named].map(async ([path, name]) => ((await realpath(path).catch(() => null)) === path ? { path, name } : null)))).filter((folder) => folder !== null);
+  };
+  server.handle(searchAttachedFilesRpc, async ({ query }, { paseo }) => {
     const { pickerTitleMaxChars, pickerPrefix } = await deps.settings();
-    return { items: await searchAttachedFiles(folders, fileListings, query, { titleMaxChars: pickerTitleMaxChars, prefix: pickerPrefix }) };
+    return { items: await searchAttachedFiles(await attachedFolders(remember(paseo)), fileListings, query, { titleMaxChars: pickerTitleMaxChars, prefix: pickerPrefix }) };
+  });
+  server.handle(attachedFilesAvailableRpc, async (_input, { paseo }) => ({ available: (await attachedFolders(remember(paseo))).length > 0 }));
+  // The Attached button's Project files tab: the same search over this workspace's attached projects.
+  server.handle(workspaceFilesRpc, async ({ workspaceId, query }, { paseo }) => {
+    const { pickerTitleMaxChars } = await deps.settings();
+    const found = await findAttachedFiles(await attachedFolders(remember(paseo), workspaceId), fileListings, query, pickerTitleMaxChars);
+    return { files: found.map((entry) => ({ path: entry.absolute, kind: entry.kind, title: entry.title, project: entry.folder.name })) };
   });
   server.handle(addLinkRpc, async ({ workspaceId, path, attachedWorkspaceId }, { paseo }) => {
     const folder = await linkableFolder(path, workspaceFolder(await workspaceById(remember(paseo), workspaceId)), [await paseoHome()]);

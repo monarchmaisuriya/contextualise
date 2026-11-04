@@ -181,64 +181,51 @@ function capStart(path: string, maxChars: number): string {
   return `…/${kept}`;
 }
 
-// A picker row. Paseo keeps a row only when the typed words match its identifier and title or its id,
-// or its subtitle (app/src/components/ui/combobox-options.ts), so the id is the absolute path and the
-// subtitle the full path in the project. Paths are written as JSON strings: exact, and on one line.
-function attachedFileItem(entry: FolderEntry, options: { titleMaxChars: number; prefix: SnapshotSettings["pickerPrefix"] }): PluginAttachmentItem {
-  const absolute = entry.path === "" ? entry.folder.path : join(entry.folder.path, entry.path);
-  const where = entry.path === "" ? `the attached project ${JSON.stringify(entry.folder.name)} itself` : `${JSON.stringify(entry.path)} in the attached project ${JSON.stringify(entry.folder.name)}`;
-  const line =
-    entry.kind === "file"
-      ? `File ${JSON.stringify(absolute)}: ${where}. Its content is not included: read it from that path.`
-      : `Folder ${JSON.stringify(absolute)}: ${where}. Its files are not listed: list or read them from that path.`;
-  return {
-    id: absolute,
-    identifier: options.prefix === "word" ? (entry.kind === "file" ? "File" : "Folder") : "",
-    title: capStart(entry.path === "" ? entry.folder.name : entry.path, options.titleMaxChars),
-    subtitle: `${entry.folder.name} · ${entry.path === "" ? "attached folder" : entry.path}`,
-    url: pathToFileURL(absolute).href,
-    text: `${SNAPSHOT_HEADER}\n\n${line}`,
-    resourceType: "attached-file",
-  };
+// A file or folder found for a search: where it is, and how its row reads.
+export interface FoundEntry extends FolderEntry {
+  absolute: string;
+  title: string;
+  subtitle: string;
 }
 
 // Rows whose titles read the same (one name under folders of one name, cut to the same end, or one
 // path in two projects) are retitled by the nearest folder where their paths differ, the project's
 // name counting as the top folder: "email-automation/…/useActivateAutomation.ts". Telling them apart
 // matters more than the title limit, so such a title may pass it.
-function tellApart(rows: readonly { entry: FolderEntry; row: PluginAttachmentItem }[]): void {
-  const byTitle = new Map<string, { entry: FolderEntry; row: PluginAttachmentItem }[]>();
-  for (const found of rows) byTitle.set(found.row.title, [...(byTitle.get(found.row.title) ?? []), found]);
+function tellApart(found: readonly FoundEntry[]): void {
+  const byTitle = new Map<string, FoundEntry[]>();
+  for (const entry of found) byTitle.set(entry.title, [...(byTitle.get(entry.title) ?? []), entry]);
   for (const group of byTitle.values()) {
     if (group.length < 2) continue;
-    const parts = group.map(({ entry }) => [entry.folder.name, ...(entry.path === "" ? [] : entry.path.split("/"))]);
+    const parts = group.map((entry) => [entry.folder.name, ...(entry.path === "" ? [] : entry.path.split("/"))]);
     const sharedEnd = (a: readonly string[], b: readonly string[]) => {
       let shared = 0;
       while (shared < a.length && shared < b.length && a[a.length - 1 - shared] === b[b.length - 1 - shared]) shared += 1;
       return shared;
     };
-    group.forEach(({ row }, index) => {
+    group.forEach((entry, index) => {
       const own = parts[index];
       const shared = Math.max(...parts.map((other, at) => (at === index ? 0 : sharedEnd(own, other))));
       if (shared >= own.length) return;
       const differs = own[own.length - 1 - shared];
       const name = own[own.length - 1];
-      row.title = shared === 0 ? name : shared === 1 ? `${differs}/${name}` : `${differs}/…/${name}`;
+      entry.title = shared === 0 ? name : shared === 1 ? `${differs}/${name}` : `${differs}/…/${name}`;
     });
   }
 }
 
-// The rows for a search over the attached folders. A folder that cannot be listed is logged and left
-// out. Each row is checked on disk: a file deleted since it was listed is dropped, and anything that
-// is a folder now (a link to a folder) is offered as one. A path offered through two attached folders
-// (one inside the other) is offered once, where it ranks best.
-export async function searchAttachedFiles(folders: readonly AttachedFolder[], listings: FolderListings, query: string, options: { titleMaxChars: number; prefix: SnapshotSettings["pickerPrefix"] }): Promise<PluginAttachmentItem[]> {
+// The files and folders of the attached folders that match a search, best first: the title is the
+// path in the project, the subtitle the project and that full path. A folder that cannot be listed is
+// logged and left out. Each entry is checked on disk: a file deleted since it was listed is dropped,
+// and anything that is a folder now (a link to a folder) is offered as one. A path found through two
+// attached folders (one inside the other) is offered once, where it ranks best.
+export async function findAttachedFiles(folders: readonly AttachedFolder[], listings: FolderListings, query: string, titleMaxChars: number): Promise<FoundEntry[]> {
   const listed = await Promise.all(
     folders.map(async (folder) => {
       try {
         return { folder, files: await listings.files(folder.path) };
       } catch (error) {
-        console.error(`[contextualise] could not list attached folder ${folder.path} for Attach > Project file: ${String(error)}`);
+        console.error(`[contextualise] could not list attached folder ${folder.path} for its files: ${String(error)}`);
         return null;
       }
     }),
@@ -246,16 +233,43 @@ export async function searchAttachedFiles(folders: readonly AttachedFolder[], li
   const ranked = rankEntries(listed.filter((entry) => entry !== null), query, PICKER_ROWS * 2);
   const present = await Promise.all(
     ranked.map(async (entry) => {
-      const info = await stat(entry.path === "" ? entry.folder.path : join(entry.folder.path, entry.path)).catch(() => null);
-      return info ? { ...entry, kind: info.isDirectory() ? ("folder" as const) : ("file" as const) } : null;
+      const absolute = entry.path === "" ? entry.folder.path : join(entry.folder.path, entry.path);
+      const info = await stat(absolute).catch(() => null);
+      return info ? { ...entry, absolute, kind: info.isDirectory() ? ("folder" as const) : ("file" as const) } : null;
     }),
   );
-  const rows = new Map<string, { entry: FolderEntry; row: PluginAttachmentItem }>();
+  const found = new Map<string, FoundEntry>();
   for (const entry of present) {
-    if (!entry || rows.size >= PICKER_ROWS) continue;
-    const row = attachedFileItem(entry, options);
-    if (!rows.has(row.id)) rows.set(row.id, { entry, row });
+    if (!entry || found.size >= PICKER_ROWS || found.has(entry.absolute)) continue;
+    found.set(entry.absolute, {
+      ...entry,
+      title: capStart(entry.path === "" ? entry.folder.name : entry.path, titleMaxChars),
+      subtitle: `${entry.folder.name} · ${entry.path === "" ? "attached folder" : entry.path}`,
+    });
   }
-  tellApart([...rows.values()]);
-  return [...rows.values()].map(({ row }) => row);
+  tellApart([...found.values()]);
+  return [...found.values()];
+}
+
+// Attach > Project file rows. Paseo keeps a row only when the typed words match its identifier and
+// title or its id, or its subtitle (app/src/components/ui/combobox-options.ts), so the id is the
+// absolute path and the subtitle the full path in the project. Paths are written as JSON strings:
+// exact, and on one line.
+export async function searchAttachedFiles(folders: readonly AttachedFolder[], listings: FolderListings, query: string, options: { titleMaxChars: number; prefix: SnapshotSettings["pickerPrefix"] }): Promise<PluginAttachmentItem[]> {
+  return (await findAttachedFiles(folders, listings, query, options.titleMaxChars)).map((entry) => {
+    const where = entry.path === "" ? `the attached project ${JSON.stringify(entry.folder.name)} itself` : `${JSON.stringify(entry.path)} in the attached project ${JSON.stringify(entry.folder.name)}`;
+    const line =
+      entry.kind === "file"
+        ? `File ${JSON.stringify(entry.absolute)}: ${where}. Its content is not included: read it from that path.`
+        : `Folder ${JSON.stringify(entry.absolute)}: ${where}. Its files are not listed: list or read them from that path.`;
+    return {
+      id: entry.absolute,
+      identifier: options.prefix === "word" ? (entry.kind === "file" ? "File" : "Folder") : "",
+      title: entry.title,
+      subtitle: entry.subtitle,
+      url: pathToFileURL(entry.absolute).href,
+      text: `${SNAPSHOT_HEADER}\n\n${line}`,
+      resourceType: "attached-file",
+    };
+  });
 }
