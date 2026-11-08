@@ -921,6 +921,35 @@ describe("contributeKnowledge", () => {
         expect((await createIn(top)).config.providerOptions).toBeUndefined();
       });
 
+      it("lists workspaces and projects active most recently first: a workspace by its newest chat, else its own activity time; a project by its newest workspace", async () => {
+        // Named so that ordering by name, or by a project's first workspace, would put it first.
+        const other = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-linked-other-")));
+        try {
+          workspaceEntries.push({ id: "wd2", workspaceDirectory: develop, projectId: "p-develop", name: "Scan dashboard", projectDisplayName: "Develop", workspaceKind: "local" });
+          projectEntries.push({ projectId: "p-other", projectDisplayName: "aaa", projectRootPath: other });
+          workspaceEntries.push({ id: "wo", workspaceDirectory: other, projectId: "p-other", name: "Other work", projectDisplayName: "aaa", workspaceKind: "local" });
+          // w2 has no chats; Paseo's own activity time places it.
+          Object.assign(workspaceEntries.find((entry) => entry.id === "w2") as object, { activityAt: "2026-11-08T06:30:00.000Z" });
+          agentEntries.splice(0, agentEntries.length, { agent: { id: "a-old", workspaceId: "wd", cwd: develop, provider: "claude", updatedAt: "2026-11-08T05:00:00.000Z" } }, { agent: { id: "a-new", workspaceId: "wd2", cwd: develop, provider: "claude", updatedAt: "2026-11-08T07:00:00.000Z" } }, { agent: { id: "a-mid", workspaceId: "wo", cwd: other, provider: "claude", updatedAt: "2026-11-08T06:00:00.000Z" } });
+          expect((await rowsFor("w1")).map((row) => row.workspaceId)).toEqual(["wd2", "w2", "wo", "wd"]);
+          const projects = ((await call("links.list", { workspaceId: "w1" })) as { suggestions: { path: string }[] }).suggestions.map((row) => row.path);
+          expect(projects.indexOf(develop)).toBeLessThan(projects.indexOf(other));
+        } finally {
+          rmSync(other, { recursive: true, force: true });
+        }
+      });
+
+      it("still lists workspaces and projects when Paseo cannot list its chats, in their former order", async () => {
+        agentsDown = true;
+        try {
+          const listed = (await call("links.list", { workspaceId: "w1" })) as { suggestions: { path: string }[]; workspaces: { workspaceId: string }[] };
+          expect(listed.workspaces.map((row) => row.workspaceId).sort()).toEqual(["w2", "wd"]);
+          expect(listed.suggestions.map((row) => row.path)).toContain(develop);
+        } finally {
+          agentsDown = false;
+        }
+      });
+
       it("refuses attaching a workspace to itself, or a worktree as a whole", async () => {
         await expect(call("links.add", { workspaceId: "wd", attachedWorkspaceId: "wd" })).rejects.toThrow("cannot be attached to itself");
         workspaceEntries.push({ id: "wt", workspaceDirectory: api, projectId: "p-api", name: "lavish-otter", projectDisplayName: "api", workspaceKind: "worktree" });

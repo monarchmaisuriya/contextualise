@@ -6,6 +6,7 @@ import type { AgentTimelineItem, PaseoApi } from "./paseo-types";
 import { describeMembers, isUnreadable, lastTurns, matchTags, renderConversation, renderSnapshot, renderTerminal, type AgentReading } from "./snapshot";
 import { agentTitle, capTitle, cleanTitle, gitParts, workspaceLabel, workspaceSearchText } from "./rows";
 import { agentLive, type Directory, type DirectoryAgent, type DirectoryWorkspace } from "./tags";
+import { newestFirst, newestPerKey } from "./newest-first";
 
 const TIMELINE_PAGE = 200;
 const MAX_TIMELINE_PAGES = 5;
@@ -245,7 +246,13 @@ export async function searchAgents(paseo: PaseoApi, directory: Directory, query:
 export async function searchTerminals(paseo: PaseoApi, memo: Memo, directory: Directory, query: string, options: SnapshotSettings): Promise<PluginAttachmentItem[]> {
   const workspaces = workspacesById(directory);
   const { entries } = await paseo.terminals.list();
-  const found = entries.filter((terminal) => matches([terminal.name, workspaceSearchText(workspaces.get(terminal.workspaceId)), terminal.cwd].join(" "), query));
+  // Terminals of the workspace whose chats ran most recently first: Paseo's SDK gives a terminal no
+  // time of its own.
+  const newest = newestPerKey(directory.agents, (agent) => agent.workspaceId, (agent) => agent.updatedAt);
+  const found = newestFirst(
+    entries.filter((terminal) => matches([terminal.name, workspaceSearchText(workspaces.get(terminal.workspaceId)), terminal.cwd].join(" "), query)),
+    (terminal) => newest.get(terminal.workspaceId),
+  );
   return Promise.all(
     found.map(async (terminal) => {
       const workspace = workspaces.get(terminal.workspaceId);

@@ -306,6 +306,14 @@ test("rows end with a token estimate while the setting is on", async () => {
   expect(terminal.subtitle).toBe(`payments / api · 940 lines · ${tokenEstimate(terminal.text.length)}`);
 });
 
+test("lists terminals of the workspace whose chats ran most recently first, the rest last in Paseo's order", async () => {
+  // Paseo's SDK gives a terminal no time of its own, so its workspace's newest chat stands in.
+  const workspaces = [...directory.workspaces, { id: "w2", name: "web", projectDisplayName: "shop", projectRootPath: "/src/shop" }, { id: "w3", name: "docs", projectDisplayName: "docs", projectRootPath: "/src/docs" }];
+  const agents = [...directory.agents, { id: "busy", title: "Ship it", provider: "claude", workspaceId: "w2", updatedAt: "2026-11-01" }];
+  const terminals = fakePaseo({}, [{ id: "t1", workspaceId: "w3", cwd: "/src/docs", name: "quiet" }, { id: "t2", workspaceId: "w1", cwd: "/src", name: "api" }, { id: "t3", workspaceId: "w2", cwd: "/src/shop", name: "web" }, { id: "t4", workspaceId: "w3", cwd: "/src/docs", name: "idle" }]).paseo;
+  expect((await searchTerminals(terminals, new Memo(30_000), { workspaces, agents }, "", options)).map((row) => row.id)).toEqual(["t3", "t2", "t1", "t4"]);
+});
+
 test("token estimates read as short approximate counts", () => {
   expect(tokenEstimate(0)).toBe("~0 tokens");
   expect(tokenEstimate(3_400)).toBe("~850 tokens");

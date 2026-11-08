@@ -37,6 +37,7 @@ import { runWorker } from "../workers";
 import { ChatHistory } from "../chat-history";
 import { addCompactionRows, HistoryOff, historyStatus, historyTools, isHistoryTool, NotedCompactions, withHistoryRule } from "../history-tools";
 import { HISTORY_ROW_KIND, historyCommandRpc } from "../../shared/history";
+import { newestFirst, newestPerKey, timeOf } from "../newest-first";
 
 const PLUGIN_ID = "contextualise";
 const GRANT_LINE = new RegExp(`^${ATTACH_GRANT_LABEL.replace(/[()]/g, "\\$&")} ([A-Za-z0-9_.-]+)$`);
@@ -601,29 +602,62 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     return found.repo;
   };
 
+  // Every chat Paseo has, archived ones too, read once per call.
+  type ListedAgent = { id: string; workspaceId?: string | null; updatedAt?: string | null };
+  const listAgents = async (paseo: PaseoApi): Promise<ListedAgent[]> => {
+    const agents: ListedAgent[] = [];
+    for (let cursor: string | undefined; ; ) {
+      const page = await paseo.agents.list({ filter: { includeArchived: true }, page: { limit: 200, ...(cursor ? { cursor } : {}) } });
+      agents.push(...(page.entries as { agent: ListedAgent }[]).map(({ agent }) => agent));
+      if (!page.pageInfo.hasMore || !page.pageInfo.nextCursor || page.pageInfo.nextCursor === cursor) break;
+      cursor = page.pageInfo.nextCursor;
+    }
+    return agents;
+  };
+  // The chats, for ordering only: when Paseo cannot list them, nothing has a chat time (logged), and the
+  // lists keep their rows in their former order.
+  const agentsForOrder = async (paseo: PaseoApi): Promise<ListedAgent[]> => {
+    try {
+      return await listAgents(paseo);
+    } catch (error) {
+      console.error(`[contextualise] could not list chats to order Attach lists by activity; listing them by name: ${String(error)}`);
+      return [];
+    }
+  };
+  // When each workspace was last active, in milliseconds: its newest chat's update (what the sidebar and
+  // Attach > Chat show), else Paseo's own activity or creation time, else nothing. Attach lists put the
+  // newest first.
+  const workspaceActivity = (agents: readonly ListedAgent[], workspaces: readonly { id: string; activityAt?: string | null; createdAt?: string | null }[]) => {
+    const newest = newestPerKey(agents, (agent) => agent.workspaceId, (agent) => agent.updatedAt);
+    return new Map(workspaces.map((entry) => [entry.id, newest.get(entry.id) ?? timeOf(entry.activityAt) ?? timeOf(entry.createdAt)]));
+  };
   // Every Paseo project that has a workspace M can see, with its name and own folder. Paseo also lists
   // projects whose workspaces were all archived, so the workspaces decide. The projects M works in come
   // from here, not from the knowledge index, which holds only projects an agent has already run in.
-  const paseoProjects = async (paseo: PaseoApi) => {
-    const withWorkspaces = new Set<string>();
-    for await (const entry of allWorkspaces(paseo, false)) withWorkspaces.add(entry.projectId);
-    return (await paseo.projects.list()).projects
-      .filter((project) => withWorkspaces.has(project.projectId))
+  // Newest first: a project is as recent as its most recently active workspace.
+  const paseoProjects = async (paseo: PaseoApi, agents: readonly ListedAgent[]) => {
+    const workspaces: Awaited<ReturnType<PaseoApi["workspaces"]["list"]>>["entries"] = [];
+    for await (const entry of allWorkspaces(paseo, false)) workspaces.push(entry);
+    const activity = workspaceActivity(agents, workspaces);
+    const activeAt = newestPerKey(workspaces, (entry) => entry.projectId, (entry) => activity.get(entry.id));
+    const projects = (await paseo.projects.list()).projects
+      .filter((project) => workspaces.some((entry) => entry.projectId === project.projectId))
       .map((project) => ({ projectId: project.projectId, name: project.projectCustomName || project.projectDisplayName, root: project.projectRootPath }));
+    return newestFirst(projects, (project) => activeAt.get(project.projectId));
   };
   // Every Paseo project to link, except the workspace's own project, folders already linked, and
   // folders a link would refuse. A failure offers none.
-  const suggestionsFor = async (paseo: PaseoApi, workspace: { projectId: string }, folder: string, linked: ReadonlySet<string>) => {
+  const suggestionsFor = async (paseo: PaseoApi, agents: readonly ListedAgent[], workspace: { projectId: string }, folder: string, linked: ReadonlySet<string>) => {
     try {
       const home = await paseoHome();
       const offered: { name: string; path: string }[] = [];
-      for (const project of await paseoProjects(paseo)) {
+      for (const project of await paseoProjects(paseo, agents)) {
         if (project.projectId === workspace.projectId) continue;
         const path = await attachableFolder(project.root, folder, false).catch(() => null);
         if (path && !linked.has(path)) offered.push({ name: project.name, path });
       }
       // Two projects of one name are told apart by their folder.
-      return offered.map((entry) => (offered.filter((other) => other.name === entry.name).length > 1 ? { ...entry, name: `${entry.name} (${entry.path})` } : entry)).sort((a, b) => a.name.localeCompare(b.name));
+      return offered.map((entry) => (offered.filter((other) => other.name === entry.name).length > 1 ? { ...entry, name: `${entry.name} (${entry.path})` } : entry));
     } catch (error) {
       console.error(`[contextualise] could not list Paseo's projects to suggest links: ${String(error)}`);
       return [];
@@ -635,25 +669,20 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   // read, so opening the popover never creates one; nothing is read while project knowledge is off. A
   // workspace with nothing recorded is not in the map. A failure here is logged and leaves the map
   // empty, so the other rows still show.
-  const changedRepositories = async (paseo: PaseoApi, locals: readonly { id: string; folder: string }[]): Promise<Map<string, string[]>> => {
+  const changedRepositories = async (agents: readonly ListedAgent[], locals: readonly { id: string; folder: string }[]): Promise<Map<string, string[]>> => {
     const found = new Map<string, Set<string>>();
     if (locals.length === 0 || !(await knowledgeOn())) return new Map();
     try {
-      await readChangedRepositories(paseo, locals, found);
+      await readChangedRepositories(agents, locals, found);
     } catch (error) {
       console.error(`[contextualise] could not read which repositories local workspaces changed; offering their folders: ${String(error)}`);
       return new Map();
     }
     return new Map([...found].map(([workspaceId, repositories]) => [workspaceId, [...repositories].sort()]));
   };
-  const readChangedRepositories = async (paseo: PaseoApi, locals: readonly { id: string; folder: string }[], found: Map<string, Set<string>>) => {
+  const readChangedRepositories = async (agents: readonly ListedAgent[], locals: readonly { id: string; folder: string }[], found: Map<string, Set<string>>) => {
     const workspaceOf = new Map<string, string>();
-    for (let cursor: string | undefined; ; ) {
-      const page = await paseo.agents.list({ filter: { includeArchived: true }, page: { limit: 200, ...(cursor ? { cursor } : {}) } });
-      for (const { agent } of page.entries as { agent: { id: string; workspaceId?: string | null } }[]) if (agent.workspaceId) workspaceOf.set(agent.id, agent.workspaceId);
-      if (!page.pageInfo.hasMore || !page.pageInfo.nextCursor || page.pageInfo.nextCursor === cursor) break;
-      cursor = page.pageInfo.nextCursor;
-    }
+    for (const agent of agents) if (agent.workspaceId) workspaceOf.set(agent.id, agent.workspaceId);
     const repositoryOf = new Map<string, string | null>();
     const nearestRepository = async (folder: string, dir: string): Promise<string | null> => {
       if (!within(dir, folder)) return null;
@@ -697,7 +726,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     const project = (await base.projects()).find((entry) => entry.top === workspace.folder);
     if (project && !(await prefs.get(project.repoKey)).enabled) return null;
     const found = new Map<string, Set<string>>();
-    await readChangedRepositories(paseo, [workspace], found);
+    await readChangedRepositories(await listAgents(paseo), [workspace], found);
     const repositories = [...(found.get(workspace.id) ?? [])].sort();
     return repositories.length > 0 ? repositories : ownRepository(workspace.folder);
   };
@@ -733,12 +762,13 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   // counted after this workspace's checks. A local workspace whose recorded repositories this workspace
   // may not have is not offered. Not this workspace, workspaces already attached, nor a worktree inside
   // or around a folder already attached. Paseo leaves archived workspaces out of its list.
-  const workspaceSuggestions = async (paseo: PaseoApi, workspace: { id: string }, folder: string, attachedPaths: readonly string[], attachedIds: ReadonlySet<string>) => {
+  const workspaceSuggestions = async (paseo: PaseoApi, agents: readonly ListedAgent[], workspace: { id: string }, folder: string, attachedPaths: readonly string[], attachedIds: ReadonlySet<string>) => {
     try {
       const others: (Awaited<ReturnType<PaseoApi["workspaces"]["list"]>>["entries"][number] & { folder: string })[] = [];
       for await (const entry of allWorkspaces(paseo, false)) if (entry.id !== workspace.id && !attachedIds.has(entry.id)) others.push({ ...entry, folder: await realFolder(workspaceFolder(entry)) });
+      const activity = workspaceActivity(agents, others);
       const repositories = await changedRepositories(
-        paseo,
+        agents,
         others.filter((entry) => entry.workspaceKind !== "worktree").map((entry) => ({ id: entry.id, folder: entry.folder })),
       );
       const offered: { workspaceId: string; name: string; project: string; path: string; branch: string | null; attaches: "worktree" | "workspace"; repositories: string[] }[] = [];
@@ -757,7 +787,11 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
         }
         if (recorded.length === 0 || brings.length > 0) offered.push({ ...row, path: entry.folder, attaches: "workspace", repositories: brings });
       }
-      return offered.sort((a, b) => a.project.localeCompare(b.project) || a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
+      // Newest first; by project, title, and folder where the times tie.
+      return newestFirst(
+        offered.sort((a, b) => a.project.localeCompare(b.project) || a.name.localeCompare(b.name) || a.path.localeCompare(b.path)),
+        (row) => activity.get(row.workspaceId),
+      );
     } catch (error) {
       console.error(`[contextualise] could not list Paseo's workspaces to suggest: ${String(error)}`);
       return [];
@@ -770,13 +804,15 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     const folder = workspaceFolder(workspace);
     const live = (await liveLinks(paseo, workspaceId)).get(workspaceId);
     const paths = foldersOf(live).map((found) => found.path);
-    const suggestions = await suggestionsFor(paseo, workspace, folder, new Set(paths));
+    // The chats are read once for both tabs' order and the repositories local workspaces changed.
+    const agents = await agentsForOrder(paseo);
+    const suggestions = await suggestionsFor(paseo, agents, workspace, folder, new Set(paths));
     return {
       links: live?.links ?? [],
       attachedWorkspaces: (live?.workspaces ?? []).map((entry) => ({ workspaceId: entry.workspaceId, name: entry.name, folders: entry.folders.map((found) => found.path) })),
       sharedFolder: (await workspacesAt(paseo, folder)).length > 1,
       suggestions,
-      workspaces: await workspaceSuggestions(paseo, workspace, folder, paths, new Set((live?.workspaces ?? []).map((entry) => entry.workspaceId))),
+      workspaces: await workspaceSuggestions(paseo, agents, workspace, folder, paths, new Set((live?.workspaces ?? []).map((entry) => entry.workspaceId))),
     };
   };
   server.handle(workspaceLinksRpc, async ({ workspaceId }, { paseo }) => linksPayload(remember(paseo), workspaceId));
@@ -1012,7 +1048,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   const attachableProjects = async (paseo: PaseoApi): Promise<{ repoKey: string; name: string; top: string }[]> => {
     try {
       const found = new Map<string, { repoKey: string; name: string; top: string }>();
-      for (const project of await paseoProjects(paseo)) {
+      for (const project of await paseoProjects(paseo, await agentsForOrder(paseo))) {
         const repo = await base.repoFor(project.root).catch(() => null);
         if (repo && !found.has(repo.key)) found.set(repo.key, { repoKey: repo.key, name: project.name, top: repo.top });
       }
