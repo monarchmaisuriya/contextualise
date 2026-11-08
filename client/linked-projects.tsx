@@ -8,6 +8,7 @@ import { type AttachTab, attachTabs, shownTab } from "./attach-tabs";
 import { errorText } from "./errors";
 import { ICONS } from "./icons";
 import { Button, IconButton, ListRow, SearchField, Segmented, StateView, type Styles } from "./kit";
+import { type WorkspaceItem, workspaceItems } from "./workspace-rows";
 
 export const linksQuery = (workspaceId: string) => ["contextualise", "links", workspaceId];
 // Rows drawn at first; scrolling near the end of the list draws this many more.
@@ -32,14 +33,6 @@ function linksChanged(): void {
 
 // The tab last chosen, kept while the app runs, so the popover opens where M left it.
 let lastTab: AttachTab = "projects";
-
-// What a Workspaces row attaches, after its title: a worktree's branch and project, a repository's
-// folder name and project, or a local workspace's whole folder.
-function workspaceMeta(found: { attaches: "worktree" | "repository" | "folder"; branch: string | null; project: string; path: string }): string {
-  if (found.attaches === "worktree") return [found.branch, found.project].filter(Boolean).join(" · ");
-  if (found.attaches === "repository") return `${found.path.slice(found.path.lastIndexOf("/") + 1)} · ${found.project}`;
-  return `all of ${found.project}`;
-}
 
 // What was typed is a folder, not a search: it starts like a path.
 const typedFolder = (text: string) => (/^[~/.]/.test(text.trim()) ? text.trim() : null);
@@ -85,11 +78,13 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
   const tab = shownTab(chosen, attachedCount);
   const words = search.trim().toLowerCase();
   const has = (...texts: (string | null)[]) => words === "" || texts.some((text) => text?.toLowerCase().includes(words));
-  // One row shape for both tabs: a project by its folder, a workspace by its title, branch, and project.
-  const rows =
+  // One item shape for both tabs: a project by its folder; a workspace by its title, branch, and
+  // project, with its repositories under one heading when it offers several.
+  const items: WorkspaceItem[] =
     tab === "projects"
-      ? (data?.suggestions ?? []).filter((found) => has(found.name, found.path)).map((found) => ({ key: found.path, title: found.name, meta: found.path, path: found.path, attachedWorkspaceId: undefined }))
-      : (data?.workspaces ?? []).filter((found) => has(found.name, found.project, found.branch, found.path)).map((found) => ({ key: `${found.workspaceId}|${found.path}`, title: found.name, meta: workspaceMeta(found), path: found.path, attachedWorkspaceId: found.attaches === "repository" ? undefined : found.workspaceId }));
+      ? (data?.suggestions ?? []).filter((found) => has(found.name, found.path)).map((found) => ({ kind: "row", key: found.path, title: found.name, meta: found.path, path: found.path, nested: false }))
+      : workspaceItems(data?.workspaces ?? [], (found) => has(found.name, found.project, found.branch, found.path));
+  const rows = items.filter((item) => item.kind === "row");
   const folder = typedFolder(search);
   const attach = (path: string, attachedWorkspaceId?: string) => change.mutate(() => add({ workspaceId, path, ...(attachedWorkspaceId ? { attachedWorkspaceId } : {}) }));
   const noun = tab === "projects" ? "project" : "workspace";
@@ -138,13 +133,27 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
             keyboardShouldPersistTaps="handled"
             scrollEventThrottle={100}
             onScroll={({ nativeEvent: { layoutMeasurement, contentOffset, contentSize } }) => {
-              if (shown < rows.length && layoutMeasurement.height + contentOffset.y >= contentSize.height - NEAR_END) setShown(shown + PAGE);
+              if (shown < items.length && layoutMeasurement.height + contentOffset.y >= contentSize.height - NEAR_END) setShown(shown + PAGE);
             }}
           >
             {folder && !rows.some((row) => row.path === folder) ? <ListRow title={`Attach folder ${folder}`} icon={ICONS.attach} onPress={() => attach(folder)} disabled={change.isPending} styles={styles} /> : null}
-            {rows.slice(0, shown).map((row) => (
-              <ListRow key={row.key} title={row.title} meta={row.meta} icon={tab === "projects" ? ICONS.attach : ICONS.workspace} onPress={() => attach(row.path, row.attachedWorkspaceId)} disabled={change.isPending} accessibilityLabel={`Attach ${row.title}`} styles={styles} />
-            ))}
+            {items.slice(0, shown).map((item) =>
+              item.kind === "heading" ? (
+                <View key={item.key} style={[styles.inline, { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 2 }]} accessibilityRole="header">
+                  <Icon name={ICONS.workspace} size={16} color={styles.colors.foregroundMuted} />
+                  <Text style={[styles.body, styles.grow]} numberOfLines={1}>
+                    {item.title}
+                  </Text>
+                  <Text style={styles.note} numberOfLines={1}>
+                    {item.meta}
+                  </Text>
+                </View>
+              ) : (
+                <View key={item.key} style={item.nested ? { paddingLeft: 20 } : null}>
+                  <ListRow title={item.title} meta={item.meta} icon={tab === "projects" ? ICONS.attach : item.nested ? ICONS.folder : ICONS.workspace} onPress={() => attach(item.path, item.attachedWorkspaceId)} disabled={change.isPending} accessibilityLabel={`Attach ${item.title}`} styles={styles} />
+                </View>
+              ),
+            )}
             {rows.length === 0 && !folder && data ? <Text style={[styles.note, { paddingHorizontal: 12, paddingVertical: 8 }]}>{words ? `No ${noun} matches "${search.trim()}"` : `No other ${noun}s`}</Text> : null}
           </ScrollView>
         </>
