@@ -8,9 +8,9 @@ const SECRET_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
   ["AWS access key", /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/],
   ["GitHub token", /\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})\b/],
   ["API key (sk-)", /\bsk-[A-Za-z0-9_-]{20,}/],
-  // Service tokens recognised by their prefix: Stripe, npm, GitLab, Hugging Face, SendGrid, and
-  // keys of the xkeysib- form.
-  ["API token", /\b(?:[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|npm_[A-Za-z0-9]{30,}|glpat-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{30,}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|xkeysib-[A-Za-z0-9-]{40,})/],
+  // Service tokens recognised by their prefix: Stripe, Klaviyo private keys (pk_ and about 34
+  // characters), npm, GitLab, Hugging Face, SendGrid, and keys of the xkeysib- form.
+  ["API token", /\b(?:[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|pk_[A-Za-z0-9]{30,}|npm_[A-Za-z0-9]{30,}|glpat-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{30,}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|xkeysib-[A-Za-z0-9-]{40,})/],
   ["Slack token", /\bxox[abprs]-[A-Za-z0-9-]{10,}|\bxapp-[A-Za-z0-9-]{10,}|hooks\.slack\.com\/services\/[A-Za-z0-9/]{20,}/],
   ["Google API key", /\bAIza[0-9A-Za-z_-]{35}\b/],
   ["JSON web token", /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/],
@@ -20,6 +20,13 @@ const SECRET_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
   // The name may sit inside a longer name, so it is matched without a word boundary in front. A value
   // already replaced by an earlier pattern keeps that pattern's label.
   ["password or key assignment", new RegExp(`${SECRET_NAME}[A-Za-z0-9_.-]{0,40}["']?\\s{0,5}[:=]\\s{0,5}(?!\\[removed: )(?:"[^"\\n]{4,300}"|'[^'\\n]{4,300}'|[^\\s'",;]{6,300})`, "i")],
+  // A bare "key" name with a value that looks generated: KEY=…, key: …, "key": "…", KLAVIYO_KEY=…,
+  // key => …, key -> …, and a --key flag. The value is 20 to 300 token characters with a digit, a
+  // letter, and a run of 16 letters and digits, so dotted paths, file names, and words joined by - or _
+  // stay (key: posts.page2.cursor, tenant_2024_11_orders). "key" must not end a longer word
+  // (monkey), and short or plain values stay (key: string, key: "Enter", key={item.id}). Quotes around
+  // the name and value go with it.
+  ["key assignment", /(?:(?<![A-Za-z])["'`]?key["'`]?\s{0,5}(?:[:=]|=>|->)|(?<=--)key[\s=]{1,5})\s{0,5}["'`]?(?=[A-Za-z0-9_+/=-]{0,300}?\d)(?=[A-Za-z0-9_+/=-]{0,300}?[A-Za-z])(?=[A-Za-z0-9_+/=-]{0,300}?[A-Za-z0-9]{16})[A-Za-z0-9_+/=-]{20,300}["'`]?/i],
 ];
 
 // Replaces every secret-shaped span with [removed: <pattern name>].
