@@ -64,11 +64,11 @@ test("every name the plugin registers in the app is one Paseo accepts", async ()
   const { default: contribute } = await import("../index.client");
   const cleanup = contribute(client as never);
   await new Promise((resolve) => setTimeout(resolve, 0));
-  expect([...(seen.get("timeline renderer kind") ?? [])]).toEqual(["receipt", "fetch-result"]);
+  expect([...(seen.get("timeline renderer kind") ?? [])]).toEqual(["receipt", "history-note", "fetch-result"]);
   // Attach > Project file is added once a workspace has an attached project.
   expect([...(seen.get("addAttachmentSource") ?? [])]).toEqual(["tag", "agent", "knowledge", "terminal", "attached-file"]);
   expect([...(seen.get("addCommandCenterItem") ?? [])]).toEqual(["tag-agent", "pin-agent", "unpin-agent", "open-knowledge", "open-workspace-knowledge", "open-tags"]);
-  expect([...(seen.get("slash command name") ?? [])]).toEqual(["tag", "untag", "tag-link", "tag-fetch"]);
+  expect([...(seen.get("slash command name") ?? [])]).toEqual(["history", "tag", "untag", "tag-link", "tag-fetch"]);
   expect([...(seen.get("addWorkspacePanel") ?? [])]).toEqual(["knowledge"]);
   expect(pills).toEqual([
     { agentId: "a1", id: "tags", label: "1 tag", visible: true },

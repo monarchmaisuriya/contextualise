@@ -34,6 +34,9 @@ import type { KnowledgeStore } from "./store";
 import { buildTask, type TimelineEntry } from "./task-log";
 import { z } from "zod";
 import { runWorker } from "../workers";
+import { ChatHistory } from "../chat-history";
+import { addCompactionRows, HistoryOff, historyStatus, historyTools, isHistoryTool, NotedCompactions, withHistoryRule } from "../history-tools";
+import { HISTORY_ROW_KIND, historyCommandRpc } from "../../shared/history";
 
 const PLUGIN_ID = "contextualise";
 const GRANT_LINE = new RegExp(`^${ATTACH_GRANT_LABEL.replace(/[()]/g, "\\$&")} ([A-Za-z0-9_.-]+)$`);
@@ -148,6 +151,16 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   const prefs = new ProjectPrefsStore(async () => join(await deps.resolveRoot(), "knowledge"));
   const usage = new UsageLog(async () => join(await deps.resolveRoot(), "knowledge"));
   const links = new WorkspaceLinks(async () => join(await deps.resolveRoot(), "knowledge"));
+  // Chat history: each chat's own timeline, searchable word for word by the history tools.
+  const historyOn = async () => {
+    try {
+      return (await deps.settings()).historyTools;
+    } catch {
+      return false;
+    }
+  };
+  const chatHistory = { history: new ChatHistory(), off: new HistoryOff(async () => join(await deps.resolveRoot(), "knowledge", "history-off.json")), enabled: historyOn };
+  const noted = new NotedCompactions(async () => join(await deps.resolveRoot(), "knowledge", "history-noted.json"));
   const generator = new Generator({ base, prefs, root: deps.resolveRoot, settings: deps.settings, runWorker, readTimeline });
   const service = new KnowledgeService(base, async () => ((await memoriseAvailable()) ? (repoKey, path) => link.related(repoKey, path) : null));
 
@@ -451,7 +464,8 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   server.before("agent.session_open", async ({ request }, { paseo }) => {
     remember(paseo);
     const opened = request as typeof request & { tools?: unknown[] };
-    return { ...opened, tools: [...(opened.tools ?? []), projectAttachTool] } as typeof request;
+    const history = (await historyOn()) ? historyTools(chatHistory) : [];
+    return { ...opened, tools: [...(opened.tools ?? []), projectAttachTool, ...history] } as typeof request;
   });
 
   // Adds the project map and the read tools to every new agent in a git repository. Knowledge enriches
@@ -460,8 +474,15 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     remember(paseo);
     await Promise.all(attaching);
     const linked = await linkedFor(paseo, request);
-    return withLinks(await prepareKnowledge(paseo, request, linked.workspaceId), linked.chat);
+    return withHistory(withLinks(await prepareKnowledge(paseo, request, linked.workspaceId), linked.chat));
   });
+  // With chat history on, the note pointing the chat at the history tools. The tools are approved in
+  // agent.permission_requested, not with toolPolicy: Paseo refuses a preapproval for its own "paseo"
+  // server, which it removes from the request before checking (agent-manager validateToolPolicyServers).
+  const withHistory = async (request: PluginBeforeRequests["agent.create"]): Promise<PluginBeforeRequests["agent.create"]> => {
+    if (!(await historyOn())) return request;
+    return { ...request, config: { ...request.config, systemPrompt: withHistoryRule(request.config.systemPrompt) } };
+  };
   const prepareKnowledge = async (paseo: PaseoApi, request: PluginBeforeRequests["agent.create"], linkedWorkspace: string | null): Promise<PluginBeforeRequests["agent.create"]> => {
     const { config } = request;
     const others = Object.fromEntries(Object.entries(config.mcpServers ?? {}).filter(([name]) => name !== KNOWLEDGE_SERVER));
@@ -509,11 +530,28 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   server.on("agent.permission_requested", async ({ agent, request }, { paseo }) => {
     const asked = requestedTool(request.name === "CodexMcpElicitation" ? "codex" : "claude", request);
     const isKnowledge = typeof asked === "object" && asked !== null && asked.server === KNOWLEDGE_SERVER && (KNOWLEDGE_TOOLS as readonly string[]).includes(asked.tool);
-    if (!isKnowledge || !(await deps.settings()).knowledgeAutoApproveTools) return;
+    const isHistory = typeof asked === "object" && isHistoryTool(asked) && (await historyOn());
+    if (!(isKnowledge || isHistory) || !(await deps.settings()).knowledgeAutoApproveTools) return;
     await remember(paseo).agents.ref(agent.id).respondToPermission({ requestId: request.id, response: { behavior: "allow" } });
   });
 
   // Each finished turn updates the agent's task entry, from its timeline alone.
+  // After each turn, a row for each compaction the chat has not had one for yet.
+  server.on("agent.turn_ended", async ({ agent }, { paseo }) => {
+    if (!(await historyOn()) || (await chatHistory.off.isOff(agent.id))) return;
+    await addCompactionRows(remember(paseo), agent.id, noted).catch((error: unknown) => console.error(`[contextualise] could not note a compaction in agent ${agent.id}: ${String(error)}`));
+  });
+  // Answers at once; the status row follows when the chat's history is read (a long one can take
+  // longer than an RPC may wait). A failed read leaves a row saying why.
+  server.handle(historyCommandRpc, async ({ agentId, action }, { paseo }) => {
+    remember(paseo);
+    if (action !== "status") await chatHistory.off.set(agentId, action === "off");
+    const append = (data: { title: string; lines: string[] }) => paseo.agents.ref(agentId).timeline.append({ type: "plugin", id: `history-status-${Date.now()}`, kind: HISTORY_ROW_KIND, version: 1, data });
+    void historyStatus(chatHistory, paseo, agentId)
+      .then(append, (error: unknown) => append({ title: "Chat history status could not be read", lines: [String(error).slice(0, 400)] }))
+      .catch((error: unknown) => console.error(`[contextualise] could not add the /history row to agent ${agentId}: ${String(error)}`));
+    return { title: action === "status" ? "Reading this chat's history" : `Chat history tools turned ${action} for this chat`, lines: [] };
+  });
   server.on("agent.turn_ended", async ({ agent, outcome }, { paseo }) => {
     remember(paseo);
     try {

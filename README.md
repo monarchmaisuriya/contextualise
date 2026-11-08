@@ -178,6 +178,27 @@ Attach another project to one workspace, and every new Claude, Codex, or OpenCod
 
 Attached projects are stored in `<PASEO_HOME>/plugin-data/contextualise/knowledge/links.json`, by workspace, and work while Project knowledge is off.
 
+## Chat history
+
+Claude, Codex, and OpenCode compact a long conversation, and the details they drop are gone from the chat's context. Paseo keeps the whole conversation anyway, so Contextualise gives every chat tools to get those details back word for word (ported from the recovery half of [pi-context-paging](https://pi.dev/packages/@rochecompaan/pi-context-paging)):
+
+| Tool | Does |
+| --- | --- |
+| `history_search` | Finds earlier messages, tool calls, and outputs: every word of `query`, any of `tools`, all of `files`, or `failed` calls; newest first; `load` returns the first three whole |
+| `history_browse` | Lists the items before, after, or around one item |
+| `history_load` | Loads up to three items by id, whole while they fit an answer (16 KiB) |
+| `history_read` | Reads one long item in pages of up to 16,384 characters |
+
+- **What they read:** only the calling chat's own history, as Paseo stores it. The model's reasoning and the history tools' own calls are left out, and secret-shaped text is redacted. Paseo keeps at most 64K characters of a tool's output, so a longer output is already cut there.
+- **No prompts:** while "Let agents search without asking" is on, new chats get the tools pre-approved, and older chats' requests are allowed.
+- **A note in each new chat** points it at the tools when it needs exact earlier text, instead of guessing or asking again.
+- **After each compaction** a row in the chat says so, with the size where the provider reports it (Claude does).
+- **`/history`** adds a row with whether the tools are on, the history's size, the compactions, and how full the context is. `/history off` and `/history on` switch the tools for one chat.
+- **After a Paseo restart or a chat reload** Paseo rebuilds the history with new ids; an old id answers "history was reloaded, search again".
+- **What it cannot do:** the package's rolling window, which keeps every request under a token budget instead of compacting. Claude, Codex, and OpenCode build their own requests, and a plugin cannot change them.
+
+The setting "Let chats recover their own history" (on by default) turns all of this off.
+
 ## Attaching context
 
 In the composer, Attach offers five sources:

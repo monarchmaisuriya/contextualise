@@ -258,6 +258,13 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
             onValueChange={(value) => persist({ ...values, knowledgeGenerate: value })}
           />
           <SettingsSwitch
+            label="Let chats recover their own history"
+            hint="Gives every chat tools to search and reload its earlier messages and outputs word for word, including what was dropped when its context was compacted, and adds a row to the chat after each compaction."
+            value={values.historyTools}
+            disabled={settings.saving}
+            onValueChange={(value) => persist({ ...values, historyTools: value })}
+          />
+          <SettingsSwitch
             label="Let agents search without asking"
             hint="Searching only reads this project; when off, you approve each search."
             value={values.knowledgeAutoApproveTools}

@@ -22,6 +22,10 @@ Pin the agents you attach often, from the Tags pill or the Command Center. Pinne
 
 `/tag-fetch PROJ-123 auth-rewrite`, Fetch item on a tag, or the Fetch box in the Tags pill saves a Jira, Sentry, Slack, or Notion item's content under a tag. The form shows which agent and connector will read it before you start. Contextualise has no vendor accounts: a hidden background agent reads the item through the MCP connectors it already has. Claude covers all four vendors through claude.ai's connectors and Notion; Codex covers Notion; custom routes in Advanced settings add more. OpenCode is not used because it cannot be kept read-only. Workers may use only the named read tools of the item's connector; anything else they ask for is denied, and every decision is logged. Each fetch is one agent run. Results show under Fetched items (tap to read, copy, or open) with Refresh and Remove, and are included when the tag is attached. A fetch started from an agent also leaves one row in that agent's conversation when it ends, with Read and Open tags. Fetched items can be refreshed automatically once they are older than a set number of hours (off by default).
 
+## Chat history
+
+Every chat gets tools to search and reload its own earlier history word for word, including what its context dropped when it was compacted, a note pointing it at them, a row in the chat after each compaction, and `/history` for status, size, and on or off per chat.
+
 ## Attaching context
 
 The composer's Attach menu gets five sources:

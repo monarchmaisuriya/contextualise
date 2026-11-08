@@ -2,6 +2,15 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.27.0 - 2026-11-08
+
+### Added
+
+- **Chat history recovery** (the recovery half of pi-context-paging): every chat gets `history_search`, `history_browse`, `history_load`, and `history_read`, which search and reload its own earlier messages, tool calls, and outputs word for word from Paseo's stored history, including what was dropped when its context was compacted. Reasoning is left out and secrets are redacted. New chats get a note pointing them at the tools, and the tools are pre-approved while "Let agents search without asking" is on.
+- **A row after each compaction** says earlier history is kept and can be recovered.
+- **`/history`** shows whether the tools are on, the history's size, the compactions, and how full the context is; `/history off` and `/history on` switch the tools for one chat.
+- **Setting:** "Let chats recover their own history", on by default.
+
 ## 0.26.1 - 2026-11-08
 
 ### Fixed
