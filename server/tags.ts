@@ -19,6 +19,9 @@ export interface DirectoryWorkspace {
   workspaceKind?: string;
   worktreeSlug?: string;
   gitRuntime?: { currentBranch?: string | null; isDirty?: boolean | null } | null;
+  // Paseo's own activity and creation times, used when the workspace has no chats.
+  activityAt?: string | null;
+  createdAt?: string | null;
   diffStat?: { additions: number; deletions: number } | null;
   githubRuntime?: { pullRequest?: { number?: number; state: string; isDraft?: boolean; title?: string } | null } | null;
 }
@@ -87,6 +90,9 @@ export function describeAgent(directory: Directory, agentId: string, fallbackWor
 
 // One list of tags: every workspace label name joined with the agents, links, and fetched items
 // under the same name. Most recently tagged first; tags that exist only as workspace labels follow, by name.
+// When a tag was last added to: its newest agent, link, or note.
+export const lastTagged = (tag: TagSummary) => [...tag.agents.map((m) => m.taggedAt), ...tag.links.map((m) => m.taggedAt), ...tag.notes.map((m) => m.addedAt)].reduce((latest, at) => (at > latest ? at : latest), "");
+
 export function mergeTags(stored: StoredTags, directory: Directory): TagSummary[] {
   const byKey = new Map<string, TagSummary>();
   const entry = (name: string) => {
@@ -125,7 +131,6 @@ export function mergeTags(stored: StoredTags, directory: Directory): TagSummary[
     tag.notes.push(...storedTag.notes);
   }
 
-  const lastTagged = (tag: TagSummary) => [...tag.agents.map((m) => m.taggedAt), ...tag.links.map((m) => m.taggedAt), ...tag.notes.map((m) => m.addedAt)].reduce((latest, at) => (at > latest ? at : latest), "");
   return [...byKey.values()].sort((a, b) => lastTagged(b).localeCompare(lastTagged(a)) || a.name.localeCompare(b.name));
 }
 

@@ -261,6 +261,16 @@ describe("contributeKnowledge", () => {
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ identifier: "", title: expect.stringMatching(/^contextualise-plugin-repo-/) });
     expect(items[0].subtitle).toMatch(/^1 document · about \d+ tokens · /);
+    // With a chat in the project, the row leads with when it was last active, as Attach > Chat does.
+    agentEntries.push({ agent: { id: "a-recent", workspaceId: "w-top", cwd: top, provider: "claude", updatedAt: new Date(Date.now() - 3 * 3_600_000).toISOString() } });
+    try {
+      expect((await attach(""))!.items[0].subtitle).toMatch(/^3h · 1 document · about \d+ tokens · /);
+      // "Show when it was last used" off: no age, as in Attach > Chat.
+      values = { ...values, agentShowActivity: false };
+      expect((await attach(""))!.items[0].subtitle).toMatch(/^1 document · about \d+ tokens · /);
+    } finally {
+      agentEntries.splice(agentEntries.findIndex((entry) => entry.agent.id === "a-recent"), 1);
+    }
     expect(items[0].text).toContain("An API.");
     expect(items[0].text).not.toContain("Serves requests.");
     expect(items[0].text).toContain("### ARCHITECTURE.md\n#### Overview\nOne daemon.");
@@ -695,9 +705,9 @@ describe("contributeKnowledge", () => {
         );
         workspaceEntries.push({ id: "wp", workspaceDirectory: dirname(top), projectId: "p-parent" });
         const suggested = async () => ((await call("links.list", { workspaceId: "w1" })) as { suggestions: { name: string; path: string }[] }).suggestions;
-        expect(await suggested()).toEqual([{ name: "Backend", path: api }, { name: "web2", path: web2 }]);
+        expect(await suggested()).toEqual([{ name: "Backend", path: api, activeAt: null }, { name: "web2", path: web2, activeAt: null }]);
         await call("links.add", { workspaceId: "w1", path: api });
-        expect(await suggested()).toEqual([{ name: "web2", path: web2 }]);
+        expect(await suggested()).toEqual([{ name: "web2", path: web2, activeAt: null }]);
       } finally {
         rmSync(old, { recursive: true, force: true });
         rmSync(worker, { recursive: true, force: true });
@@ -714,7 +724,7 @@ describe("contributeKnowledge", () => {
       const listed = async () => (await call("links.list", { workspaceId: "w1" })) as { links: { path: string; name: string; workspaceId?: string }[]; workspaces: { workspaceId: string; name: string; branch: string | null; path: string }[] };
       // Not this workspace, not a background one; the worktree with its branch.
       expect((await listed()).workspaces.map((entry) => entry.workspaceId).sort()).toEqual(["w2", "wt"]);
-      expect((await listed()).workspaces.find((entry) => entry.workspaceId === "wt")).toEqual({ workspaceId: "wt", name: "lavish-otter", project: "api", path: worktree, branch: "fix/pr-948", attaches: "worktree", repositories: [] });
+      expect((await listed()).workspaces.find((entry) => entry.workspaceId === "wt")).toEqual({ workspaceId: "wt", name: "lavish-otter", project: "api", path: worktree, branch: "fix/pr-948", activeAt: null, attaches: "worktree", repositories: [] });
       // The path must be that workspace's own folder.
       await expect(call("links.add", { workspaceId: "w1", path: web2, attachedWorkspaceId: "wt" })).rejects.toThrow("is not the folder of workspace wt");
       await call("links.add", { workspaceId: "w1", path: worktree, attachedWorkspaceId: "wt" });
@@ -932,7 +942,11 @@ describe("contributeKnowledge", () => {
           Object.assign(workspaceEntries.find((entry) => entry.id === "w2") as object, { activityAt: "2026-11-08T06:30:00.000Z" });
           agentEntries.splice(0, agentEntries.length, { agent: { id: "a-old", workspaceId: "wd", cwd: develop, provider: "claude", updatedAt: "2026-11-08T05:00:00.000Z" } }, { agent: { id: "a-new", workspaceId: "wd2", cwd: develop, provider: "claude", updatedAt: "2026-11-08T07:00:00.000Z" } }, { agent: { id: "a-mid", workspaceId: "wo", cwd: other, provider: "claude", updatedAt: "2026-11-08T06:00:00.000Z" } });
           expect((await rowsFor("w1")).map((row) => row.workspaceId)).toEqual(["wd2", "w2", "wo", "wd"]);
-          const projects = ((await call("links.list", { workspaceId: "w1" })) as { suggestions: { path: string }[] }).suggestions.map((row) => row.path);
+          // Each row carries the time it is ordered by, so it can show its age.
+          const listed = (await call("links.list", { workspaceId: "w1" })) as { suggestions: { path: string; activeAt: string | null }[]; workspaces: { workspaceId: string; activeAt: string | null }[] };
+          expect(listed.workspaces.map((row) => row.activeAt)).toEqual(["2026-11-08T07:00:00.000Z", "2026-11-08T06:30:00.000Z", "2026-11-08T06:00:00.000Z", "2026-11-08T05:00:00.000Z"]);
+          expect(listed.suggestions.find((row) => row.path === develop)?.activeAt).toBe("2026-11-08T07:00:00.000Z");
+          const projects = listed.suggestions.map((row) => row.path);
           expect(projects.indexOf(develop)).toBeLessThan(projects.indexOf(other));
         } finally {
           rmSync(other, { recursive: true, force: true });

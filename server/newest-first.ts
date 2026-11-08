@@ -25,3 +25,11 @@ export function newestFirst<T>(items: readonly T[], at: (item: T) => string | nu
     .sort((a, b) => (a.at === b.at ? a.index - b.index : b.at - a.at))
     .map(({ item }) => item);
 }
+
+// When each workspace was last active, in milliseconds: its newest chat's update (what the sidebar and
+// Attach > Chat show), else Paseo's own activity or creation time, else null. The one rule every
+// Attach list orders and labels workspaces by.
+export function workspaceTimes(agents: readonly { workspaceId?: string | null; updatedAt?: string | null }[], workspaces: readonly { id: string; activityAt?: string | null; createdAt?: string | null }[]): Map<string, number | null> {
+  const newest = newestPerKey(agents, (agent) => agent.workspaceId, (agent) => agent.updatedAt);
+  return new Map(workspaces.map((entry) => [entry.id, newest.get(entry.id) ?? timeOf(entry.activityAt) ?? timeOf(entry.createdAt)]));
+}

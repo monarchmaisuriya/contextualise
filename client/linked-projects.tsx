@@ -8,7 +8,7 @@ import { type AttachTab, attachTabs, shownTab } from "./attach-tabs";
 import { errorText } from "./errors";
 import { ICONS } from "./icons";
 import { Button, IconButton, ListRow, SearchField, Segmented, StateView, type Styles } from "./kit";
-import { broughtLine, workspaceRows } from "./workspace-rows";
+import { broughtLine, projectMeta, workspaceRows } from "./workspace-rows";
 
 export const linksQuery = (workspaceId: string) => ["contextualise", "links", workspaceId];
 // Rows drawn at first; scrolling near the end of the list draws this many more.
@@ -84,7 +84,7 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
   // One row shape for both tabs: a project by its folder; a workspace by its title (a local one is
   // attached as a whole, with no path).
   const rows: { key: string; title: string; meta: string; path?: string; attachedWorkspaceId?: string }[] =
-    tab === "projects" ? (data?.suggestions ?? []).filter((found) => has(found.name, found.path)).map((found) => ({ key: found.path, title: found.name, meta: found.path, path: found.path })) : workspaceRows(data?.workspaces ?? [], has);
+    tab === "projects" ? (data?.suggestions ?? []).filter((found) => has(found.name, found.path)).map((found) => ({ key: found.path, title: found.name, meta: projectMeta(found), path: found.path })) : workspaceRows(data?.workspaces ?? [], has);
   const folder = typedFolder(search);
   const attach = (path: string | undefined, attachedWorkspaceId?: string) => change.mutate(() => add({ workspaceId, ...(path ? { path } : {}), ...(attachedWorkspaceId ? { attachedWorkspaceId } : {}) }));
   // Attached rows stand out: a fill and an icon in the accent color.

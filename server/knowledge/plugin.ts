@@ -37,7 +37,8 @@ import { runWorker } from "../workers";
 import { ChatHistory } from "../chat-history";
 import { addCompactionRows, HistoryOff, historyStatus, historyTools, isHistoryTool, NotedCompactions, withHistoryRule } from "../history-tools";
 import { HISTORY_ROW_KIND, historyCommandRpc } from "../../shared/history";
-import { newestFirst, newestPerKey, timeOf } from "../newest-first";
+import { newestFirst, newestPerKey, workspaceTimes } from "../newest-first";
+import { shortTimeAgo } from "../../shared/time";
 
 const PLUGIN_ID = "contextualise";
 const GRANT_LINE = new RegExp(`^${ATTACH_GRANT_LABEL.replace(/[()]/g, "\\$&")} ([A-Za-z0-9_.-]+)$`);
@@ -624,17 +625,13 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       return [];
     }
   };
-  // When each workspace was last active, in milliseconds: its newest chat's update (what the sidebar and
-  // Attach > Chat show), else Paseo's own activity or creation time, else nothing. Attach lists put the
-  // newest first.
-  const workspaceActivity = (agents: readonly ListedAgent[], workspaces: readonly { id: string; activityAt?: string | null; createdAt?: string | null }[]) => {
-    const newest = newestPerKey(agents, (agent) => agent.workspaceId, (agent) => agent.updatedAt);
-    return new Map(workspaces.map((entry) => [entry.id, newest.get(entry.id) ?? timeOf(entry.activityAt) ?? timeOf(entry.createdAt)]));
-  };
+  const workspaceActivity = workspaceTimes;
   // Every Paseo project that has a workspace M can see, with its name and own folder. Paseo also lists
   // projects whose workspaces were all archived, so the workspaces decide. The projects M works in come
   // from here, not from the knowledge index, which holds only projects an agent has already run in.
-  // Newest first: a project is as recent as its most recently active workspace.
+  // A time in milliseconds as the ISO time rows carry, or null.
+  const isoTime = (ms: number | null | undefined) => (ms === null || ms === undefined ? null : new Date(ms).toISOString());
+  // Newest first: a project is as recent as its most recently active workspace, and carries that time.
   const paseoProjects = async (paseo: PaseoApi, agents: readonly ListedAgent[]) => {
     const workspaces: Awaited<ReturnType<PaseoApi["workspaces"]["list"]>>["entries"] = [];
     for await (const entry of allWorkspaces(paseo, false)) workspaces.push(entry);
@@ -642,19 +639,19 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     const activeAt = newestPerKey(workspaces, (entry) => entry.projectId, (entry) => activity.get(entry.id));
     const projects = (await paseo.projects.list()).projects
       .filter((project) => workspaces.some((entry) => entry.projectId === project.projectId))
-      .map((project) => ({ projectId: project.projectId, name: project.projectCustomName || project.projectDisplayName, root: project.projectRootPath }));
-    return newestFirst(projects, (project) => activeAt.get(project.projectId));
+      .map((project) => ({ projectId: project.projectId, name: project.projectCustomName || project.projectDisplayName, root: project.projectRootPath, activeAt: isoTime(activeAt.get(project.projectId)) }));
+    return newestFirst(projects, (project) => project.activeAt);
   };
   // Every Paseo project to link, except the workspace's own project, folders already linked, and
   // folders a link would refuse. A failure offers none.
   const suggestionsFor = async (paseo: PaseoApi, agents: readonly ListedAgent[], workspace: { projectId: string }, folder: string, linked: ReadonlySet<string>) => {
     try {
       const home = await paseoHome();
-      const offered: { name: string; path: string }[] = [];
+      const offered: { name: string; path: string; activeAt: string | null }[] = [];
       for (const project of await paseoProjects(paseo, agents)) {
         if (project.projectId === workspace.projectId) continue;
         const path = await attachableFolder(project.root, folder, false).catch(() => null);
-        if (path && !linked.has(path)) offered.push({ name: project.name, path });
+        if (path && !linked.has(path)) offered.push({ name: project.name, path, activeAt: project.activeAt });
       }
       // Two projects of one name are told apart by their folder.
       return offered.map((entry) => (offered.filter((other) => other.name === entry.name).length > 1 ? { ...entry, name: `${entry.name} (${entry.path})` } : entry));
@@ -771,9 +768,9 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
         agents,
         others.filter((entry) => entry.workspaceKind !== "worktree").map((entry) => ({ id: entry.id, folder: entry.folder })),
       );
-      const offered: { workspaceId: string; name: string; project: string; path: string; branch: string | null; attaches: "worktree" | "workspace"; repositories: string[] }[] = [];
+      const offered: { workspaceId: string; name: string; project: string; path: string; branch: string | null; activeAt: string | null; attaches: "worktree" | "workspace"; repositories: string[] }[] = [];
       for (const entry of others) {
-        const row = { workspaceId: entry.id, name: workspaceTitle(entry), project: entry.projectCustomName ?? entry.projectDisplayName, branch: entry.gitRuntime?.currentBranch ?? null };
+        const row = { workspaceId: entry.id, name: workspaceTitle(entry), project: entry.projectCustomName ?? entry.projectDisplayName, branch: entry.gitRuntime?.currentBranch ?? null, activeAt: isoTime(activity.get(entry.id)) };
         if (entry.workspaceKind === "worktree") {
           const path = await attachableFolder(entry.folder, folder, true).catch(() => null);
           if (path && !attachedPaths.some((attached) => within(attached, path) || within(path, attached))) offered.push({ ...row, path, attaches: "worktree", repositories: [] });
@@ -1029,13 +1026,16 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   // One whole-project row: the project's own writing in one attachment, built from its index.
   // Its first line is a project grant: a new workspace's first message is attached by the
   // workspace.create hook, and any other chat attaches it with project_attach.
-  const projectItem = (found: { repoKey: string; name: string; top: string }, store: KnowledgeStore, updating: boolean, pickerTitleMaxChars: number, label: (word: string) => string, grant: string | null) => {
+  // `showActivity`: lead with when the project was last active, as Attach > Chat does ("Show when it was
+  // last used").
+  const projectItem = (found: { repoKey: string; name: string; top: string; activeAt: string | null }, store: KnowledgeStore, updating: boolean, pickerTitleMaxChars: number, label: (word: string) => string, grant: string | null, showActivity: boolean) => {
     const pack = projectPack(store, found);
+    const active = showActivity && found.activeAt ? `${shortTimeAgo(found.activeAt)} · ` : "";
     return {
       id: `${found.repoKey}|project`,
       identifier: label("Whole project"),
       title: capTitle(found.name, pickerTitleMaxChars),
-      subtitle: `${updating ? "Updating · " : ""}${pack.documents === 0 ? "No design documents, rules, or decisions" : pack.included === pack.documents ? `${pack.documents} document${pack.documents === 1 ? "" : "s"}` : `${pack.included} of ${pack.documents} documents`} · about ${pack.tokens.toLocaleString("en-US")} tokens · ${found.top}`.slice(0, 200),
+      subtitle: `${active}${updating ? "Updating · " : ""}${pack.documents === 0 ? "No design documents, rules, or decisions" : pack.included === pack.documents ? `${pack.documents} document${pack.documents === 1 ? "" : "s"}` : `${pack.included} of ${pack.documents} documents`} · about ${pack.tokens.toLocaleString("en-US")} tokens · ${found.top}`.slice(0, 200),
       url: DOCS_URL,
       text: grant ? `${ATTACH_GRANT_LABEL} ${grant}\n\n${pack.text}` : pack.text,
       resourceType: "knowledge",
@@ -1045,17 +1045,17 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   // Every Paseo project M works in, as the project Contextualise reads for its folder (folders it never
   // reads, such as the home folder, are left out). One not read before is read now: the picker shows it
   // as updating until it is. If Paseo cannot list its projects, the projects already read are offered.
-  const attachableProjects = async (paseo: PaseoApi): Promise<{ repoKey: string; name: string; top: string }[]> => {
+  const attachableProjects = async (paseo: PaseoApi): Promise<{ repoKey: string; name: string; top: string; activeAt: string | null }[]> => {
     try {
-      const found = new Map<string, { repoKey: string; name: string; top: string }>();
+      const found = new Map<string, { repoKey: string; name: string; top: string; activeAt: string | null }>();
       for (const project of await paseoProjects(paseo, await agentsForOrder(paseo))) {
         const repo = await base.repoFor(project.root).catch(() => null);
-        if (repo && !found.has(repo.key)) found.set(repo.key, { repoKey: repo.key, name: project.name, top: repo.top });
+        if (repo && !found.has(repo.key)) found.set(repo.key, { repoKey: repo.key, name: project.name, top: repo.top, activeAt: project.activeAt });
       }
       return [...found.values()];
     } catch (error) {
       console.error(`[contextualise] could not list Paseo's projects for Attach; offering the projects already read: ${String(error)}`);
-      return base.projects();
+      return (await base.projects()).map((project) => ({ ...project, activeAt: null }));
     }
   };
 
@@ -1066,7 +1066,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   server.handle(searchKnowledgeAttachmentsRpc, async ({ query }, { paseo }) => {
     remember(paseo);
     if (!(await knowledgeOn())) return { items: [] };
-    const { pickerTitleMaxChars, pickerPrefix } = await deps.settings();
+    const { pickerTitleMaxChars, pickerPrefix, agentShowActivity } = await deps.settings();
     // Rows start with their title unless the "Label before each title" setting asks for a word.
     const label = (word: string) => (pickerPrefix === "none" ? "" : word);
     const words = query.trim().toLowerCase();
@@ -1080,7 +1080,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     // No grants while the tool server is down: there is nothing to attach through.
     const tokens = await runtime.then(({ tokens, problem }) => (problem ? null : tokens)).catch(() => null);
     const wholes = await Promise.all(
-      projects.filter(({ found }) => words === "" || found.name.toLowerCase().includes(words)).map(async ({ found, repo, updating }) => projectItem(found, await base.open(repo), updating, pickerTitleMaxChars, label, tokens ? tokens.mintProjectGrant(found.repoKey, found.top) : null)),
+      projects.filter(({ found }) => words === "" || found.name.toLowerCase().includes(words)).map(async ({ found, repo, updating }) => projectItem(found, await base.open(repo), updating, pickerTitleMaxChars, label, tokens ? tokens.mintProjectGrant(found.repoKey, found.top) : null, agentShowActivity)),
     );
     if (words === "") return { items: wholes };
     const entries = await Promise.all(

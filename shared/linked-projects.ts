@@ -29,11 +29,13 @@ export const workspaceLinksSchema = z.object({
   // cannot be told apart and get no links; "New linked chat" still does.
   sharedFolder: z.boolean(),
   // Every Paseo project with a workspace, by its own folder, to pick from when adding.
-  suggestions: z.array(z.object({ name: z.string(), path: z.string() })),
+  // Each newest first, with `activeAt` (ISO, or null): when it was last active, the time it is ordered
+  // by (its newest chat, else Paseo's own activity or creation time).
+  suggestions: z.array(z.object({ name: z.string(), path: z.string(), activeAt: z.string().nullable() })),
   // Every other Paseo workspace not attached yet, one row each: a worktree attaches its own folder (the
   // link lapses with it); a local workspace attaches as a whole, and `repositories` is what it brings
   // here now. Both lapse with their workspace.
-  workspaces: z.array(z.object({ workspaceId: z.string(), name: z.string(), project: z.string(), path: z.string(), branch: z.string().nullable(), attaches: z.enum(["worktree", "workspace"]), repositories: z.array(z.string()) })),
+  workspaces: z.array(z.object({ workspaceId: z.string(), name: z.string(), project: z.string(), path: z.string(), branch: z.string().nullable(), activeAt: z.string().nullable(), attaches: z.enum(["worktree", "workspace"]), repositories: z.array(z.string()) })),
 });
 export type WorkspaceLinksPayload = z.infer<typeof workspaceLinksSchema>;
 

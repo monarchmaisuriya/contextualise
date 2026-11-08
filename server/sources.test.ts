@@ -121,7 +121,8 @@ test("terminal search captures the newest lines from the setting and says how lo
   const items = await searchTerminals(paseo, new Memo(30_000), directory, "test", options);
   expect(items).toHaveLength(1);
   expect(capture).toHaveBeenCalledWith({ start: -50, stripAnsi: true });
-  expect(items[0]).toMatchObject({ identifier: "", title: "tests", subtitle: "payments / api · 940 lines", resourceType: "terminal" });
+  // It leads with when its workspace was last active (its newest chat, 2026-10-25), as Attach > Chat does.
+  expect(items[0]).toMatchObject({ identifier: "", title: "tests", subtitle: `${shortTimeAgo("2026-10-25")} · payments / api · 940 lines`, resourceType: "terminal" });
   expect(items[0].text).toContain("ok 12 tests");
 });
 
@@ -312,6 +313,23 @@ test("lists terminals of the workspace whose chats ran most recently first, the 
   const agents = [...directory.agents, { id: "busy", title: "Ship it", provider: "claude", workspaceId: "w2", updatedAt: "2026-11-01" }];
   const terminals = fakePaseo({}, [{ id: "t1", workspaceId: "w3", cwd: "/src/docs", name: "quiet" }, { id: "t2", workspaceId: "w1", cwd: "/src", name: "api" }, { id: "t3", workspaceId: "w2", cwd: "/src/shop", name: "web" }, { id: "t4", workspaceId: "w3", cwd: "/src/docs", name: "idle" }]).paseo;
   expect((await searchTerminals(terminals, new Memo(30_000), { workspaces, agents }, "", options)).map((row) => row.id)).toEqual(["t3", "t2", "t1", "t4"]);
+});
+
+test("a tag row leads with when it was last tagged, and every picker row drops its age when the setting is off", async () => {
+  const recent = { ...tag("auth", ["good"]), agents: [{ ...tag("auth", ["good"]).agents[0], taggedAt: "2026-10-20T00:00:00.000Z" }] };
+  const page = () => [{ entries: [entry("user_message", "hi")], hasOlder: false, startCursor: null, error: null }];
+  const [tagRow] = await searchTags(fakePaseo({ good: page() }).paseo, new Memo(30_000), [recent], "", options);
+  expect(tagRow.subtitle).toBe(`${shortTimeAgo("2026-10-20T00:00:00.000Z")} · 1 agent: claude`);
+  const off = { ...options, agentShowActivity: false };
+  expect((await searchTags(fakePaseo({ good: page() }).paseo, new Memo(30_000), [recent], "", off))[0].subtitle).toBe("1 agent: claude");
+  const terminals = fakePaseo({}, [{ id: "t1", workspaceId: "w1", cwd: "/src", name: "tests" }]).paseo;
+  expect((await searchTerminals(terminals, new Memo(30_000), directory, "", off))[0].subtitle).toBe("payments / api · 940 lines");
+});
+
+test("a terminal in a workspace without chats takes the workspace's own activity time, as the Workspaces tab does", async () => {
+  const quiet = { workspaces: [{ id: "w9", name: "docs", projectDisplayName: "docs", projectRootPath: "/src/docs", activityAt: "2026-11-01T00:00:00.000Z" }], agents: [] };
+  const terminals = fakePaseo({}, [{ id: "t9", workspaceId: "w9", cwd: "/src/docs", name: "docs" }]).paseo;
+  expect((await searchTerminals(terminals, new Memo(30_000), quiet, "", options))[0].subtitle).toBe(`${shortTimeAgo("2026-11-01T00:00:00.000Z")} · docs · 940 lines`);
 });
 
 test("token estimates read as short approximate counts", () => {
