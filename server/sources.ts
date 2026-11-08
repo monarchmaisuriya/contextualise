@@ -5,7 +5,8 @@ import { DOCS_URL, type AgentMember, type SnapshotSettings, type TagSummary } fr
 import type { AgentTimelineItem, PaseoApi } from "./paseo-types";
 import { describeMembers, isUnreadable, lastTurns, matchTags, renderConversation, renderSnapshot, renderTerminal, type AgentReading } from "./snapshot";
 import { agentTitle, capTitle, cleanTitle, gitParts, workspaceLabel, workspaceSearchText } from "./rows";
-import { agentLive, type Directory, type DirectoryAgent, type DirectoryWorkspace } from "./tags";
+import { agentLive, type Directory, type DirectoryAgent, type DirectoryWorkspace, lastTagged } from "./tags";
+import { newestFirst, timeOf, workspaceTimes } from "./newest-first";
 
 const TIMELINE_PAGE = 200;
 const MAX_TIMELINE_PAGES = 5;
@@ -96,12 +97,16 @@ export async function tagAttachment(paseo: PaseoApi, memo: Memo, fullTag: TagSum
     id: tag.key,
     identifier: rowPrefix("tag", undefined, options.pickerPrefix),
     title: capTitle(tag.name, options.pickerTitleMaxChars),
-    subtitle: subtitle([describeMembers(tag, readings.filter(isUnreadable).length)], text, options),
+    // Leads with when it was last tagged, as Attach > Chat leads with when a chat was last used.
+    subtitle: subtitle([options.agentShowActivity ? ageOf(timeOf(lastTagged(tag))) : null, describeMembers(tag, readings.filter(isUnreadable).length)], text, options),
     url: DOCS_URL,
     text,
     resourceType: "tag",
   };
 }
+
+// A time in milliseconds as a row's age ("3h"), or null.
+const ageOf = (ms: number | null | undefined) => (ms === null || ms === undefined ? null : shortTimeAgo(new Date(ms).toISOString()));
 
 export async function searchTags(paseo: PaseoApi, memo: Memo, tags: readonly TagSummary[], query: string, options: SnapshotSettings): Promise<PluginAttachmentItem[]> {
   return Promise.all(matchTags(tags, query).map((tag) => tagAttachment(paseo, memo, tag, options)));
@@ -245,7 +250,13 @@ export async function searchAgents(paseo: PaseoApi, directory: Directory, query:
 export async function searchTerminals(paseo: PaseoApi, memo: Memo, directory: Directory, query: string, options: SnapshotSettings): Promise<PluginAttachmentItem[]> {
   const workspaces = workspacesById(directory);
   const { entries } = await paseo.terminals.list();
-  const found = entries.filter((terminal) => matches([terminal.name, workspaceSearchText(workspaces.get(terminal.workspaceId)), terminal.cwd].join(" "), query));
+  // Terminals of the workspace whose chats ran most recently first: Paseo's SDK gives a terminal no
+  // time of its own.
+  const newest = workspaceTimes(directory.agents, directory.workspaces);
+  const found = newestFirst(
+    entries.filter((terminal) => matches([terminal.name, workspaceSearchText(workspaces.get(terminal.workspaceId)), terminal.cwd].join(" "), query)),
+    (terminal) => newest.get(terminal.workspaceId),
+  );
   return Promise.all(
     found.map(async (terminal) => {
       const workspace = workspaces.get(terminal.workspaceId);
@@ -256,7 +267,8 @@ export async function searchTerminals(paseo: PaseoApi, memo: Memo, directory: Di
         id: terminal.id,
         identifier: rowPrefix("terminal", undefined, options.pickerPrefix),
         title: capTitle(terminal.name, options.pickerTitleMaxChars),
-        subtitle: subtitle([workspaceName, workspace?.gitRuntime?.currentBranch, `${capture.totalLines} lines`], text, options),
+        // Leads with when its workspace was last active, as Attach > Chat does.
+        subtitle: subtitle([options.agentShowActivity ? ageOf(newest.get(terminal.workspaceId)) : null, workspaceName, workspace?.gitRuntime?.currentBranch, `${capture.totalLines} lines`], text, options),
         url: DOCS_URL,
         text,
         resourceType: "terminal",

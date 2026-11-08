@@ -27,7 +27,7 @@ import { projectPack } from "./pack";
 import { type LiveAgent, needsYou } from "../agent-state";
 import { waitingAgents } from "./pulse";
 import { ATTACH_GRANT_LABEL, PROJECT_ATTACH_TOOL, SECTION_END, SECTION_START, unavailableSection, withoutSection, withSection } from "./section";
-import { type LinkedForChat, linkableFolder, linkedProviderOptions, linksSection, type WorkspaceLink, within, WorkspaceLinks } from "./links";
+import { type BroughtFolder, type LinkedForChat, linkableFolder, linkedProviderOptions, linksSection, MAX_CHAT_FOLDERS, type WorkspaceLink, within, WorkspaceLinks } from "./links";
 import { KnowledgeService } from "./service";
 import { SymbolReader } from "./symbols";
 import type { KnowledgeStore } from "./store";
@@ -37,6 +37,8 @@ import { runWorker } from "../workers";
 import { ChatHistory } from "../chat-history";
 import { addCompactionRows, HistoryOff, historyStatus, historyTools, isHistoryTool, NotedCompactions, withHistoryRule } from "../history-tools";
 import { HISTORY_ROW_KIND, historyCommandRpc } from "../../shared/history";
+import { newestFirst, newestPerKey, workspaceTimes } from "../newest-first";
+import { shortTimeAgo } from "../../shared/time";
 
 const PLUGIN_ID = "contextualise";
 const GRANT_LINE = new RegExp(`^${ATTACH_GRANT_LABEL.replace(/[()]/g, "\\$&")} ([A-Za-z0-9_.-]+)$`);
@@ -208,36 +210,52 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     for await (const workspace of allWorkspaces(paseo)) if (workspace.id === workspaceId) return workspace;
     throw new Error(`Paseo has no workspace ${workspaceId}`);
   };
-  // The links that still count, by workspace, each with the name it is shown by: an attached workspace
-  // by its project and title, a folder by its own name. A link to an attached workspace Paseo no longer
-  // has (archived or deleted) is left out: its folder may since belong to another worktree. Given one
-  // workspace, which the caller knows Paseo has, only its links are read, and Paseo's workspaces only
-  // when one of them is an attached workspace; otherwise the links of workspaces Paseo no longer has
-  // are left out too. Every reader of attached projects goes through here.
-  const liveLinks = async (paseo: PaseoApi, only?: string): Promise<Map<string, (WorkspaceLink & { name: string })[]>> => {
-    const all = await links.all();
-    const scoped = only === undefined ? Object.entries(all) : [[only, all[only] ?? []] as const];
+  // What still counts of each workspace's attachments: its folder links, each with the name it is
+  // shown by (an attached worktree by its project and title, a folder by its own name), and its
+  // attached workspaces with the folders saved for them. An attachment to a workspace Paseo no longer
+  // has (archived or deleted) is left out: a worktree's folder may since belong to another worktree.
+  // Given one workspace, which the caller knows Paseo has, only its attachments are read, and Paseo's
+  // workspaces only when one of them names a workspace; otherwise the attachments of workspaces Paseo
+  // no longer has are left out too. Without a Paseo handle (knowledge search before any hook or RPC),
+  // nothing is left out until the next one. Every reader of attachments goes through here.
+  type LiveAttachments = { links: (WorkspaceLink & { name: string })[]; workspaces: { workspaceId: string; name: string; folders: BroughtFolder[] }[] };
+  const liveLinks = async (paseo: PaseoApi | null, only?: string): Promise<Map<string, LiveAttachments>> => {
+    const { links: folderLinks, attached } = await links.all();
+    const ids = only === undefined ? [...new Set([...Object.keys(folderLinks), ...Object.keys(attached)])] : [only];
     const labels = new Map<string, string>();
-    if (only === undefined || scoped.some(([, found]) => found.some((link) => link.workspaceId))) {
-      for await (const entry of allWorkspaces(paseo)) labels.set(entry.id, `${entry.projectCustomName ?? entry.projectDisplayName} / ${workspaceTitle(entry)}`);
-    }
-    const live = new Map<string, (WorkspaceLink & { name: string })[]>();
-    for (const [workspaceId, found] of scoped) {
-      if (only === undefined && !labels.has(workspaceId)) continue;
-      const kept = found.filter((link) => {
-        if (!link.workspaceId || labels.has(link.workspaceId)) return true;
-        console.error(`[contextualise] left attached workspace ${link.workspaceId} (${link.path}) out: Paseo no longer has it`);
-        return false;
+    const checked = paseo !== null && (only === undefined || (folderLinks[only] ?? []).some((link) => link.workspaceId) || (attached[only] ?? []).length > 0);
+    if (checked) for await (const entry of allWorkspaces(paseo)) labels.set(entry.id, `${entry.projectCustomName ?? entry.projectDisplayName} / ${workspaceTitle(entry)}`);
+    const lapsed = (workspaceId: string, what: string) => {
+      if (!checked || labels.has(workspaceId)) return false;
+      console.error(`[contextualise] left attached workspace ${workspaceId} (${what}) out: Paseo no longer has it`);
+      return true;
+    };
+    const live = new Map<string, LiveAttachments>();
+    for (const workspaceId of ids) {
+      if (only === undefined && checked && !labels.has(workspaceId)) continue;
+      const kept = (folderLinks[workspaceId] ?? []).filter((link) => !link.workspaceId || !lapsed(link.workspaceId, link.path));
+      live.set(workspaceId, {
+        links: kept.map((link) => ({ ...link, name: (link.workspaceId && labels.get(link.workspaceId)) || basename(link.path) })),
+        workspaces: (attached[workspaceId] ?? []).filter((entry) => !lapsed(entry.workspaceId, "attached as a workspace")).map((entry) => ({ workspaceId: entry.workspaceId, name: labels.get(entry.workspaceId) ?? entry.workspaceId, folders: entry.folders })),
       });
-      live.set(workspaceId, kept.map((link) => ({ ...link, name: (link.workspaceId && labels.get(link.workspaceId)) || basename(link.path) })));
     }
     return live;
+  };
+  // Every folder a workspace's attachments bring, each once: its folder links first, then each attached
+  // workspace's folders, which carry that workspace's name.
+  // `worktree`: attached as that worktree's workspace, the only way a worktree's folder may be attached.
+  type BroughtBy = { path: string; label: string; repoKey: string | null; from: string | null; worktree: boolean };
+  const foldersOf = (live: LiveAttachments | undefined): BroughtBy[] => {
+    const seen = new Map<string, BroughtBy>();
+    for (const link of live?.links ?? []) if (!seen.has(link.path)) seen.set(link.path, { path: link.path, label: link.name, repoKey: link.repoKey, from: null, worktree: link.workspaceId !== undefined });
+    for (const entry of live?.workspaces ?? []) for (const folder of entry.folders) if (!seen.has(folder.path)) seen.set(folder.path, { path: folder.path, label: basename(folder.path), repoKey: folder.repoKey, from: entry.name, worktree: false });
+    return [...seen.values()];
   };
   // The projects attached to a workspace now, as Contextualise reads them; a folder that no longer
   // reads as the project it was attached as is left out.
   const attachedProjects = async (workspaceId: string) => {
     const found: ProjectRoot[] = [];
-    for (const link of await links.list(workspaceId)) {
+    for (const link of foldersOf((await liveLinks(paseoHandle, workspaceId)).get(workspaceId))) {
       const repo = link.repoKey ? await base.repoFor(link.path).catch(() => null) : null;
       if (repo && repo.key === link.repoKey) found.push(repo);
     }
@@ -246,9 +264,9 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   // A project grant, attached to a workspace with the same checks as the Attached button. The grant is
   // spent only when the project is attached now, not when it already was.
   const attachProject = async (paseo: PaseoApi, workspaceId: string, granted: { id: string; repoKey: string; top: string }) => {
-    const folder = await linkableFolder(granted.top, workspaceFolder(await workspaceById(paseo, workspaceId)), [await paseoHome()]);
+    const folder = await attachableFolder(granted.top, workspaceFolder(await workspaceById(paseo, workspaceId)), false);
     const name = basename(folder);
-    if ((await links.list(workspaceId)).some((link) => link.path === folder)) return `${name} is already attached to this workspace. knowledge_search covers it.`;
+    if (foldersOf((await liveLinks(paseo, workspaceId)).get(workspaceId)).some((link) => link.path === folder)) return `${name} is already attached to this workspace. knowledge_search covers it.`;
     await links.useGrant(granted.id);
     const repoKey = (await base.repoFor(folder).catch(() => null))?.key ?? null;
     await links.add(workspaceId, { path: folder, repoKey, addedAt: new Date().toISOString() });
@@ -278,17 +296,24 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
         workspaceId = here[0] ?? null;
       }
       // Each link is checked again as it is used: a folder replaced by a symlink, moved, or deleted
-      // since it was linked is left out.
-      const home = await paseoHome();
+      // since it was linked, or a worktree's folder not attached as its workspace, is left out.
+      const live = workspaceId ? (await liveLinks(paseo, workspaceId)).get(workspaceId) : undefined;
       const found = [];
-      for (const link of workspaceId ? ((await liveLinks(paseo, workspaceId)).get(workspaceId) ?? []) : []) {
-        const still = await linkableFolder(link.path, cwd, [home]).catch(() => null);
+      for (const link of foldersOf(live)) {
+        const still = await attachableFolder(link.path, cwd, link.worktree).catch(() => null);
         if (still === link.path) found.push(link);
         else console.error(`[contextualise] left linked folder ${link.path} out of a chat in ${cwd}: it moved, is gone, or now points elsewhere`);
       }
+      const leftOut = found.slice(MAX_CHAT_FOLDERS).map((link) => link.path);
+      if (leftOut.length > 0) console.error(`[contextualise] left ${leftOut.length} attached folder(s) out of a chat in ${cwd}: a chat gets at most ${MAX_CHAT_FOLDERS}`);
       return {
         workspaceId,
-        chat: { ...chat, links: found.map((link) => ({ path: link.path, name: basename(link.path), repoKey: link.repoKey })) },
+        chat: {
+          ...chat,
+          links: found.slice(0, MAX_CHAT_FOLDERS).map((link) => ({ path: link.path, name: link.from ? `${basename(link.path)} (from ${link.from})` : basename(link.path), repoKey: link.repoKey })),
+          leftOut,
+          notFollowed: (live?.workspaces.length ?? 0) > 0 && !(await knowledgeOn()),
+        },
       };
     } catch (error) {
       console.error(`[contextualise] could not prepare attached projects for an agent in ${cwd}: ${String(error)}`);
@@ -564,6 +589,8 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       const previous = (await base.open(repo)).task(task.id);
       // A turn adds to the session; its generated title and summary stay until they are regenerated.
       await base.recordTask(repo, { ...previous, ...task, citations: task.files.map((path) => ({ path, blob: blobs.get(path) ?? "missing" })) });
+      // Workspaces that have this chat's workspace attached get the repositories it now works in.
+      if (agent.workspaceId) await refreshAttached(paseo, agent.workspaceId).catch((error: unknown) => console.error(`[contextualise] could not update what workspace ${agent.workspaceId} brings where it is attached: ${String(error)}`));
       await generator.schedule(paseo, repo, agent);
     } catch (error) {
       console.error(`[contextualise] could not record the task of agent ${agent.id}: ${String(error)}`);
@@ -576,29 +603,58 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     return found.repo;
   };
 
+  // Every chat Paseo has, archived ones too, read once per call.
+  type ListedAgent = { id: string; workspaceId?: string | null; updatedAt?: string | null };
+  const listAgents = async (paseo: PaseoApi): Promise<ListedAgent[]> => {
+    const agents: ListedAgent[] = [];
+    for (let cursor: string | undefined; ; ) {
+      const page = await paseo.agents.list({ filter: { includeArchived: true }, page: { limit: 200, ...(cursor ? { cursor } : {}) } });
+      agents.push(...(page.entries as { agent: ListedAgent }[]).map(({ agent }) => agent));
+      if (!page.pageInfo.hasMore || !page.pageInfo.nextCursor || page.pageInfo.nextCursor === cursor) break;
+      cursor = page.pageInfo.nextCursor;
+    }
+    return agents;
+  };
+  // The chats, for ordering only: when Paseo cannot list them, nothing has a chat time (logged), and the
+  // lists keep their rows in their former order.
+  const agentsForOrder = async (paseo: PaseoApi): Promise<ListedAgent[]> => {
+    try {
+      return await listAgents(paseo);
+    } catch (error) {
+      console.error(`[contextualise] could not list chats to order Attach lists by activity; listing them by name: ${String(error)}`);
+      return [];
+    }
+  };
+  const workspaceActivity = workspaceTimes;
   // Every Paseo project that has a workspace M can see, with its name and own folder. Paseo also lists
   // projects whose workspaces were all archived, so the workspaces decide. The projects M works in come
   // from here, not from the knowledge index, which holds only projects an agent has already run in.
-  const paseoProjects = async (paseo: PaseoApi) => {
-    const withWorkspaces = new Set<string>();
-    for await (const entry of allWorkspaces(paseo, false)) withWorkspaces.add(entry.projectId);
-    return (await paseo.projects.list()).projects
-      .filter((project) => withWorkspaces.has(project.projectId))
-      .map((project) => ({ projectId: project.projectId, name: project.projectCustomName || project.projectDisplayName, root: project.projectRootPath }));
+  // A time in milliseconds as the ISO time rows carry, or null.
+  const isoTime = (ms: number | null | undefined) => (ms === null || ms === undefined ? null : new Date(ms).toISOString());
+  // Newest first: a project is as recent as its most recently active workspace, and carries that time.
+  const paseoProjects = async (paseo: PaseoApi, agents: readonly ListedAgent[]) => {
+    const workspaces: Awaited<ReturnType<PaseoApi["workspaces"]["list"]>>["entries"] = [];
+    for await (const entry of allWorkspaces(paseo, false)) workspaces.push(entry);
+    const activity = workspaceActivity(agents, workspaces);
+    const activeAt = newestPerKey(workspaces, (entry) => entry.projectId, (entry) => activity.get(entry.id));
+    const projects = (await paseo.projects.list()).projects
+      .filter((project) => workspaces.some((entry) => entry.projectId === project.projectId))
+      .map((project) => ({ projectId: project.projectId, name: project.projectCustomName || project.projectDisplayName, root: project.projectRootPath, activeAt: isoTime(activeAt.get(project.projectId)) }));
+    return newestFirst(projects, (project) => project.activeAt);
   };
   // Every Paseo project to link, except the workspace's own project, folders already linked, and
   // folders a link would refuse. A failure offers none.
-  const suggestionsFor = async (paseo: PaseoApi, workspace: { projectId: string }, folder: string, linked: ReadonlySet<string>) => {
+  const suggestionsFor = async (paseo: PaseoApi, agents: readonly ListedAgent[], workspace: { projectId: string }, folder: string, linked: ReadonlySet<string>) => {
     try {
       const home = await paseoHome();
-      const offered: { name: string; path: string }[] = [];
-      for (const project of await paseoProjects(paseo)) {
+      const offered: { name: string; path: string; activeAt: string | null }[] = [];
+      for (const project of await paseoProjects(paseo, agents)) {
         if (project.projectId === workspace.projectId) continue;
-        const path = await linkableFolder(project.root, folder, [home]).catch(() => null);
-        if (path && !linked.has(path)) offered.push({ name: project.name, path });
+        const path = await attachableFolder(project.root, folder, false).catch(() => null);
+        if (path && !linked.has(path)) offered.push({ name: project.name, path, activeAt: project.activeAt });
       }
       // Two projects of one name are told apart by their folder.
-      return offered.map((entry) => (offered.filter((other) => other.name === entry.name).length > 1 ? { ...entry, name: `${entry.name} (${entry.path})` } : entry)).sort((a, b) => a.name.localeCompare(b.name));
+      return offered.map((entry) => (offered.filter((other) => other.name === entry.name).length > 1 ? { ...entry, name: `${entry.name} (${entry.path})` } : entry));
     } catch (error) {
       console.error(`[contextualise] could not list Paseo's projects to suggest links: ${String(error)}`);
       return [];
@@ -610,25 +666,20 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   // read, so opening the popover never creates one; nothing is read while project knowledge is off. A
   // workspace with nothing recorded is not in the map. A failure here is logged and leaves the map
   // empty, so the other rows still show.
-  const changedRepositories = async (paseo: PaseoApi, locals: readonly { id: string; folder: string }[]): Promise<Map<string, string[]>> => {
+  const changedRepositories = async (agents: readonly ListedAgent[], locals: readonly { id: string; folder: string }[]): Promise<Map<string, string[]>> => {
     const found = new Map<string, Set<string>>();
     if (locals.length === 0 || !(await knowledgeOn())) return new Map();
     try {
-      await readChangedRepositories(paseo, locals, found);
+      await readChangedRepositories(agents, locals, found);
     } catch (error) {
       console.error(`[contextualise] could not read which repositories local workspaces changed; offering their folders: ${String(error)}`);
       return new Map();
     }
     return new Map([...found].map(([workspaceId, repositories]) => [workspaceId, [...repositories].sort()]));
   };
-  const readChangedRepositories = async (paseo: PaseoApi, locals: readonly { id: string; folder: string }[], found: Map<string, Set<string>>) => {
+  const readChangedRepositories = async (agents: readonly ListedAgent[], locals: readonly { id: string; folder: string }[], found: Map<string, Set<string>>) => {
     const workspaceOf = new Map<string, string>();
-    for (let cursor: string | undefined; ; ) {
-      const page = await paseo.agents.list({ filter: { includeArchived: true }, page: { limit: 200, ...(cursor ? { cursor } : {}) } });
-      for (const { agent } of page.entries as { agent: { id: string; workspaceId?: string | null } }[]) if (agent.workspaceId) workspaceOf.set(agent.id, agent.workspaceId);
-      if (!page.pageInfo.hasMore || !page.pageInfo.nextCursor || page.pageInfo.nextCursor === cursor) break;
-      cursor = page.pageInfo.nextCursor;
-    }
+    for (const agent of agents) if (agent.workspaceId) workspaceOf.set(agent.id, agent.workspaceId);
     const repositoryOf = new Map<string, string | null>();
     const nearestRepository = async (folder: string, dir: string): Promise<string | null> => {
       if (!within(dir, folder)) return null;
@@ -652,33 +703,92 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       }
     }
   };
-  // Every other visible Paseo workspace, one row for each thing picking it attaches: a worktree's own
-  // folder; for a local workspace, each repository its chats changed, or its folder while nothing is
-  // recorded (a folder of many repositories, like ~/Develop, is rarely what was meant). Not this
-  // workspace, and nothing inside or around a folder already attached. Paseo leaves archived workspaces
-  // out of its list.
-  const workspaceSuggestions = async (paseo: PaseoApi, workspace: { id: string }, folder: string, attached: readonly WorkspaceLink[]) => {
+  // Every folder attached, brought, or given to a chat passes here, when it is saved and again when a
+  // chat starts: linkableFolder's checks, and no worktree's folder unless that worktree is attached as
+  // its workspace (`asWorktree`), since a later worktree may reuse the folder and the link must end
+  // with this one.
+  const attachableFolder = async (path: string, receiverFolder: string, asWorktree: boolean) => {
+    const home = await paseoHome();
+    const folder = await linkableFolder(path, receiverFolder, [home]);
+    if (!asWorktree && within(folder, await realFolder(join(home, "worktrees")))) throw new Error(`${folder} is a worktree's folder; attach it from the Workspaces tab, so it is detached when that worktree goes`);
+    return folder;
+  };
+  // A local workspace's own folder, when that folder is one repository.
+  const ownRepository = async (folder: string) => ((await lstat(join(folder, ".git")).catch(() => null)) ? [folder] : []);
+  // The folders a local workspace brings when attached: the repositories its chats changed, or, while
+  // none is recorded, its own folder when that is one repository. Null when it cannot be told now
+  // (project knowledge off, or its project switched off): what was saved before is kept then.
+  const workspaceFolders = async (paseo: PaseoApi, workspace: { id: string; folder: string }): Promise<string[] | null> => {
+    if (!(await knowledgeOn())) return null;
+    const project = (await base.projects()).find((entry) => entry.top === workspace.folder);
+    if (project && !(await prefs.get(project.repoKey)).enabled) return null;
+    const found = new Map<string, Set<string>>();
+    await readChangedRepositories(await listAgents(paseo), [workspace], found);
+    const repositories = [...(found.get(workspace.id) ?? [])].sort();
+    return repositories.length > 0 ? repositories : ownRepository(workspace.folder);
+  };
+  // What those folders are for one receiving workspace: each it may have, with its project key. A folder
+  // it may not have is left out and logged.
+  const foldersFor = async (paths: readonly string[], receiverFolder: string): Promise<BroughtFolder[]> => {
+    const kept: BroughtFolder[] = [];
+    for (const path of paths) {
+      const folder = await attachableFolder(path, receiverFolder, false).catch((error: unknown) => {
+        console.error(`[contextualise] left ${path} out of an attached workspace: ${String(error)}`);
+        return null;
+      });
+      if (folder) kept.push({ path: folder, repoKey: (await knowledgeOn()) ? ((await base.repoFor(folder).catch(() => null))?.key ?? null) : null });
+    }
+    return kept;
+  };
+  // Works out again what an attached workspace brings, for every workspace it is attached to. Called
+  // when one of its chats ends a turn, after the files it changed are recorded.
+  const refreshAttached = async (paseo: PaseoApi, attachedId: string) => {
+    const receivers = await links.receiversOf(attachedId);
+    if (receivers.length === 0) return;
+    const attached = await workspaceById(paseo, attachedId);
+    const paths = await workspaceFolders(paseo, { id: attachedId, folder: await realFolder(workspaceFolder(attached)) });
+    if (paths === null) return;
+    const at = new Date().toISOString();
+    for (const receiver of receivers) {
+      const folder = await workspaceById(paseo, receiver).then(workspaceFolder, () => null);
+      if (folder) await links.setWorkspaceFolders(receiver, attachedId, await foldersFor(paths, folder), at);
+    }
+  };
+  // Every other visible Paseo workspace, one row each: a worktree attaches its own folder (the link
+  // lapses with it); a local workspace attaches as a whole, bringing what `workspaceFolders` finds,
+  // counted after this workspace's checks. A local workspace whose recorded repositories this workspace
+  // may not have is not offered. Not this workspace, workspaces already attached, nor a worktree inside
+  // or around a folder already attached. Paseo leaves archived workspaces out of its list.
+  const workspaceSuggestions = async (paseo: PaseoApi, agents: readonly ListedAgent[], workspace: { id: string }, folder: string, attachedPaths: readonly string[], attachedIds: ReadonlySet<string>) => {
     try {
-      const home = await paseoHome();
       const others: (Awaited<ReturnType<PaseoApi["workspaces"]["list"]>>["entries"][number] & { folder: string })[] = [];
-      for await (const entry of allWorkspaces(paseo, false)) if (entry.id !== workspace.id) others.push({ ...entry, folder: await realFolder(workspaceFolder(entry)) });
+      for await (const entry of allWorkspaces(paseo, false)) if (entry.id !== workspace.id && !attachedIds.has(entry.id)) others.push({ ...entry, folder: await realFolder(workspaceFolder(entry)) });
+      const activity = workspaceActivity(agents, others);
       const repositories = await changedRepositories(
-        paseo,
+        agents,
         others.filter((entry) => entry.workspaceKind !== "worktree").map((entry) => ({ id: entry.id, folder: entry.folder })),
       );
-      const offered: { workspaceId: string; name: string; project: string; path: string; branch: string | null; attaches: "worktree" | "repository" | "folder" }[] = [];
+      const offered: { workspaceId: string; name: string; project: string; path: string; branch: string | null; activeAt: string | null; attaches: "worktree" | "workspace"; repositories: string[] }[] = [];
       for (const entry of others) {
-        const candidates =
-          entry.workspaceKind === "worktree"
-            ? [{ path: entry.folder, attaches: "worktree" as const }]
-            : (repositories.get(entry.id)?.map((path) => ({ path, attaches: "repository" as const })) ?? [{ path: entry.folder, attaches: "folder" as const }]);
-        for (const candidate of candidates) {
-          const path = await linkableFolder(candidate.path, folder, [home]).catch(() => null);
-          if (!path || attached.some((link) => within(link.path, path) || within(path, link.path))) continue;
-          offered.push({ workspaceId: entry.id, name: workspaceTitle(entry), project: entry.projectCustomName ?? entry.projectDisplayName, path, branch: entry.gitRuntime?.currentBranch ?? null, attaches: candidate.attaches });
+        const row = { workspaceId: entry.id, name: workspaceTitle(entry), project: entry.projectCustomName ?? entry.projectDisplayName, branch: entry.gitRuntime?.currentBranch ?? null, activeAt: isoTime(activity.get(entry.id)) };
+        if (entry.workspaceKind === "worktree") {
+          const path = await attachableFolder(entry.folder, folder, true).catch(() => null);
+          if (path && !attachedPaths.some((attached) => within(attached, path) || within(path, attached))) offered.push({ ...row, path, attaches: "worktree", repositories: [] });
+          continue;
         }
+        const recorded = repositories.get(entry.id) ?? (await ownRepository(entry.folder));
+        const brings: string[] = [];
+        for (const repository of recorded) {
+          const path = await attachableFolder(repository, folder, false).catch(() => null);
+          if (path) brings.push(path);
+        }
+        if (recorded.length === 0 || brings.length > 0) offered.push({ ...row, path: entry.folder, attaches: "workspace", repositories: brings });
       }
-      return offered.sort((a, b) => a.project.localeCompare(b.project) || a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
+      // Newest first; by project, title, and folder where the times tie.
+      return newestFirst(
+        offered.sort((a, b) => a.project.localeCompare(b.project) || a.name.localeCompare(b.name) || a.path.localeCompare(b.path)),
+        (row) => activity.get(row.workspaceId),
+      );
     } catch (error) {
       console.error(`[contextualise] could not list Paseo's workspaces to suggest: ${String(error)}`);
       return [];
@@ -689,17 +799,24 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   const linksPayload = async (paseo: PaseoApi, workspaceId: string): Promise<WorkspaceLinksPayload> => {
     const workspace = await workspaceById(paseo, workspaceId);
     const folder = workspaceFolder(workspace);
-    const found = (await liveLinks(paseo, workspaceId)).get(workspaceId) ?? [];
-    const suggestions = await suggestionsFor(paseo, workspace, folder, new Set(found.map((link) => link.path)));
+    const live = (await liveLinks(paseo, workspaceId)).get(workspaceId);
+    const paths = foldersOf(live).map((found) => found.path);
+    // The chats are read once for both tabs' order and the repositories local workspaces changed.
+    const agents = await agentsForOrder(paseo);
+    const suggestions = await suggestionsFor(paseo, agents, workspace, folder, new Set(paths));
     return {
-      links: found,
+      links: live?.links ?? [],
+      attachedWorkspaces: (live?.workspaces ?? []).map((entry) => ({ workspaceId: entry.workspaceId, name: entry.name, folders: entry.folders.map((found) => found.path) })),
       sharedFolder: (await workspacesAt(paseo, folder)).length > 1,
       suggestions,
-      workspaces: await workspaceSuggestions(paseo, workspace, folder, found),
+      workspaces: await workspaceSuggestions(paseo, agents, workspace, folder, paths, new Set((live?.workspaces ?? []).map((entry) => entry.workspaceId))),
     };
   };
   server.handle(workspaceLinksRpc, async ({ workspaceId }, { paseo }) => linksPayload(remember(paseo), workspaceId));
-  server.handle(workspaceLinkCountRpc, async ({ workspaceId }, { paseo }) => ({ count: (await liveLinks(remember(paseo), workspaceId)).get(workspaceId)?.length ?? 0 }));
+  server.handle(workspaceLinkCountRpc, async ({ workspaceId }, { paseo }) => {
+    const live = (await liveLinks(remember(paseo), workspaceId)).get(workspaceId);
+    return { count: (live?.links.length ?? 0) + (live?.workspaces.length ?? 0) };
+  });
   // The folders whose files are offered: the live links of every workspace (Attach > Project file:
   // Paseo does not tell an Attach search which workspace it is for), or of one. As when a chat starts,
   // a folder whose real path is no longer the one attached (moved, replaced by a link, gone) is left
@@ -707,7 +824,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   const fileListings = new FolderListings();
   const attachedFolders = async (paseo: PaseoApi, only?: string): Promise<AttachedFolder[]> => {
     const named = new Map<string, string>();
-    for (const found of (await liveLinks(paseo, only)).values()) for (const link of found) if (!named.has(link.path)) named.set(link.path, link.name);
+    for (const live of (await liveLinks(paseo, only)).values()) for (const link of foldersOf(live)) if (!named.has(link.path)) named.set(link.path, link.label);
     const checked = await Promise.all(
       [...named].map(async ([path, name]) => {
         if ((await realpath(path).catch(() => null)) === path) return { path, name };
@@ -729,22 +846,44 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     const found = await findAttachedFiles(await attachedFolders(paseo, workspaceId), fileListings, query, pickerTitleMaxChars);
     return { files: found.map((entry) => ({ path: entry.absolute, kind: entry.kind, title: entry.title, project: entry.folder.name })) };
   });
+  // Attachments to workspaces Paseo no longer has are hidden but still saved; they are dropped before
+  // attaching more, so they never fill the limit with nothing M can remove.
+  const dropLapsed = async (paseo: PaseoApi, workspaceId: string) => {
+    const alive = new Set<string>();
+    for await (const entry of allWorkspaces(paseo)) alive.add(entry.id);
+    await links.dropLapsed(workspaceId, alive);
+  };
   server.handle(addLinkRpc, async ({ workspaceId, path, attachedWorkspaceId }, { paseo }) => {
-    const folder = await linkableFolder(path, workspaceFolder(await workspaceById(remember(paseo), workspaceId)), [await paseoHome()]);
+    const receiverFolder = workspaceFolder(await workspaceById(remember(paseo), workspaceId));
+    if (attachedWorkspaceId && path === undefined) {
+      // A local workspace, attached as a whole.
+      if (attachedWorkspaceId === workspaceId) throw new Error("A workspace cannot be attached to itself");
+      const attached = await workspaceById(paseo, attachedWorkspaceId);
+      if (attached.background || attached.workspaceKind === "worktree") throw new Error(`Workspace ${attachedWorkspaceId} is a worktree or a background workspace; attach a worktree with its folder`);
+      // While it cannot be told what its chats changed, it brings what its row offered: its own folder
+      // when that is one repository.
+      const attachedFolder = await realFolder(workspaceFolder(attached));
+      const paths = (await workspaceFolders(paseo, { id: attachedWorkspaceId, folder: attachedFolder })) ?? (await ownRepository(attachedFolder));
+      await dropLapsed(paseo, workspaceId);
+      const at = new Date().toISOString();
+      await links.addWorkspace(workspaceId, { workspaceId: attachedWorkspaceId, addedAt: at, folders: await foldersFor(paths, receiverFolder), foldersAt: at });
+      return linksPayload(paseo, workspaceId);
+    }
+    if (path === undefined) throw new Error("Give a folder to attach, or a workspace");
+    await dropLapsed(paseo, workspaceId);
+    const folder = await attachableFolder(path, receiverFolder, attachedWorkspaceId !== undefined);
     if (attachedWorkspaceId) {
       const attached = await workspaceById(paseo, attachedWorkspaceId);
       if (attached.background || (await realFolder(workspaceFolder(attached))) !== folder) throw new Error(`${folder} is not the folder of workspace ${attachedWorkspaceId}`);
-    } else if (within(folder, await realFolder(join(await paseoHome(), "worktrees")))) {
-      // A worktree's folder is reused by later worktrees, so it is attached only as its workspace, and
-      // the link ends with it.
-      throw new Error(`${folder} is a worktree's folder; attach it from the Workspaces tab, so it is detached when that worktree goes`);
     }
     const repoKey = (await knowledgeOn()) ? ((await base.repoFor(folder).catch(() => null))?.key ?? null) : null;
     await links.add(workspaceId, { path: folder, repoKey, addedAt: new Date().toISOString(), ...(attachedWorkspaceId ? { workspaceId: attachedWorkspaceId } : {}) });
     return linksPayload(paseo, workspaceId);
   });
-  server.handle(removeLinkRpc, async ({ workspaceId, path }, { paseo }) => {
-    await links.remove(workspaceId, path);
+  server.handle(removeLinkRpc, async ({ workspaceId, path, attachedWorkspaceId }, { paseo }) => {
+    if ((path === undefined) === (attachedWorkspaceId === undefined)) throw new Error("Give either a folder or a workspace to remove");
+    if (attachedWorkspaceId !== undefined) await links.removeWorkspace(workspaceId, attachedWorkspaceId);
+    else await links.remove(workspaceId, path as string);
     return linksPayload(remember(paseo), workspaceId);
   });
   // A new chat in the workspace, created here so the hook knows its workspace exactly. Paseo gives a
@@ -887,13 +1026,16 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   // One whole-project row: the project's own writing in one attachment, built from its index.
   // Its first line is a project grant: a new workspace's first message is attached by the
   // workspace.create hook, and any other chat attaches it with project_attach.
-  const projectItem = (found: { repoKey: string; name: string; top: string }, store: KnowledgeStore, updating: boolean, pickerTitleMaxChars: number, label: (word: string) => string, grant: string | null) => {
+  // `showActivity`: lead with when the project was last active, as Attach > Chat does ("Show when it was
+  // last used").
+  const projectItem = (found: { repoKey: string; name: string; top: string; activeAt: string | null }, store: KnowledgeStore, updating: boolean, pickerTitleMaxChars: number, label: (word: string) => string, grant: string | null, showActivity: boolean) => {
     const pack = projectPack(store, found);
+    const active = showActivity && found.activeAt ? `${shortTimeAgo(found.activeAt)} · ` : "";
     return {
       id: `${found.repoKey}|project`,
       identifier: label("Whole project"),
       title: capTitle(found.name, pickerTitleMaxChars),
-      subtitle: `${updating ? "Updating · " : ""}${pack.documents === 0 ? "No design documents, rules, or decisions" : pack.included === pack.documents ? `${pack.documents} document${pack.documents === 1 ? "" : "s"}` : `${pack.included} of ${pack.documents} documents`} · about ${pack.tokens.toLocaleString("en-US")} tokens · ${found.top}`.slice(0, 200),
+      subtitle: `${active}${updating ? "Updating · " : ""}${pack.documents === 0 ? "No design documents, rules, or decisions" : pack.included === pack.documents ? `${pack.documents} document${pack.documents === 1 ? "" : "s"}` : `${pack.included} of ${pack.documents} documents`} · about ${pack.tokens.toLocaleString("en-US")} tokens · ${found.top}`.slice(0, 200),
       url: DOCS_URL,
       text: grant ? `${ATTACH_GRANT_LABEL} ${grant}\n\n${pack.text}` : pack.text,
       resourceType: "knowledge",
@@ -903,17 +1045,17 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   // Every Paseo project M works in, as the project Contextualise reads for its folder (folders it never
   // reads, such as the home folder, are left out). One not read before is read now: the picker shows it
   // as updating until it is. If Paseo cannot list its projects, the projects already read are offered.
-  const attachableProjects = async (paseo: PaseoApi): Promise<{ repoKey: string; name: string; top: string }[]> => {
+  const attachableProjects = async (paseo: PaseoApi): Promise<{ repoKey: string; name: string; top: string; activeAt: string | null }[]> => {
     try {
-      const found = new Map<string, { repoKey: string; name: string; top: string }>();
-      for (const project of await paseoProjects(paseo)) {
+      const found = new Map<string, { repoKey: string; name: string; top: string; activeAt: string | null }>();
+      for (const project of await paseoProjects(paseo, await agentsForOrder(paseo))) {
         const repo = await base.repoFor(project.root).catch(() => null);
-        if (repo && !found.has(repo.key)) found.set(repo.key, { repoKey: repo.key, name: project.name, top: repo.top });
+        if (repo && !found.has(repo.key)) found.set(repo.key, { repoKey: repo.key, name: project.name, top: repo.top, activeAt: project.activeAt });
       }
       return [...found.values()];
     } catch (error) {
       console.error(`[contextualise] could not list Paseo's projects for Attach; offering the projects already read: ${String(error)}`);
-      return base.projects();
+      return (await base.projects()).map((project) => ({ ...project, activeAt: null }));
     }
   };
 
@@ -924,7 +1066,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   server.handle(searchKnowledgeAttachmentsRpc, async ({ query }, { paseo }) => {
     remember(paseo);
     if (!(await knowledgeOn())) return { items: [] };
-    const { pickerTitleMaxChars, pickerPrefix } = await deps.settings();
+    const { pickerTitleMaxChars, pickerPrefix, agentShowActivity } = await deps.settings();
     // Rows start with their title unless the "Label before each title" setting asks for a word.
     const label = (word: string) => (pickerPrefix === "none" ? "" : word);
     const words = query.trim().toLowerCase();
@@ -938,7 +1080,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     // No grants while the tool server is down: there is nothing to attach through.
     const tokens = await runtime.then(({ tokens, problem }) => (problem ? null : tokens)).catch(() => null);
     const wholes = await Promise.all(
-      projects.filter(({ found }) => words === "" || found.name.toLowerCase().includes(words)).map(async ({ found, repo, updating }) => projectItem(found, await base.open(repo), updating, pickerTitleMaxChars, label, tokens ? tokens.mintProjectGrant(found.repoKey, found.top) : null)),
+      projects.filter(({ found }) => words === "" || found.name.toLowerCase().includes(words)).map(async ({ found, repo, updating }) => projectItem(found, await base.open(repo), updating, pickerTitleMaxChars, label, tokens ? tokens.mintProjectGrant(found.repoKey, found.top) : null, agentShowActivity)),
     );
     if (words === "") return { items: wholes };
     const entries = await Promise.all(

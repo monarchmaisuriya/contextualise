@@ -8,6 +8,7 @@ import { type AttachTab, attachTabs, shownTab } from "./attach-tabs";
 import { errorText } from "./errors";
 import { ICONS } from "./icons";
 import { Button, IconButton, ListRow, SearchField, Segmented, StateView, type Styles } from "./kit";
+import { broughtLine, projectMeta, workspaceRows } from "./workspace-rows";
 
 export const linksQuery = (workspaceId: string) => ["contextualise", "links", workspaceId];
 // Rows drawn at first; scrolling near the end of the list draws this many more.
@@ -32,14 +33,6 @@ function linksChanged(): void {
 
 // The tab last chosen, kept while the app runs, so the popover opens where M left it.
 let lastTab: AttachTab = "projects";
-
-// What a Workspaces row attaches, after its title: a worktree's branch and project, a repository's
-// folder name and project, or a local workspace's whole folder.
-function workspaceMeta(found: { attaches: "worktree" | "repository" | "folder"; branch: string | null; project: string; path: string }): string {
-  if (found.attaches === "worktree") return [found.branch, found.project].filter(Boolean).join(" · ");
-  if (found.attaches === "repository") return `${found.path.slice(found.path.lastIndexOf("/") + 1)} · ${found.project}`;
-  return `all of ${found.project}`;
-}
 
 // What was typed is a folder, not a search: it starts like a path.
 const typedFolder = (text: string) => (/^[~/.]/.test(text.trim()) ? text.trim() : null);
@@ -81,39 +74,43 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
   });
   const data = query.data;
   const links = data?.links ?? [];
-  const attachedCount = data ? links.length : null;
+  const attachedWorkspaces = data?.attachedWorkspaces ?? [];
+  // Attached rows: folders and whole workspaces, each one.
+  const attachedCount = data ? links.length + attachedWorkspaces.length : null;
+  const attachedFolders = [...links.map((link) => link.path), ...attachedWorkspaces.flatMap((entry) => entry.folders)];
   const tab = shownTab(chosen, attachedCount);
   const words = search.trim().toLowerCase();
   const has = (...texts: (string | null)[]) => words === "" || texts.some((text) => text?.toLowerCase().includes(words));
-  // One row shape for both tabs: a project by its folder, a workspace by its title, branch, and project.
-  const rows =
-    tab === "projects"
-      ? (data?.suggestions ?? []).filter((found) => has(found.name, found.path)).map((found) => ({ key: found.path, title: found.name, meta: found.path, path: found.path, attachedWorkspaceId: undefined }))
-      : (data?.workspaces ?? []).filter((found) => has(found.name, found.project, found.branch, found.path)).map((found) => ({ key: `${found.workspaceId}|${found.path}`, title: found.name, meta: workspaceMeta(found), path: found.path, attachedWorkspaceId: found.attaches === "repository" ? undefined : found.workspaceId }));
+  // One row shape for both tabs: a project by its folder; a workspace by its title (a local one is
+  // attached as a whole, with no path).
+  const rows: { key: string; title: string; meta: string; path?: string; attachedWorkspaceId?: string }[] =
+    tab === "projects" ? (data?.suggestions ?? []).filter((found) => has(found.name, found.path)).map((found) => ({ key: found.path, title: found.name, meta: projectMeta(found), path: found.path })) : workspaceRows(data?.workspaces ?? [], has);
   const folder = typedFolder(search);
-  const attach = (path: string, attachedWorkspaceId?: string) => change.mutate(() => add({ workspaceId, path, ...(attachedWorkspaceId ? { attachedWorkspaceId } : {}) }));
+  const attach = (path: string | undefined, attachedWorkspaceId?: string) => change.mutate(() => add({ workspaceId, ...(path ? { path } : {}), ...(attachedWorkspaceId ? { attachedWorkspaceId } : {}) }));
+  // Attached rows stand out: a fill and an icon in the accent color.
+  const attachedRow = (key: string, icon: string, title: string, line: string, onRemove: () => void) => (
+    <View key={key} style={[styles.row, { paddingVertical: 6, paddingLeft: 12, paddingRight: 4, borderRadius: 8, backgroundColor: styles.colors.surface2 }]}>
+      <Icon name={icon} size={16} color={styles.colors.accent} />
+      <View style={styles.grow}>
+        <Text style={styles.body} numberOfLines={1}>
+          {title}
+        </Text>
+        <Text style={styles.note} numberOfLines={1}>
+          {line}
+        </Text>
+      </View>
+      <IconButton icon={ICONS.close} label={`Remove ${title} from this workspace`} onPress={onRemove} disabled={change.isPending} styles={styles} />
+    </View>
+  );
   const noun = tab === "projects" ? "project" : "workspace";
   return (
     <View style={{ gap: 8 }}>
       {query.error ? <StateView state="error" text={`Could not load attached projects: ${errorText(query.error)}`} styles={styles} /> : null}
-      {links.length > 0 ? (
+      {attachedCount ? (
         <View style={{ gap: 4 }}>
-          <Text style={styles.heading}>{`Attached ${links.length}`}</Text>
-          {links.map((link) => (
-            // Attached rows stand out: a fill and a folder-with-check icon.
-            <View key={link.path} style={[styles.row, { paddingVertical: 6, paddingLeft: 12, paddingRight: 4, borderRadius: 8, backgroundColor: styles.colors.surface2 }]}>
-              <Icon name={ICONS.attached} size={16} color={styles.colors.accent} />
-              <View style={styles.grow}>
-                <Text style={styles.body} numberOfLines={1}>
-                  {link.name}
-                </Text>
-                <Text style={styles.note} numberOfLines={1}>
-                  {link.path}
-                </Text>
-              </View>
-              <IconButton icon={ICONS.close} label={`Remove ${link.name} from this workspace`} onPress={() => change.mutate(() => remove({ workspaceId, path: link.path }))} disabled={change.isPending} styles={styles} />
-            </View>
-          ))}
+          <Text style={styles.heading}>{`Attached ${attachedCount}`}</Text>
+          {links.map((link) => attachedRow(link.path, ICONS.attached, link.name, link.path, () => change.mutate(() => remove({ workspaceId, path: link.path }))))}
+          {attachedWorkspaces.map((entry) => attachedRow(entry.workspaceId, ICONS.workspace, entry.name, broughtLine(entry), () => change.mutate(() => remove({ workspaceId, attachedWorkspaceId: entry.workspaceId }))))}
         </View>
       ) : null}
       <Segmented
@@ -129,12 +126,12 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
         stretch
       />
       {tab === "files" ? (
-        <ProjectFiles workspaceId={workspaceId} attached={links.map((link) => link.path)} maxHeight={listHeight(links.length)} styles={styles} />
+        <ProjectFiles workspaceId={workspaceId} attached={attachedFolders} maxHeight={listHeight(attachedCount ?? 0)} styles={styles} />
       ) : (
         <>
           <SearchField value={search} onChange={searchFor} placeholder={`Attach a ${noun}, or type a folder path`} label={`${noun} to attach`} styles={styles} />
           <ScrollView
-            style={{ maxHeight: listHeight(links.length) }}
+            style={{ maxHeight: listHeight(attachedCount ?? 0) }}
             keyboardShouldPersistTaps="handled"
             scrollEventThrottle={100}
             onScroll={({ nativeEvent: { layoutMeasurement, contentOffset, contentSize } }) => {
@@ -149,13 +146,13 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
           </ScrollView>
         </>
       )}
-      {data?.sharedFolder && links.length > 0 ? (
+      {data?.sharedFolder && attachedCount ? (
         <View style={styles.inline}>
           <Icon name={ICONS.info} size={14} color={styles.colors.foregroundMuted} />
           <Text style={[styles.note, styles.grow]}>Shared folder: start chats with New Chat to get these projects.</Text>
         </View>
       ) : null}
-      {agentId && links.length > 0 ? (
+      {agentId && attachedCount ? (
         // Two equal choices, so neither is primary.
         <View style={[styles.row, { borderTopWidth: 1, borderColor: styles.colors.border, paddingTop: 8, justifyContent: "space-evenly" }]}>
           <Button label="New Chat" icon={ICONS.add} styles={styles} onPress={() => starting.mutate(false)} disabled={starting.isPending} />
