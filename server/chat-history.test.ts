@@ -187,4 +187,11 @@ describe("history tools", () => {
     expect(loadHistory(rows, ["1@old"]).text).toContain("history was reloaded");
     expect(readHistory(rows, { id: "1@old" }).text).toContain("history was reloaded");
   });
+
+  it("judges an id from several chats' rows against its own chat's timeline only", () => {
+    const mixed = [{ ...historyRow(user("from a"), "t", "1@e1")!, id: "chat-a:1@e1" }, { ...historyRow(user("from b"), "t", "1@e7")!, id: "chat-b:1@e7" }];
+    expect(loadHistory(mixed, ["chat-b:9@e7"]).text).toContain("No history item chat-b:9@e7.");
+    expect(loadHistory(mixed, ["chat-b:1@e6"]).text).toContain("history was reloaded");
+    expect(loadHistory(mixed, ["chat-b:1@e7"]).text).toContain("You: from b");
+  });
 });
