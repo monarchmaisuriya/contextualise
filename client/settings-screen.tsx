@@ -97,7 +97,7 @@ const FILE_NUMBERS: ReadonlyArray<Field<NumberKey>> = [
   { key: "knowledgeMaxDocs", label: "Most documents per project", hint: "Code files do not count (default 2,000)." },
 ];
 const GENERATE_NUMBERS: ReadonlyArray<Field<NumberKey>> = [
-  { key: "knowledgeGenerateIdleMinutes", label: "Write a summary after this many quiet minutes", hint: "A new message in the conversation restarts the wait (default 20)." },
+  { key: "knowledgeGenerateIdleMinutes", label: "Write a summary after this many quiet minutes", hint: "A new message in the conversation restarts the wait (default 20). A conversation is summarised again once it has twice the messages it had, or a day later." },
   { key: "knowledgeGenerateMaxPerDay", label: "Most summaries per day", hint: "Each summary and each project description counts once (default 20)." },
 ];
 const MAP_PART_LABELS: Record<KnowledgeMapPart, string> = {

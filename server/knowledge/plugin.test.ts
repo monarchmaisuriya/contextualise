@@ -623,7 +623,7 @@ describe("contributeKnowledge", () => {
       const listed = async () => (await call("links.list", { workspaceId: "w1" })) as { links: { path: string; name: string; workspaceId?: string }[]; workspaces: { workspaceId: string; name: string; branch: string | null; path: string }[] };
       // Not this workspace, not a background one; the worktree with its branch.
       expect((await listed()).workspaces.map((entry) => entry.workspaceId).sort()).toEqual(["w2", "wt"]);
-      expect((await listed()).workspaces.find((entry) => entry.workspaceId === "wt")).toEqual({ workspaceId: "wt", name: "lavish-otter", project: "api", path: worktree, branch: "fix/pr-948" });
+      expect((await listed()).workspaces.find((entry) => entry.workspaceId === "wt")).toEqual({ workspaceId: "wt", name: "lavish-otter", project: "api", path: worktree, branch: "fix/pr-948", attaches: "worktree" });
       // The path must be that workspace's own folder.
       await expect(call("links.add", { workspaceId: "w1", path: web2, attachedWorkspaceId: "wt" })).rejects.toThrow("is not the folder of workspace wt");
       await call("links.add", { workspaceId: "w1", path: worktree, attachedWorkspaceId: "wt" });
@@ -694,6 +694,71 @@ describe("contributeKnowledge", () => {
         expect((await searchFiles("queue")).map((row) => row.subtitle)).toEqual(["api / lavish-otter · src/queue.ts"]);
         workspaceEntries.splice(workspaceEntries.findIndex((entry) => entry.id === "wt"), 1);
         expect(await searchFiles("queue")).toEqual([]);
+      });
+    });
+
+    describe("Workspaces tab rows for local workspaces", () => {
+      type Row = { workspaceId: string; name: string; path: string; attaches: string };
+      const rowsFor = async (workspaceId: string) => ((await call("links.list", { workspaceId })) as { workspaces: Row[] }).workspaces;
+      let develop: string;
+      beforeEach(() => {
+        // A folder of repositories, like ~/Develop, opened as one local workspace.
+        develop = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-linked-develop-")));
+        execFileSync("git", ["init", "-q", join(develop, "sibml")]);
+        mkdirSync(join(develop, "notes"));
+        writeFileSync(join(develop, "sibml", "render.yaml"), "services: []");
+        writeFileSync(join(develop, "notes", "todo.md"), "x");
+        projectEntries.push({ projectId: "p-develop", projectDisplayName: "Develop", projectRootPath: develop });
+        workspaceEntries.push({ id: "wd", workspaceDirectory: develop, projectId: "p-develop", name: "Add render.yaml to sibml", projectDisplayName: "Develop", workspaceKind: "local" });
+      });
+      afterEach(() => {
+        rmSync(develop, { recursive: true, force: true });
+        agentEntries.splice(0);
+      });
+
+      it("offers a local workspace on a project's folder, attaching its folder while nothing is recorded", async () => {
+        expect((await rowsFor("w1")).filter((row) => row.workspaceId === "wd")).toEqual([expect.objectContaining({ path: develop, attaches: "folder", name: "Add render.yaml to sibml" })]);
+      });
+
+      it("offers the repositories a local workspace's chats changed, one row each, attached as plain folders", async () => {
+        agentEntries.push({ agent: { id: "a-render", workspaceId: "wd", cwd: develop, provider: "claude", title: "Add render.yaml" } });
+        const before = [...timeline];
+        timeline.splice(0, timeline.length, { item: { type: "user_message", text: "Add a render.yaml" }, timestamp: "2026-11-08T05:00:00.000Z" }, { item: { type: "tool_call", name: "write", status: "completed", detail: { type: "write", filePath: join(develop, "sibml", "render.yaml") } }, timestamp: "2026-11-08T05:01:00.000Z" }, { item: { type: "tool_call", name: "edit", status: "completed", detail: { type: "edit", filePath: join(develop, "notes", "todo.md") } }, timestamp: "2026-11-08T05:02:00.000Z" });
+        try {
+          await emit("agent.turn_ended", { agent: { id: "a-render", provider: "claude", cwd: develop, title: "Add render.yaml" }, outcome: { kind: "completed" } });
+        } finally {
+          timeline.splice(0, timeline.length, ...before);
+        }
+        // notes/ is not a repository, so it is not offered.
+        expect((await rowsFor("w1")).filter((row) => row.workspaceId === "wd")).toEqual([expect.objectContaining({ path: join(develop, "sibml"), attaches: "repository" })]);
+        // Another workspace on the same folder keeps its own rows: nothing it changed is recorded.
+        workspaceEntries.push({ id: "wd2", workspaceDirectory: develop, projectId: "p-develop", name: "Scan dashboard", projectDisplayName: "Develop", workspaceKind: "local" });
+        expect((await rowsFor("w1")).filter((row) => row.workspaceId === "wd2")).toEqual([expect.objectContaining({ path: develop, attaches: "folder" })]);
+        // With knowledge off nothing recorded is read, so the folder is offered.
+        values = { ...values, knowledgeEnabled: false };
+        expect((await rowsFor("w1")).filter((row) => row.workspaceId === "wd")).toEqual([expect.objectContaining({ path: develop, attaches: "folder" })]);
+        values = { ...values, knowledgeEnabled: true };
+        await call("links.add", { workspaceId: "w1", path: join(develop, "sibml") });
+        expect(((await call("links.list", { workspaceId: "w1" })) as { links: { path: string; workspaceId?: string }[] }).links).toEqual([expect.objectContaining({ path: join(develop, "sibml") })]);
+        expect(await call("links.count", { workspaceId: "w1" })).toEqual({ count: 1 });
+        expect((await rowsFor("w1")).filter((row) => row.workspaceId === "wd")).toEqual([]);
+      });
+
+      it("creates no project index when the popover lists workspaces", async () => {
+        const indexes = () => readdirSync(join(home, "plugin-data", "contextualise", "knowledge")).filter((name) => name.endsWith(".sqlite")).length;
+        await rowsFor("w1");
+        const before = indexes();
+        // A repository Contextualise has not indexed: listing it must not create its index.
+        const fresh = join(develop, "fresh");
+        execFileSync("git", ["init", "-q", fresh]);
+        workspaceEntries.push({ id: "wn", workspaceDirectory: fresh, projectId: "p-fresh", name: "Unindexed", projectDisplayName: "fresh", workspaceKind: "local" });
+        await rowsFor("w1");
+        expect(indexes()).toBe(before);
+      });
+
+      it("refuses a worktree's folder typed as a path, so it is attached only as its workspace", async () => {
+        mkdirSync(join(home, "worktrees", "22x8cau0", "calm-fox"), { recursive: true });
+        await expect(call("links.add", { workspaceId: "w1", path: join(home, "worktrees", "22x8cau0", "calm-fox") })).rejects.toThrow("is a worktree's folder");
       });
     });
 

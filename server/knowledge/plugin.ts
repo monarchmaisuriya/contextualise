@@ -1,4 +1,4 @@
-import { readFile, realpath } from "node:fs/promises";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import type { Server } from "node:http";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -6,7 +6,7 @@ import type { PluginRpcContract } from "@getpaseo/plugin";
 import type { PluginBeforeRequests, PluginHandlerContext, PluginServerContext } from "@getpaseo/plugin/server";
 import { type SnapshotSettings, splitGlobs } from "../../shared/contracts";
 import { areaRpc, browseKnowledgeRpc, describeProjectRpc, explainAreaRpc, fileConnectionsRpc, generateKnowledgeRpc, KIND_LABELS, knowledgeAgentsNowRpc, knowledgeChangesRpc, knowledgeOverviewRpc, knowledgePulseRpc, knowledgeUsageRpc, projectForWorkspaceRpc, listProjectsRpc, listTasksRpc, memoriseStatusRpc, pinEntryRpc, projectFactsRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc, setProjectEnabledRpc } from "../../shared/knowledge";
-import { addLinkRpc, LINK_WORKSPACE_ENV, newLinkedChatRpc, attachedFilesAvailableRpc, removeLinkRpc, searchAttachedFilesRpc, workspaceFilesRpc, type WorkspaceLinksPayload, workspaceLinksRpc } from "../../shared/linked-projects";
+import { addLinkRpc, LINK_WORKSPACE_ENV, newLinkedChatRpc, attachedFilesAvailableRpc, removeLinkRpc, searchAttachedFilesRpc, workspaceFilesRpc, workspaceLinkCountRpc, type WorkspaceLinksPayload, workspaceLinksRpc } from "../../shared/linked-projects";
 import type { PaseoApi } from "../paseo-types";
 import { readAgent } from "../sources";
 import { renderConversation, renderTimelineItems } from "../snapshot";
@@ -566,21 +566,81 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       return [];
     }
   };
-  // Every other visible Paseo workspace whose own folder can be attached here: not this one, not one
-  // inside or around a folder already attached, and not a local workspace on a folder already offered
-  // as a project. Paseo leaves archived workspaces out of its list.
-  const workspaceSuggestions = async (paseo: PaseoApi, workspace: { id: string }, folder: string, attached: readonly WorkspaceLink[], projectFolders: ReadonlySet<string>) => {
+  // The repositories each local workspace's chats changed, by workspace: the files recorded when their
+  // turns ended (relative to the workspace's project folder), each mapped to its nearest folder with a
+  // `.git` entry inside that folder. Only projects that already have an index and are switched on are
+  // read, so opening the popover never creates one; nothing is read while project knowledge is off. A
+  // workspace with nothing recorded is not in the map. A failure here is logged and leaves the map
+  // empty, so the other rows still show.
+  const changedRepositories = async (paseo: PaseoApi, locals: readonly { id: string; folder: string }[]): Promise<Map<string, string[]>> => {
+    const found = new Map<string, Set<string>>();
+    if (locals.length === 0 || !(await knowledgeOn())) return new Map();
+    try {
+      await readChangedRepositories(paseo, locals, found);
+    } catch (error) {
+      console.error(`[contextualise] could not read which repositories local workspaces changed; offering their folders: ${String(error)}`);
+      return new Map();
+    }
+    return new Map([...found].map(([workspaceId, repositories]) => [workspaceId, [...repositories].sort()]));
+  };
+  const readChangedRepositories = async (paseo: PaseoApi, locals: readonly { id: string; folder: string }[], found: Map<string, Set<string>>) => {
+    const workspaceOf = new Map<string, string>();
+    for (let cursor: string | undefined; ; ) {
+      const page = await paseo.agents.list({ filter: { includeArchived: true }, page: { limit: 200, ...(cursor ? { cursor } : {}) } });
+      for (const { agent } of page.entries as { agent: { id: string; workspaceId?: string | null } }[]) if (agent.workspaceId) workspaceOf.set(agent.id, agent.workspaceId);
+      if (!page.pageInfo.hasMore || !page.pageInfo.nextCursor || page.pageInfo.nextCursor === cursor) break;
+      cursor = page.pageInfo.nextCursor;
+    }
+    const repositoryOf = new Map<string, string | null>();
+    const nearestRepository = async (folder: string, dir: string): Promise<string | null> => {
+      if (!within(dir, folder)) return null;
+      if (!repositoryOf.has(dir)) repositoryOf.set(dir, (await lstat(join(dir, ".git")).catch(() => null)) ? dir : dir === folder ? null : await nearestRepository(folder, dirname(dir)));
+      return repositoryOf.get(dir) ?? null;
+    };
+    const byFolder = new Map<string, Set<string>>();
+    for (const local of locals) byFolder.set(local.folder, (byFolder.get(local.folder) ?? new Set()).add(local.id));
+    const indexed = await base.projects();
+    for (const [folder, wanted] of byFolder) {
+      const project = indexed.find((entry) => entry.top === folder);
+      if (!project || !(await prefs.get(project.repoKey)).enabled) continue;
+      const store = (await base.byKey(project.repoKey))?.store;
+      for (const task of store?.tasks(100_000) ?? []) {
+        const workspaceId = workspaceOf.get(task.agentId);
+        if (!workspaceId || !wanted.has(workspaceId)) continue;
+        for (const file of task.files) {
+          const repository = await nearestRepository(folder, dirname(join(folder, file)));
+          if (repository) found.set(workspaceId, (found.get(workspaceId) ?? new Set()).add(repository));
+        }
+      }
+    }
+  };
+  // Every other visible Paseo workspace, one row for each thing picking it attaches: a worktree's own
+  // folder; for a local workspace, each repository its chats changed, or its folder while nothing is
+  // recorded (a folder of many repositories, like ~/Develop, is rarely what was meant). Not this
+  // workspace, and nothing inside or around a folder already attached. Paseo leaves archived workspaces
+  // out of its list.
+  const workspaceSuggestions = async (paseo: PaseoApi, workspace: { id: string }, folder: string, attached: readonly WorkspaceLink[]) => {
     try {
       const home = await paseoHome();
-      const offered: { workspaceId: string; name: string; project: string; path: string; branch: string | null }[] = [];
-      for await (const entry of allWorkspaces(paseo, false)) {
-        if (entry.id === workspace.id) continue;
-        const path = await linkableFolder(workspaceFolder(entry), folder, [home]).catch(() => null);
-        if (!path || offered.some((other) => other.path === path) || attached.some((link) => within(link.path, path) || within(path, link.path))) continue;
-        if (entry.workspaceKind !== "worktree" && projectFolders.has(path)) continue;
-        offered.push({ workspaceId: entry.id, name: workspaceTitle(entry), project: entry.projectCustomName ?? entry.projectDisplayName, path, branch: entry.gitRuntime?.currentBranch ?? null });
+      const others: (Awaited<ReturnType<PaseoApi["workspaces"]["list"]>>["entries"][number] & { folder: string })[] = [];
+      for await (const entry of allWorkspaces(paseo, false)) if (entry.id !== workspace.id) others.push({ ...entry, folder: await realFolder(workspaceFolder(entry)) });
+      const repositories = await changedRepositories(
+        paseo,
+        others.filter((entry) => entry.workspaceKind !== "worktree").map((entry) => ({ id: entry.id, folder: entry.folder })),
+      );
+      const offered: { workspaceId: string; name: string; project: string; path: string; branch: string | null; attaches: "worktree" | "repository" | "folder" }[] = [];
+      for (const entry of others) {
+        const candidates =
+          entry.workspaceKind === "worktree"
+            ? [{ path: entry.folder, attaches: "worktree" as const }]
+            : (repositories.get(entry.id)?.map((path) => ({ path, attaches: "repository" as const })) ?? [{ path: entry.folder, attaches: "folder" as const }]);
+        for (const candidate of candidates) {
+          const path = await linkableFolder(candidate.path, folder, [home]).catch(() => null);
+          if (!path || attached.some((link) => within(link.path, path) || within(path, link.path))) continue;
+          offered.push({ workspaceId: entry.id, name: workspaceTitle(entry), project: entry.projectCustomName ?? entry.projectDisplayName, path, branch: entry.gitRuntime?.currentBranch ?? null, attaches: candidate.attaches });
+        }
       }
-      return offered.sort((a, b) => a.project.localeCompare(b.project) || a.name.localeCompare(b.name));
+      return offered.sort((a, b) => a.project.localeCompare(b.project) || a.name.localeCompare(b.name) || a.path.localeCompare(b.path));
     } catch (error) {
       console.error(`[contextualise] could not list Paseo's workspaces to suggest: ${String(error)}`);
       return [];
@@ -597,10 +657,11 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       links: found,
       sharedFolder: (await workspacesAt(paseo, folder)).length > 1,
       suggestions,
-      workspaces: await workspaceSuggestions(paseo, workspace, folder, found, new Set(suggestions.map((entry) => entry.path))),
+      workspaces: await workspaceSuggestions(paseo, workspace, folder, found),
     };
   };
   server.handle(workspaceLinksRpc, async ({ workspaceId }, { paseo }) => linksPayload(remember(paseo), workspaceId));
+  server.handle(workspaceLinkCountRpc, async ({ workspaceId }, { paseo }) => ({ count: (await liveLinks(remember(paseo), workspaceId)).get(workspaceId)?.length ?? 0 }));
   // The folders whose files are offered: the live links of every workspace (Attach > Project file:
   // Paseo does not tell an Attach search which workspace it is for), or of one. As when a chat starts,
   // a folder whose real path is no longer the one attached (moved, replaced by a link, gone) is left
@@ -635,6 +696,10 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     if (attachedWorkspaceId) {
       const attached = await workspaceById(paseo, attachedWorkspaceId);
       if (attached.background || (await realFolder(workspaceFolder(attached))) !== folder) throw new Error(`${folder} is not the folder of workspace ${attachedWorkspaceId}`);
+    } else if (within(folder, await realFolder(join(await paseoHome(), "worktrees")))) {
+      // A worktree's folder is reused by later worktrees, so it is attached only as its workspace, and
+      // the link ends with it.
+      throw new Error(`${folder} is a worktree's folder; attach it from the Workspaces tab, so it is detached when that worktree goes`);
     }
     const repoKey = (await knowledgeOn()) ? ((await base.repoFor(folder).catch(() => null))?.key ?? null) : null;
     await links.add(workspaceId, { path: folder, repoKey, addedAt: new Date().toISOString(), ...(attachedWorkspaceId ? { workspaceId: attachedWorkspaceId } : {}) });

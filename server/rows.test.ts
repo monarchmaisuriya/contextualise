@@ -37,14 +37,22 @@ describe("agentTitle", () => {
     expect(agentTitle(agent, worktree(), 2, { maxChars: 44, shortenLinks: true })).toEqual({ title: "Review PR 5854 · scan github.com/acme/api/p…", includesWorkspace: true });
   });
 
-  it("keeps the prompt in plain folders and in worktrees that have no title of their own", () => {
-    for (const workspace of [worktree({ workspaceKind: "directory" }), worktree({ title: null }), worktree({ title: "glorious-tiger" }), undefined]) {
+  // Paseo gives each chat on a local folder its own workspace, titled in the sidebar like a worktree.
+  // As Paseo stores them (projects/workspaces.json): a local workspace named after its folder, with the chat's title.
+  const local = (title: string | null) => worktree({ workspaceKind: "directory", name: "Develop", title, worktreeSlug: undefined, projectDisplayName: "Develop", projectRootPath: "/u/Develop", workspaceDirectory: "/u/Develop" });
+
+  it("gives an agent on a local folder its workspace's title, as the sidebar shows it", () => {
+    expect(agentTitle(agent, local("Add render.yaml to sibml-transpiler"), 1, { maxChars: 44, shortenLinks: true, generated: "Fix job store memory accounting" })).toEqual({ title: "Add render.yaml to sibml-transpiler", includesWorkspace: true });
+  });
+
+  it("keeps the prompt where the workspace has no title of its own: one named after its folder, project, slug, or branch", () => {
+    for (const workspace of [local(null), local("Develop"), worktree({ title: null }), worktree({ name: "api", title: null, workspaceKind: "directory" }), worktree({ title: "glorious-tiger", name: "glorious-tiger" }), worktree({ name: "main", title: null, gitRuntime: { currentBranch: "main" } } as Partial<DirectoryWorkspace>), undefined]) {
       expect(agentTitle(agent, workspace, 1, { maxChars: 44, shortenLinks: true })).toEqual({ title: "scan github.com/acme/api/pull/5854 review…", includesWorkspace: false });
     }
   });
 
-  it("uses a generated session title instead of the first request outside titled worktrees", () => {
-    expect(agentTitle(agent, worktree({ workspaceKind: "directory" }), 1, { maxChars: 44, shortenLinks: true, generated: "Reviewed the auth change" })).toEqual({ title: "Reviewed the auth change", includesWorkspace: false });
+  it("uses a generated session title instead of the first request where the workspace has no title", () => {
+    expect(agentTitle(agent, local("Develop"), 1, { maxChars: 44, shortenLinks: true, generated: "Reviewed the auth change" })).toEqual({ title: "Reviewed the auth change", includesWorkspace: false });
     expect(agentTitle(agent, worktree(), 2, { maxChars: 60, shortenLinks: true, generated: "Reviewed auth" }).title).toBe("Review PR 5854 · Reviewed auth");
   });
 

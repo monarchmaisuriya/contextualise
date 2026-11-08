@@ -32,6 +32,8 @@ const README_LINES = 40;
 const README_MAX_BYTES = 256 * 1024;
 const EXPLAIN_FILES = 40;
 export const LINE_MAX_CHARS = 140;
+// A summary refreshed after a quiet period that has not doubled is refreshed at most this often.
+export const SUMMARY_REFRESH_MS = 24 * 60 * 60_000;
 
 export const SUMMARY_OUTPUT_SCHEMA = {
   type: "object",
@@ -198,22 +200,32 @@ export class Generator {
     const timer = setTimeout(() => {
       this.timers.delete(agent.id);
       void this.serialize(async () => {
-        if ((await this.summarize(paseo, project, agent)) === "done") await this.describe(paseo, project, false);
+        if ((await this.summarize(paseo, project, agent, "grown")) === "done") await this.describe(paseo, project, false);
       }).catch((error: unknown) => console.error(`[contextualise] could not summarise agent ${agent.id}: ${String(error)}`));
     }, values.knowledgeGenerateIdleMinutes * 60_000);
     timer.unref?.();
     this.timers.set(agent.id, timer);
   }
 
-  // A title and summary for one session, unless it already has one covering all its turns.
-  async summarize(paseo: PaseoApi, project: ProjectRoot, agent: GenerationAgent): Promise<"done" | "skipped" | "capped"> {
+  // A title and summary for one session, unless the one it has is still current. "changed" (asked for by
+  // M) refreshes it once the user messages differ from those it covers. "grown" (after a quiet period)
+  // refreshes it only once the session has twice those messages, or once a day while they differ: each
+  // refresh starts a background agent, and a long session went quiet, and was summarised again, after
+  // almost every message. The daily refresh keeps a session current whose count cannot double, such as
+  // one past the timeline's read limit. A summary that does not say what it covers is replaced.
+  async summarize(paseo: PaseoApi, project: ProjectRoot, agent: GenerationAgent, refresh: "changed" | "grown" = "changed"): Promise<"done" | "skipped" | "capped"> {
     const values = await this.deps.settings();
     if (!values.knowledgeEnabled || !values.knowledgeGenerate || !(await this.deps.prefs.get(project.key)).enabled) return "skipped";
     const entries = await this.deps.readTimeline(paseo, agent.id);
     const turns = entries.filter((entry) => entry.item.type === "user_message").length;
     const store = await this.deps.base.open(project);
     const existing = store.task(`task:${agent.id}`);
-    if (existing?.summary && existing.summarizedTurns === turns) return "skipped";
+    if (existing?.summary && existing.summarizedTurns !== undefined) {
+      const covered = existing.summarizedTurns;
+      const dayOld = this.now().getTime() - Date.parse(existing.generatedAt ?? "") >= SUMMARY_REFRESH_MS;
+      const current = refresh === "changed" ? turns === covered : turns < 2 * covered && (turns === covered || !dayOld);
+      if (current) return "skipped";
+    }
     const task = buildTask({ agent, outcome: existing?.outcome ?? "completed", entries, top: project.top, now: existing?.endedAt ?? this.now().toISOString() });
     const slice = sliceTranscript(entries.map((entry) => entry.item));
     if (!task || slice.userMessages === 0) return "skipped";

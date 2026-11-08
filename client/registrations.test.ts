@@ -37,8 +37,8 @@ test("every name the plugin registers in the app is one Paseo accepts", async ()
           ? { status: "ready", revision: "r", values: { showPill: true, pillLabel: "count" } }
           : contract.name === "links.files-available"
             ? { available: true }
-            : contract.name === "links.list"
-            ? { links: [{ path: "/api", name: "api", repoKey: null, addedAt: "t" }], sharedFolder: false, suggestions: [] }
+            : contract.name === "links.count"
+              ? { count: 1 }
               : { tags },
       addTimelineRenderer: (r: { kind: string; version: number }) => {
         expect(Number.isInteger(r.version) && r.version >= 1).toBe(true);

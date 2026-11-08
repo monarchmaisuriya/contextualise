@@ -124,6 +124,50 @@ describe("Generator", () => {
     expect(runWorker).toHaveBeenCalledTimes(2);
   });
 
+  it("after a quiet period, summarises a growing session again only once it has twice the messages, or a day later", async () => {
+    const repo = await project();
+    const agent = agents[0];
+    const ask = (text: string) => timelines.a1.push(at({ type: "user_message", text }));
+    ask("Also add a test");
+    expect(await generator.summarize(paseo, repo, agent, "grown")).toBe("done");
+    expect((await base.open(repo)).task("task:a1")).toMatchObject({ summarizedTurns: 2 });
+    // Three messages: under twice the two the summary covers, so a pause starts no helper.
+    ask("And the docs");
+    expect(await generator.summarize(paseo, repo, agent, "grown")).toBe("skipped");
+    ask("And the changelog");
+    expect(await generator.summarize(paseo, repo, agent, "grown")).toBe("done");
+    expect((await base.open(repo)).task("task:a1")).toMatchObject({ summarizedTurns: 4 });
+    // A count that cannot double (a session past the timeline's read limit) is refreshed once a day.
+    ask("One more");
+    expect(await generator.summarize(paseo, repo, agent, "grown")).toBe("skipped");
+    clock = new Date(clock.getTime() + 24 * 60 * 60_000);
+    expect(await generator.summarize(paseo, repo, agent, "grown")).toBe("done");
+    expect(await generator.summarize(paseo, repo, agent, "grown")).toBe("skipped");
+    expect(runWorker).toHaveBeenCalledTimes(3);
+  });
+
+  it("refreshes a summary on request as soon as the messages changed", async () => {
+    const repo = await project();
+    const agent = agents[0];
+    timelines.a1.push(at({ type: "user_message", text: "Also add a test" }));
+    expect(await generator.summarize(paseo, repo, agent, "grown")).toBe("done");
+    // Three messages against two covered: a quiet period waits, a request does not.
+    timelines.a1.push(at({ type: "user_message", text: "And the docs" }));
+    expect(await generator.summarize(paseo, repo, agent, "grown")).toBe("skipped");
+    expect(await generator.summarize(paseo, repo, agent, "changed")).toBe("done");
+    expect(await generator.summarize(paseo, repo, agent, "changed")).toBe("skipped");
+  });
+
+  it("summarises again a session whose summary does not say how many messages it covers", async () => {
+    const repo = await project();
+    const agent = agents[0];
+    expect(await generator.summarize(paseo, repo, agent)).toBe("done");
+    const store = await base.open(repo);
+    const { summarizedTurns: _covered, ...older } = store.task("task:a1")!;
+    store.upsertTask(older);
+    expect(await generator.summarize(paseo, repo, agent)).toBe("done");
+  });
+
   it("summarises OpenCode sessions with Claude, and follows a fixed provider choice", async () => {
     const repo = await project();
     await generator.summarize(paseo, repo, agents[1]);
@@ -194,6 +238,26 @@ describe("Generator", () => {
     expect(await generator.summarize(paseo, repo, agents[0])).toBe("skipped");
     expect(await generator.describe(paseo, repo, true)).toBe("skipped");
     expect(await generator.explainArea(paseo, repo, "core")).toBe("skipped");
+  });
+
+  it("starts no helper after a quiet period while the session has not doubled", async () => {
+    const repo = await project();
+    const agent = agents[0];
+    timelines.a1.push(at({ type: "user_message", text: "Also add a test" }));
+    expect(await generator.summarize(paseo, repo, agent)).toBe("done");
+    runWorker.mockClear();
+    timelines.a1.push(at({ type: "user_message", text: "And the docs" }));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      values = { ...values, knowledgeGenerateIdleMinutes: 5 };
+      await generator.schedule(paseo, repo, agent);
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      vi.useRealTimers();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(runWorker).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("summarises after the quiet period, then writes the overview once", async () => {
