@@ -3,8 +3,11 @@ import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { z } from "zod";
 
-// A workspace may link this many folders; each one is added to every new chat there.
+// A workspace may link this many folders and workspaces; each folder is added to every new chat there.
 export const MAX_LINKS = 5;
+// A new chat gets at most this many attached folders in all (an attached workspace can bring several);
+// the rest are named in its prompt.
+export const MAX_CHAT_FOLDERS = 10;
 
 const linkSchema = z.object({
   // A real path (symlinks resolved when it was added).
@@ -19,7 +22,29 @@ const linkSchema = z.object({
 export type WorkspaceLink = z.infer<typeof linkSchema>;
 // Project grants already used, newest last; a grant expires within an hour, so a few hundred is plenty.
 const USED_GRANTS_KEPT = 500;
-const fileSchema = z.object({ version: z.literal(1), workspaces: z.record(z.string(), z.array(linkSchema).max(MAX_LINKS)), usedGrants: z.array(z.string()).max(USED_GRANTS_KEPT).default([]) });
+// The folders one attached workspace may bring.
+export const MAX_WORKSPACE_FOLDERS = 50;
+const folderSchema = z.object({ path: z.string().min(1).max(1_000), repoKey: z.string().min(1).max(600).nullable() });
+// A local workspace attached as a whole. It brings the repositories its chats changed, worked out when
+// one of its chats ends a turn and saved here per workspace it is attached to (each checked against
+// that workspace's folder), so reading links never has to work them out. It lapses with the workspace.
+const attachedWorkspaceSchema = z.object({
+  workspaceId: z.string().min(1).max(200),
+  addedAt: z.string(),
+  folders: z.array(folderSchema).max(MAX_WORKSPACE_FOLDERS),
+  // When the folders were last worked out.
+  foldersAt: z.string(),
+});
+export type AttachedWorkspace = z.infer<typeof attachedWorkspaceSchema>;
+export type BroughtFolder = z.infer<typeof folderSchema>;
+// Attached workspaces sit in their own key: a version before them drops the key and never reads one
+// as a folder link.
+const fileSchema = z.object({
+  version: z.literal(1),
+  workspaces: z.record(z.string(), z.array(linkSchema).max(MAX_LINKS)),
+  attachedWorkspaces: z.record(z.string(), z.array(attachedWorkspaceSchema).max(MAX_LINKS)).default({}),
+  usedGrants: z.array(z.string()).max(USED_GRANTS_KEPT).default([]),
+});
 type LinksFile = z.infer<typeof fileSchema>;
 
 export const within = (path: string, folder: string) => path === folder || path.startsWith(folder.endsWith(sep) ? folder : `${folder}${sep}`);
@@ -66,20 +91,29 @@ export class WorkspaceLinks {
       if (Reflect.get(Object(error), "code") === "ENOENT") return null;
       throw error;
     });
-    if (text === null) return { version: 1, workspaces: {}, usedGrants: [] };
+    if (text === null) return { version: 1, workspaces: {}, attachedWorkspaces: {}, usedGrants: [] };
     const parsed = fileSchema.safeParse(JSON.parse(text));
     if (!parsed.success) throw new Error(`${path} could not be read (${parsed.error.issues[0]?.message}); fix or remove it to clear attached projects`);
     return parsed.data;
   }
 
-  // The workspaces that have at least one link.
+  // The workspaces that have at least one link or attached workspace.
   async workspaceIds(): Promise<string[]> {
-    return Object.keys((await this.load()).workspaces);
+    const file = await this.load();
+    return [...new Set([...Object.keys(file.workspaces), ...Object.keys(file.attachedWorkspaces)])];
   }
 
-  // Every workspace's links, read once.
-  async all(): Promise<Record<string, WorkspaceLink[]>> {
-    return (await this.load()).workspaces;
+  // Every workspace's folder links and attached workspaces, read once.
+  async all(): Promise<{ links: Record<string, WorkspaceLink[]>; attached: Record<string, AttachedWorkspace[]> }> {
+    const file = await this.load();
+    return { links: file.workspaces, attached: file.attachedWorkspaces };
+  }
+
+  // The workspaces that have this workspace attached.
+  async receiversOf(attachedId: string): Promise<string[]> {
+    return Object.entries((await this.load()).attachedWorkspaces)
+      .filter(([, found]) => found.some((entry) => entry.workspaceId === attachedId))
+      .map(([workspaceId]) => workspaceId);
   }
 
   async list(workspaceId: string): Promise<WorkspaceLink[]> {
@@ -101,12 +135,17 @@ export class WorkspaceLinks {
     return next;
   }
 
-  private update(workspaceId: string, change: (current: WorkspaceLink[]) => WorkspaceLink[]): Promise<WorkspaceLink[]> {
+  // One workspace's folder links and attached workspaces, changed together so the limit counts both;
+  // a workspace left with neither kind is dropped from the file.
+  private update<T>(workspaceId: string, change: (current: { links: WorkspaceLink[]; attached: AttachedWorkspace[] }) => { links: WorkspaceLink[]; attached: AttachedWorkspace[]; result: T }): Promise<T> {
     return this.write((file) => {
-      const links = change(file.workspaces[workspaceId] ?? []);
-      if (links.length > 0) file.workspaces[workspaceId] = links;
+      const next = change({ links: file.workspaces[workspaceId] ?? [], attached: file.attachedWorkspaces[workspaceId] ?? [] });
+      if (next.links.length + next.attached.length > MAX_LINKS) throw new Error(`A workspace can attach at most ${MAX_LINKS} folders and workspaces; remove one first`);
+      if (next.links.length > 0) file.workspaces[workspaceId] = next.links;
       else delete file.workspaces[workspaceId];
-      return links;
+      if (next.attached.length > 0) file.attachedWorkspaces[workspaceId] = next.attached;
+      else delete file.attachedWorkspaces[workspaceId];
+      return next.result;
     });
   }
 
@@ -119,18 +158,52 @@ export class WorkspaceLinks {
   }
 
   add(workspaceId: string, link: WorkspaceLink): Promise<WorkspaceLink[]> {
-    return this.update(workspaceId, (current) => {
-      if (current.some((existing) => existing.path === link.path)) throw new Error(`${link.path} is already linked here`);
-      if (current.length >= MAX_LINKS) throw new Error(`A workspace can link at most ${MAX_LINKS} folders; remove one first`);
-      return [...current, link];
+    return this.update(workspaceId, ({ links, attached }) => {
+      if (links.some((existing) => existing.path === link.path)) throw new Error(`${link.path} is already linked here`);
+      const next = [...links, link];
+      return { links: next, attached, result: next };
     });
   }
 
   remove(workspaceId: string, path: string): Promise<WorkspaceLink[]> {
-    return this.update(workspaceId, (current) => {
-      if (!current.some((existing) => existing.path === path)) throw new Error(`${path} is not linked here`);
-      return current.filter((existing) => existing.path !== path);
+    return this.update(workspaceId, ({ links, attached }) => {
+      if (!links.some((existing) => existing.path === path)) throw new Error(`${path} is not linked here`);
+      const next = links.filter((existing) => existing.path !== path);
+      return { links: next, attached, result: next };
     });
+  }
+
+  addWorkspace(workspaceId: string, entry: AttachedWorkspace): Promise<void> {
+    return this.update(workspaceId, ({ links, attached }) => {
+      if (attached.some((existing) => existing.workspaceId === entry.workspaceId)) throw new Error(`Workspace ${entry.workspaceId} is already attached here`);
+      return { links, attached: [...attached, entry], result: undefined };
+    });
+  }
+
+  removeWorkspace(workspaceId: string, attachedId: string): Promise<void> {
+    return this.update(workspaceId, ({ links, attached }) => {
+      if (!attached.some((existing) => existing.workspaceId === attachedId)) throw new Error(`Workspace ${attachedId} is not attached here`);
+      return { links, attached: attached.filter((existing) => existing.workspaceId !== attachedId), result: undefined };
+    });
+  }
+
+  // Drops one workspace's attachments to workspaces not in `alive` (archived or deleted in Paseo).
+  dropLapsed(workspaceId: string, alive: ReadonlySet<string>): Promise<void> {
+    return this.update(workspaceId, ({ links, attached }) => ({
+      links: links.filter((link) => !link.workspaceId || alive.has(link.workspaceId)),
+      attached: attached.filter((entry) => alive.has(entry.workspaceId)),
+      result: undefined,
+    }));
+  }
+
+  // Saves the folders an attached workspace now brings to one workspace; nothing when it is no longer
+  // attached there.
+  setWorkspaceFolders(workspaceId: string, attachedId: string, folders: readonly BroughtFolder[], at: string): Promise<void> {
+    return this.update(workspaceId, ({ links, attached }) => ({
+      links,
+      attached: attached.map((existing) => (existing.workspaceId === attachedId ? { ...existing, folders: folders.slice(0, MAX_WORKSPACE_FOLDERS), foldersAt: at } : existing)),
+      result: undefined,
+    }));
   }
 }
 
@@ -186,6 +259,11 @@ export interface LinkedForChat {
   problem: string | null;
   // The agent has the knowledge tools, so linked projects' knowledge is reachable through them.
   knowledgeTools: boolean;
+  // Attached folders past MAX_CHAT_FOLDERS, not added.
+  leftOut?: readonly string[];
+  // Workspaces are attached but project knowledge is off, so repositories their chats start working
+  // in are not picked up; the folders listed are the ones recorded before.
+  notFollowed?: boolean;
 }
 
 // The prompt section that tells a chat about its workspace's linked projects. Null when there is
@@ -208,5 +286,9 @@ export function linksSection(linked: LinkedForChat, start: string, end: string):
     : linked.provider === "opencode"
       ? ["## Attached projects (Contextualise)", "M attached these projects to this workspace. You can read them, but this chat's OpenCode permissions (plan mode, or edits or outside folders set to ask or deny) may ask M before or stop edits there:", ...list, ...searched]
       : ["## Attached projects (Contextualise)", `M attached these projects to this workspace, but Contextualise can give extra folders only to Claude, Codex, and OpenCode chats, not ${plainPath(linked.provider)}. They are listed for reference; you may not be able to edit them:`, ...list, ...searched];
-  return [start, ...lines, end].join("\n");
+  const notes = [
+    ...(linked.leftOut?.length ? [`Not added, because a chat gets at most ${MAX_CHAT_FOLDERS} attached folders: ${linked.leftOut.map(plainPath).join(", ")}.`] : []),
+    ...(linked.notFollowed ? ["Project knowledge is off, so repositories the attached workspaces' chats start working in are not being added; the folders above are the ones recorded before."] : []),
+  ];
+  return [start, ...lines, ...notes, end].join("\n");
 }

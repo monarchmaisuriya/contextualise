@@ -1,28 +1,24 @@
 import { expect, test } from "vitest";
-import { workspaceItems } from "./workspace-rows";
+import { broughtLine, workspaceRows } from "./workspace-rows";
 
-const repo = (workspaceId: string, name: string, path: string) => ({ workspaceId, name, project: "Develop", path, branch: null, attaches: "repository" as const });
-const all = () => true;
+const local = (workspaceId: string, name: string, repositories: string[]) => ({ workspaceId, name, project: "Develop", path: "/d", branch: null, attaches: "workspace" as const, repositories });
+const words = (search: string) => (...texts: (string | null)[]) => search === "" || texts.some((text) => text?.toLowerCase().includes(search));
 
-test("puts a workspace's repositories under one heading with its title, each row named by its folder", () => {
-  const items = workspaceItems([repo("w1", "Scan codebases", "/d/web"), repo("w1", "Scan codebases", "/d/api"), repo("w2", "Fix login", "/d/api")], all);
-  expect(items).toEqual([
-    { kind: "heading", key: "w1", title: "Scan codebases", meta: "2 repositories · Develop" },
-    { kind: "row", key: "w1|/d/web", title: "web", meta: "/d/web", path: "/d/web", attachedWorkspaceId: undefined, nested: true },
-    { kind: "row", key: "w1|/d/api", title: "api", meta: "/d/api", path: "/d/api", attachedWorkspaceId: undefined, nested: true },
-    { kind: "row", key: "w2|/d/api", title: "Fix login", meta: "api · Develop", path: "/d/api", attachedWorkspaceId: undefined, nested: false },
+test("one row per local workspace, attached as a whole, saying how many repositories it brings", () => {
+  expect(workspaceRows([local("w1", "Scan codebases", ["/d/web", "/d/api"]), local("w2", "Fix login", ["/d/api"]), local("w3", "Plan", [])], words(""))).toEqual([
+    { key: "w1", title: "Scan codebases", meta: "2 repositories · Develop", attachedWorkspaceId: "w1" },
+    { key: "w2", title: "Fix login", meta: "1 repository · Develop", attachedWorkspaceId: "w2" },
+    { key: "w3", title: "Plan", meta: "no repositories yet · Develop", attachedWorkspaceId: "w3" },
   ]);
 });
 
-test("keeps the heading over the repositories a search leaves, and drops a workspace with none left", () => {
-  const items = workspaceItems([repo("w1", "Scan codebases", "/d/web"), repo("w1", "Scan codebases", "/d/api"), repo("w2", "Fix login", "/d/web")], (choice) => choice.path.endsWith("api"));
-  expect(items.map((item) => [item.kind, item.title])).toEqual([
-    ["heading", "Scan codebases"],
-    ["row", "api"],
-  ]);
+test("finds a workspace by a repository it brings, and a worktree still attaches its own folder", () => {
+  expect(workspaceRows([local("w1", "Scan codebases", ["/d/web", "/d/api"]), local("w2", "Fix login", ["/d/auth"])], words("api")).map((row) => row.key)).toEqual(["w1"]);
+  const [row] = workspaceRows([{ workspaceId: "wt", name: "lavish-otter", project: "api", path: "/w/otter", branch: "fix/1", attaches: "worktree", repositories: [] }], words(""));
+  expect(row).toEqual({ key: "wt", title: "lavish-otter", meta: "fix/1 · api", path: "/w/otter", attachedWorkspaceId: "wt" });
 });
 
-test("a worktree or folder row still names its workspace so the link lapses with it", () => {
-  const [row] = workspaceItems([{ workspaceId: "wt", name: "lavish-otter", project: "api", path: "/w/otter", branch: "fix/1", attaches: "worktree" }], all);
-  expect(row).toMatchObject({ kind: "row", title: "lavish-otter", meta: "fix/1 · api", attachedWorkspaceId: "wt", nested: false });
+test("names what an attached workspace brings, or says it brings nothing yet", () => {
+  expect(broughtLine({ workspaceId: "w1", name: "Develop / Scan", folders: ["/d/web", "/d/api"] })).toBe("web, api");
+  expect(broughtLine({ workspaceId: "w1", name: "Develop / Scan", folders: [] })).toContain("No repositories yet");
 });

@@ -714,7 +714,7 @@ describe("contributeKnowledge", () => {
       const listed = async () => (await call("links.list", { workspaceId: "w1" })) as { links: { path: string; name: string; workspaceId?: string }[]; workspaces: { workspaceId: string; name: string; branch: string | null; path: string }[] };
       // Not this workspace, not a background one; the worktree with its branch.
       expect((await listed()).workspaces.map((entry) => entry.workspaceId).sort()).toEqual(["w2", "wt"]);
-      expect((await listed()).workspaces.find((entry) => entry.workspaceId === "wt")).toEqual({ workspaceId: "wt", name: "lavish-otter", project: "api", path: worktree, branch: "fix/pr-948", attaches: "worktree" });
+      expect((await listed()).workspaces.find((entry) => entry.workspaceId === "wt")).toEqual({ workspaceId: "wt", name: "lavish-otter", project: "api", path: worktree, branch: "fix/pr-948", attaches: "worktree", repositories: [] });
       // The path must be that workspace's own folder.
       await expect(call("links.add", { workspaceId: "w1", path: web2, attachedWorkspaceId: "wt" })).rejects.toThrow("is not the folder of workspace wt");
       await call("links.add", { workspaceId: "w1", path: worktree, attachedWorkspaceId: "wt" });
@@ -789,7 +789,7 @@ describe("contributeKnowledge", () => {
     });
 
     describe("Workspaces tab rows for local workspaces", () => {
-      type Row = { workspaceId: string; name: string; path: string; attaches: string };
+      type Row = { workspaceId: string; name: string; path: string; attaches: string; repositories: string[] };
       const rowsFor = async (workspaceId: string) => ((await call("links.list", { workspaceId })) as { workspaces: Row[] }).workspaces;
       let develop: string;
       beforeEach(() => {
@@ -807,32 +807,125 @@ describe("contributeKnowledge", () => {
         agentEntries.splice(0);
       });
 
-      it("offers a local workspace on a project's folder, attaching its folder while nothing is recorded", async () => {
-        expect((await rowsFor("w1")).filter((row) => row.workspaceId === "wd")).toEqual([expect.objectContaining({ path: develop, attaches: "folder", name: "Add render.yaml to sibml" })]);
-      });
-
-      it("offers the repositories a local workspace's chats changed, one row each, attached as plain folders", async () => {
-        agentEntries.push({ agent: { id: "a-render", workspaceId: "wd", cwd: develop, provider: "claude", title: "Add render.yaml" } });
+      type Listed = { links: { path: string }[]; attachedWorkspaces: { workspaceId: string; name: string; folders: string[] }[] };
+      const listed = async () => (await call("links.list", { workspaceId: "w1" })) as Listed;
+      // A turn of a chat in the Develop workspace ending, its timeline holding writes to these files.
+      const turn = async (files: string[], workspaceId = "wd") => {
         const before = [...timeline];
-        timeline.splice(0, timeline.length, { item: { type: "user_message", text: "Add a render.yaml" }, timestamp: "2026-11-08T05:00:00.000Z" }, { item: { type: "tool_call", name: "write", status: "completed", detail: { type: "write", filePath: join(develop, "sibml", "render.yaml") } }, timestamp: "2026-11-08T05:01:00.000Z" }, { item: { type: "tool_call", name: "edit", status: "completed", detail: { type: "edit", filePath: join(develop, "notes", "todo.md") } }, timestamp: "2026-11-08T05:02:00.000Z" });
+        timeline.splice(0, timeline.length, { item: { type: "user_message", text: "Change things" }, timestamp: "2026-11-08T05:00:00.000Z" }, ...files.map((file, index) => ({ item: { type: "tool_call", name: "write", status: "completed", detail: { type: "write", filePath: join(develop, file) } }, timestamp: `2026-11-08T05:0${index + 1}:00.000Z` })));
         try {
-          await emit("agent.turn_ended", { agent: { id: "a-render", provider: "claude", cwd: develop, title: "Add render.yaml" }, outcome: { kind: "completed" } });
+          await emit("agent.turn_ended", { agent: { id: "a-render", workspaceId, provider: "claude", cwd: develop, title: "Add render.yaml" }, outcome: { kind: "completed" } });
         } finally {
           timeline.splice(0, timeline.length, ...before);
         }
-        // notes/ is not a repository, so it is not offered.
-        expect((await rowsFor("w1")).filter((row) => row.workspaceId === "wd")).toEqual([expect.objectContaining({ path: join(develop, "sibml"), attaches: "repository" })]);
-        // Another workspace on the same folder keeps its own rows: nothing it changed is recorded.
-        workspaceEntries.push({ id: "wd2", workspaceDirectory: develop, projectId: "p-develop", name: "Scan dashboard", projectDisplayName: "Develop", workspaceKind: "local" });
-        expect((await rowsFor("w1")).filter((row) => row.workspaceId === "wd2")).toEqual([expect.objectContaining({ path: develop, attaches: "folder" })]);
-        // With knowledge off nothing recorded is read, so the folder is offered.
-        values = { ...values, knowledgeEnabled: false };
-        expect((await rowsFor("w1")).filter((row) => row.workspaceId === "wd")).toEqual([expect.objectContaining({ path: develop, attaches: "folder" })]);
-        values = { ...values, knowledgeEnabled: true };
-        await call("links.add", { workspaceId: "w1", path: join(develop, "sibml") });
-        expect(((await call("links.list", { workspaceId: "w1" })) as { links: { path: string; workspaceId?: string }[] }).links).toEqual([expect.objectContaining({ path: join(develop, "sibml") })]);
+      };
+      beforeEach(() => {
+        agentEntries.push({ agent: { id: "a-render", workspaceId: "wd", cwd: develop, provider: "claude", title: "Add render.yaml" } });
+        execFileSync("git", ["init", "-q", join(develop, "dash")]);
+        writeFileSync(join(develop, "dash", "app.ts"), "export {}");
+      });
+
+      it("offers a local workspace once, saying no repositories yet while nothing it changed is recorded", async () => {
+        expect((await rowsFor("w1")).filter((row) => row.workspaceId === "wd")).toEqual([expect.objectContaining({ path: develop, attaches: "workspace", repositories: [], name: "Add render.yaml to sibml" })]);
+      });
+
+      it("attaches a local workspace as a whole: the repositories its chats changed, given to new chats and kept current", async () => {
+        // notes/ is not a repository, so it is not brought.
+        await turn(["sibml/render.yaml", "notes/todo.md"]);
+        expect((await rowsFor("w1")).filter((row) => row.workspaceId === "wd")).toEqual([expect.objectContaining({ attaches: "workspace", repositories: [join(develop, "sibml")] })]);
+        await call("links.add", { workspaceId: "w1", attachedWorkspaceId: "wd" });
+        expect(await listed()).toMatchObject({ links: [], attachedWorkspaces: [{ workspaceId: "wd", name: "Develop / Add render.yaml to sibml", folders: [join(develop, "sibml")] }] });
         expect(await call("links.count", { workspaceId: "w1" })).toEqual({ count: 1 });
-        expect((await rowsFor("w1")).filter((row) => row.workspaceId === "wd")).toEqual([]);
+        expect((await rowsFor("w1")).map((row) => row.workspaceId)).not.toContain("wd");
+        const first = await createIn(top);
+        expect(first.config.providerOptions).toEqual({ additionalDirectories: [join(develop, "sibml")] });
+        expect(first.config.systemPrompt).toContain(`sibml (from Develop / Add render.yaml to sibml): ${join(develop, "sibml")}`);
+        // A later turn in another repository (a chat's timeline keeps its earlier turns): the next chat gets both.
+        await turn(["sibml/render.yaml", "dash/app.ts"]);
+        expect((await listed()).attachedWorkspaces[0].folders).toEqual([join(develop, "dash"), join(develop, "sibml")]);
+        expect((await createIn(top)).config.providerOptions).toEqual({ additionalDirectories: [join(develop, "dash"), join(develop, "sibml")] });
+        // Removed as one.
+        await call("links.remove", { workspaceId: "w1", attachedWorkspaceId: "wd" });
+        expect((await listed()).attachedWorkspaces).toEqual([]);
+        expect((await createIn(top)).config.providerOptions).toBeUndefined();
+      });
+
+      it("keeps what an attached workspace brought while knowledge is off, and tells the chat new repositories are not followed", async () => {
+        await turn(["sibml/render.yaml"]);
+        await call("links.add", { workspaceId: "w1", attachedWorkspaceId: "wd" });
+        values = { ...values, knowledgeEnabled: false };
+        await turn(["dash/app.ts"]);
+        expect((await listed()).attachedWorkspaces[0].folders).toEqual([join(develop, "sibml")]);
+        const chat = await createIn(top);
+        expect(chat.config.providerOptions).toEqual({ additionalDirectories: [join(develop, "sibml")] });
+        expect(chat.config.systemPrompt).toContain("Project knowledge is off, so repositories the attached workspaces' chats start working in are not being added");
+      });
+
+      it("searches an attached workspace's folders for Attach > Project file, gives a folder once, and lapses with the workspace", async () => {
+        await turn(["dash/app.ts"]);
+        await call("links.add", { workspaceId: "w1", path: join(develop, "dash") });
+        await call("links.add", { workspaceId: "w1", attachedWorkspaceId: "wd" });
+        expect(((await call("links.files-available", {})) as { available: boolean }).available).toBe(true);
+        const chat = await createIn(top);
+        expect(chat.config.providerOptions).toEqual({ additionalDirectories: [join(develop, "dash")] });
+        // Listed once, by its own name: the folder link comes before what the workspace brings.
+        expect(chat.config.systemPrompt?.split(`: ${join(develop, "dash")}`)).toHaveLength(2);
+        expect(chat.config.systemPrompt).toContain(`- dash: ${join(develop, "dash")}`);
+        await call("links.remove", { workspaceId: "w1", path: join(develop, "dash") });
+        expect((((await call("links.files-search", { query: "app" })) as { items: { id: string }[] }).items).map((row) => row.id)).toEqual([join(develop, "dash", "app.ts")]);
+        workspaceEntries.splice(workspaceEntries.findIndex((entry) => entry.id === "wd"), 1);
+        expect((await listed()).attachedWorkspaces).toEqual([]);
+        expect(((await call("links.files-available", {})) as { available: boolean }).available).toBe(false);
+      });
+
+      it("gives a chat at most 10 attached folders and names the rest, and gives none once the workspace lapses", async () => {
+        const names = Array.from({ length: 11 }, (_, index) => `repo${String(index).padStart(2, "0")}`);
+        for (const name of names) {
+          execFileSync("git", ["init", "-q", join(develop, name)]);
+          writeFileSync(join(develop, name, "a.ts"), "");
+        }
+        await turn(names.map((name) => `${name}/a.ts`));
+        await call("links.add", { workspaceId: "w1", attachedWorkspaceId: "wd" });
+        const chat = await createIn(top);
+        expect((chat.config.providerOptions as { additionalDirectories: string[] }).additionalDirectories).toEqual(names.slice(0, 10).map((name) => join(develop, name)));
+        expect(chat.config.systemPrompt).toContain(`Not added, because a chat gets at most 10 attached folders: ${join(develop, "repo10")}.`);
+        workspaceEntries.splice(workspaceEntries.findIndex((entry) => entry.id === "wd"), 1);
+        expect((await createIn(top)).config.providerOptions).toBeUndefined();
+      });
+
+      it("drops attachments to workspaces Paseo no longer has before attaching more, so they never fill the limit", async () => {
+        await call("links.add", { workspaceId: "w1", attachedWorkspaceId: "wd" });
+        workspaceEntries.splice(workspaceEntries.findIndex((entry) => entry.id === "wd"), 1);
+        const folders = Array.from({ length: 5 }, (_, index) => join(develop, `extra${index}`));
+        for (const folder of folders) mkdirSync(folder);
+        for (const folder of folders) await call("links.add", { workspaceId: "w1", path: folder });
+        expect((await listed()).links.map((link) => link.path)).toEqual(folders);
+      });
+
+      it("brings what the row offered while knowledge is off: nothing for a folder of repositories", async () => {
+        await turn(["sibml/render.yaml"]);
+        values = { ...values, knowledgeEnabled: false };
+        expect((await rowsFor("w1")).find((row) => row.workspaceId === "wd")).toMatchObject({ repositories: [] });
+        await call("links.add", { workspaceId: "w1", attachedWorkspaceId: "wd" });
+        expect((await listed()).attachedWorkspaces[0].folders).toEqual([]);
+      });
+
+      it("leaves a worktree's folder out of a chat unless it is attached as its workspace", async () => {
+        const worktree = join(home, "worktrees", "22x8cau0", "lavish-otter");
+        mkdirSync(worktree, { recursive: true });
+        const real = realpathSync(worktree);
+        // Saved without its workspace, as an older version or another path could have.
+        const file = join(home, "plugin-data", "contextualise", "knowledge", "links.json");
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, JSON.stringify({ version: 1, workspaces: { w1: [{ path: real, repoKey: null, addedAt: "x" }] }, usedGrants: [] }));
+        expect((await createIn(top)).config.providerOptions).toBeUndefined();
+      });
+
+      it("refuses attaching a workspace to itself, or a worktree as a whole", async () => {
+        await expect(call("links.add", { workspaceId: "wd", attachedWorkspaceId: "wd" })).rejects.toThrow("cannot be attached to itself");
+        workspaceEntries.push({ id: "wt", workspaceDirectory: api, projectId: "p-api", name: "lavish-otter", projectDisplayName: "api", workspaceKind: "worktree" });
+        await expect(call("links.add", { workspaceId: "w1", attachedWorkspaceId: "wt" })).rejects.toThrow("attach a worktree with its folder");
+        await expect(call("links.remove", { workspaceId: "w1" })).rejects.toThrow("Give either a folder or a workspace");
       });
 
       it("creates no project index when the popover lists workspaces", async () => {

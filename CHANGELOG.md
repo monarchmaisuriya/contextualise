@@ -2,6 +2,14 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.28.0 - 2026-11-08
+
+### Changed
+
+- **Attach a whole local workspace.** In the Attached button's Workspaces tab, a local workspace is one row ("2 repositories · Develop") and picking it attaches the workspace, not one of its repositories. The Attached list shows it as one row named by its project and title, with the repositories it brings under it, and one remove. It brings the repositories its chats changed and follows them: when one of its chats ends a turn in another repository, the next new chat gets that one too. It lapses when Paseo no longer has the workspace. A repository attached from the Workspaces tab before this version stays a plain folder; remove it and attach the workspace to switch.
+- **A new chat gets at most 10 attached folders**, since a workspace can bring several; the rest are named in its prompt.
+- **While project knowledge is off,** an attached workspace keeps the repositories recorded before and picks up no new ones, and new chats are told so.
+
 ## 0.27.0 - 2026-11-08
 
 ### Added

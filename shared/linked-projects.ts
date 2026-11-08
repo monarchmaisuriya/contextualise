@@ -22,16 +22,18 @@ export type LinkedProject = z.infer<typeof linkedProjectSchema>;
 
 export const workspaceLinksSchema = z.object({
   links: z.array(linkedProjectSchema),
+  // Local workspaces attached as a whole, each by its project and title, with the folders it brings
+  // now (the repositories its chats changed). A workspace with none yet brings nothing.
+  attachedWorkspaces: z.array(z.object({ workspaceId: z.string(), name: z.string(), folders: z.array(z.string()) })),
   // The workspace's folder is shared with other workspaces, so chats started from Paseo's own "+"
   // cannot be told apart and get no links; "New linked chat" still does.
   sharedFolder: z.boolean(),
   // Every Paseo project with a workspace, by its own folder, to pick from when adding.
   suggestions: z.array(z.object({ name: z.string(), path: z.string() })),
-  // Every other Paseo workspace, by what picking it attaches: a worktree's own folder (the link lapses
-  // with the workspace), a repository a local workspace's chats changed, or a local workspace's folder
-  // while nothing it changed is recorded. A local workspace that changed several repositories has a row
-  // for each.
-  workspaces: z.array(z.object({ workspaceId: z.string(), name: z.string(), project: z.string(), path: z.string(), branch: z.string().nullable(), attaches: z.enum(["worktree", "repository", "folder"]) })),
+  // Every other Paseo workspace not attached yet, one row each: a worktree attaches its own folder (the
+  // link lapses with it); a local workspace attaches as a whole, and `repositories` is what it brings
+  // here now. Both lapse with their workspace.
+  workspaces: z.array(z.object({ workspaceId: z.string(), name: z.string(), project: z.string(), path: z.string(), branch: z.string().nullable(), attaches: z.enum(["worktree", "workspace"]), repositories: z.array(z.string()) })),
 });
 export type WorkspaceLinksPayload = z.infer<typeof workspaceLinksSchema>;
 
@@ -39,9 +41,11 @@ export const workspaceLinksRpc = defineRpc({ name: "links.list", input: workspac
 // How many projects a workspace has attached, for the Attached button's label: it is read on agent
 // updates, so it reads only the links, not the popover's suggestions.
 export const workspaceLinkCountRpc = defineRpc({ name: "links.count", input: workspaceInput, output: z.object({ count: z.number().int() }) });
-// `attachedWorkspaceId` attaches that workspace's own folder (path must be it), so the link lapses with it.
-export const addLinkRpc = defineRpc({ name: "links.add", input: workspaceInput.extend({ path: z.string().min(1).max(1_000), attachedWorkspaceId: z.string().min(1).max(200).optional() }), output: workspaceLinksSchema });
-export const removeLinkRpc = defineRpc({ name: "links.remove", input: workspaceInput.extend({ path: z.string().min(1).max(1_000) }), output: workspaceLinksSchema });
+// A folder by `path`; with `attachedWorkspaceId`, that worktree's own folder (path must be it), so the
+// link lapses with it; `attachedWorkspaceId` without a path attaches that local workspace as a whole.
+export const addLinkRpc = defineRpc({ name: "links.add", input: workspaceInput.extend({ path: z.string().min(1).max(1_000).optional(), attachedWorkspaceId: z.string().min(1).max(200).optional() }), output: workspaceLinksSchema });
+// Removes a folder by `path`, or an attached local workspace by `attachedWorkspaceId`: give one.
+export const removeLinkRpc = defineRpc({ name: "links.remove", input: workspaceInput.extend({ path: z.string().min(1).max(1_000).optional(), attachedWorkspaceId: z.string().min(1).max(200).optional() }), output: workspaceLinksSchema });
 
 // A new chat in the workspace with its links, using the provider, model, and mode of `fromAgentId`.
 // With `carryConversation`, its first message holds that chat's recent conversation, so a chat that

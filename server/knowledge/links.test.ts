@@ -87,6 +87,37 @@ describe("WorkspaceLinks", () => {
     expect(Object.keys(JSON.parse(readFileSync(join(dir, "links.json"), "utf8")).workspaces)).toEqual(["w1"]);
   });
 
+  it("attaches a whole workspace with the folders it brings, counted against the same limit as folders", async () => {
+    const folders = [{ path: "/d/web", repoKey: "github.com/x/web" }];
+    await links.addWorkspace("w1", { workspaceId: "ws", addedAt: "2026-11-08T00:00:00.000Z", folders, foldersAt: "2026-11-08T00:00:00.000Z" });
+    await expect(links.addWorkspace("w1", { workspaceId: "ws", addedAt: "x", folders: [], foldersAt: "x" })).rejects.toThrow("already attached");
+    expect(await links.workspaceIds()).toEqual(["w1"]);
+    expect((await links.all()).attached.w1).toEqual([expect.objectContaining({ workspaceId: "ws", folders })]);
+    for (let i = 1; i < MAX_LINKS; i += 1) await links.add("w1", link(`/b${i}`));
+    await expect(links.add("w1", link("/c"))).rejects.toThrow(`at most ${MAX_LINKS}`);
+    await expect(links.addWorkspace("w1", { workspaceId: "other", addedAt: "x", folders: [], foldersAt: "x" })).rejects.toThrow(`at most ${MAX_LINKS}`);
+  });
+
+  it("updates the folders an attached workspace brings for each workspace it is attached to, and removes it", async () => {
+    const entry = (workspaceId: string) => ({ workspaceId, addedAt: "x", folders: [], foldersAt: "x" });
+    await links.addWorkspace("w1", entry("ws"));
+    await links.addWorkspace("w2", entry("ws"));
+    expect((await links.receiversOf("ws")).sort()).toEqual(["w1", "w2"]);
+    await links.setWorkspaceFolders("w2", "ws", [{ path: "/d/api", repoKey: null }], "later");
+    expect((await links.all()).attached.w2[0]).toMatchObject({ folders: [{ path: "/d/api", repoKey: null }], foldersAt: "later" });
+    expect((await links.all()).attached.w1[0].folders).toEqual([]);
+    await links.removeWorkspace("w2", "ws");
+    await expect(links.removeWorkspace("w2", "ws")).rejects.toThrow("not attached");
+    // A workspace whose last attachment went is dropped from the file, of either kind.
+    expect(Object.keys(JSON.parse(readFileSync(join(dir, "links.json"), "utf8")).attachedWorkspaces)).toEqual(["w1"]);
+    expect(await links.workspaceIds()).toEqual(["w1"]);
+  });
+
+  it("reads a file written before workspaces could be attached", async () => {
+    writeFileSync(join(dir, "links.json"), JSON.stringify({ version: 1, workspaces: { w1: [link("/a")] }, usedGrants: [] }));
+    expect(await links.all()).toEqual({ links: { w1: [link("/a")] }, attached: {} });
+  });
+
   it("names the file when it cannot be read", async () => {
     writeFileSync(join(dir, "links.json"), JSON.stringify({ version: 2 }));
     await expect(links.list("w1")).rejects.toThrow(/links\.json could not be read/);
