@@ -65,7 +65,8 @@ describe("contributeKnowledge", () => {
       writeFileSync(join(top, path), text);
     }
     execFileSync("git", ["-C", top, "add", "-A"]);
-    values = snapshotSettingsSchema.parse({ knowledgePort: 46_000 + Math.floor(Math.random() * 1_000) });
+    // Chat history is covered by its own tests; off here, so prompts compare exactly.
+    values = snapshotSettingsSchema.parse({ knowledgePort: 46_000 + Math.floor(Math.random() * 1_000), historyTools: false });
     plugins = { contextualise: { source: "directory", path: process.cwd(), enabled: true } };
     settingsProblem = null;
     before.clear();
@@ -320,7 +321,8 @@ describe("contributeKnowledge", () => {
     values = { ...values, knowledgeEnabled: false };
     for (const [name, handler] of rpcs) {
       // Linked projects are folder access, not knowledge, so they keep working while it is off.
-      if (name === "knowledge.attach-search" || name === "knowledge.memorise-status" || name.startsWith("links.")) continue;
+      // Linked projects and chat history are not knowledge, so they keep working while it is off.
+      if (name === "knowledge.attach-search" || name === "knowledge.memorise-status" || name.startsWith("links.") || name.startsWith("history.")) continue;
       await expect((handler as (input: unknown, context: unknown) => Promise<unknown>)({}, { paseo }), name).rejects.toThrow("Project knowledge is off. Turn it on in Settings > Contextualise.");
     }
     expect(await attach("")).toEqual({ items: [] });
@@ -379,6 +381,95 @@ describe("contributeKnowledge", () => {
   it("records a task when an agent's turn ends, shown to the next agent", async () => {
     await emit("agent.turn_ended", { agent: { id: "a1", provider: "codex", cwd: top, title: null }, outcome: { kind: "completed" } });
     expect((await create(top)).config.systemPrompt).toContain('"Document the queue" (completed; README.md)');
+  });
+
+  describe("chat history", () => {
+    type Tool = { name: string; execute(input: unknown, context: unknown): Promise<{ text: string; isError?: boolean }> };
+    const appended: { agentId: string; row: { id: string; kind: string; data: { title: string; lines: string[] } } }[] = [];
+    let items: Record<string, unknown>[];
+    let epoch: string;
+    let originalRef: unknown;
+    // A chat's projected timeline, paged like Paseo's refetch.
+    const page = ({ direction, cursor, limit }: { direction: string; cursor?: { seq: number; epoch: string }; limit: number }) => {
+      const rows = items.map((item, index) => ({ item, timestamp: "2026-11-08T05:00:00.000Z", seqStart: index + 1 }));
+      const stale = cursor !== undefined && cursor.epoch !== epoch;
+      const selected = direction === "after" && !stale ? rows.filter((row) => row.seqStart > cursor!.seq).slice(0, limit) : direction === "before" && !stale ? rows.filter((row) => row.seqStart < cursor!.seq).slice(-limit) : rows.slice(-limit);
+      const first = selected[0]?.seqStart ?? 0;
+      const last = selected.at(-1)?.seqStart ?? 0;
+      return { epoch, reset: stale, entries: selected, hasOlder: first > 1, hasNewer: last < rows.length, startCursor: selected.length ? { epoch, seq: first } : null, endCursor: selected.length ? { epoch, seq: last } : null, error: null };
+    };
+    beforeEach(() => {
+      values = { ...values, historyTools: true };
+      items = [{ type: "user_message", text: "Run the tests" }, { type: "tool_call", name: "Bash", status: "failed", error: "exit 1", detail: { type: "shell", command: "npm test", output: "ECONNRESET at api.ts:12", exitCode: 1 } }, { type: "compaction", status: "completed", trigger: "auto", preTokens: 150_000 }, { type: "user_message", text: "Now fix it" }];
+      epoch = "e1";
+      appended.length = 0;
+      const agents = paseo.agents as Record<string, unknown>;
+      originalRef = agents.ref;
+      agents.ref = (agentId: string) => ({ respondToPermission, refresh: async () => {}, lastUsage: { contextWindowUsedTokens: 50_000, contextWindowMaxTokens: 200_000 }, timeline: { refetch: async (options: Parameters<typeof page>[0]) => page(options), append: async (row: (typeof appended)[number]["row"]) => void appended.push({ agentId, row }) } });
+    });
+    afterEach(() => {
+      (paseo.agents as Record<string, unknown>).ref = originalRef;
+    });
+    const toolsOf = async () => (await (before.get("agent.session_open") as (input: unknown, context: unknown) => Promise<{ tools: Tool[] }>)({ request: { agentId: "a1", workspaceId: "w1", provider: "claude", cwd: top, reason: "create", purpose: "interactive", env: {}, tools: [], mcpServers: {} } }, { paseo })).tools;
+    const tool = async (name: string) => (await toolsOf()).find((entry) => entry.name === name)!;
+    const asChat = { agent: { id: "a1", workspaceId: "w1" }, paseo };
+
+    it("gives every chat the four history tools, reading its own history word for word, and none while the setting is off", async () => {
+      expect((await toolsOf()).map((entry) => entry.name).filter((name) => name.startsWith("history_"))).toEqual(["history_search", "history_browse", "history_load", "history_read"]);
+      const found = await (await tool("history_search")).execute({ query: "econnreset", load: true }, asChat);
+      expect(found.text).toContain("2@e1 · tool Bash, failed");
+      expect(found.text).toContain("ECONNRESET at api.ts:12");
+      expect((await (await tool("history_load")).execute({ ids: ["1@e1"] }, asChat)).text).toContain("You: Run the tests");
+      expect((await (await tool("history_search")).execute({}, { agent: { id: null }, paseo })).isError).toBe(true);
+      values = { ...values, historyTools: false };
+      expect((await toolsOf()).some((entry) => entry.name.startsWith("history_"))).toBe(false);
+    });
+
+    it("tells a new chat about the tools, and leaves its tool policy alone (Paseo refuses preapproving its own server)", async () => {
+      const made = (await (before.get("agent.create") as (input: unknown, context: unknown) => Promise<{ config: { systemPrompt?: string; toolPolicy?: { preapproved: { server: string; tool: string }[] } } }>)({ request: { config: { provider: "claude", cwd: top, systemPrompt: "Be brief." } } }, { paseo })).config;
+      expect(made.systemPrompt).toContain("Be brief.");
+      expect(made.systemPrompt).toContain("If the `history_search` tool is available");
+      expect(made.toolPolicy).toBeUndefined();
+      // A fork carries its parent's prompt: the note is replaced, not repeated.
+      const again = (await (before.get("agent.create") as (input: unknown, context: unknown) => Promise<{ config: { systemPrompt?: string } }>)({ request: { config: { provider: "claude", cwd: top, systemPrompt: made.systemPrompt } } }, { paseo })).config;
+      expect(again.systemPrompt?.split("## Chat history (Contextualise)").length).toBe(2);
+    });
+
+    it("allows a history tool asked for through Paseo's tool server", async () => {
+      respondToPermission.mockClear();
+      await emit("agent.permission_requested", { agent: { id: "a1", cwd: top }, request: { id: "h1", name: "mcp__paseo__history_search" } });
+      await emit("agent.permission_requested", { agent: { id: "a1", cwd: top }, request: { id: "h2", name: "mcp__paseo__spawn_agent" } });
+      expect(respondToPermission).toHaveBeenCalledTimes(1);
+      expect(respondToPermission).toHaveBeenCalledWith({ requestId: "h1", response: { behavior: "allow" } });
+    });
+
+    it("adds one row for each compaction, however many turns end", async () => {
+      await emit("agent.turn_ended", { agent: { id: "a1", provider: "claude", cwd: top, title: null }, outcome: { kind: "completed" } });
+      expect(appended.map(({ row }) => row.id)).toEqual(["compaction-e1-3"]);
+      expect(appended[0].row.data.title).toBe("Context compacted automatically (about 150,000 tokens before)");
+      await emit("agent.turn_ended", { agent: { id: "a1", provider: "claude", cwd: top, title: null }, outcome: { kind: "completed" } });
+      // After a restart Paseo rebuilds the timeline with new ids, and the compaction is still noted.
+      epoch = "e2";
+      await emit("agent.turn_ended", { agent: { id: "a1", provider: "claude", cwd: top, title: null }, outcome: { kind: "completed" } });
+      expect(appended).toHaveLength(1);
+      // A chat with its history tools off gets no rows.
+      await call("history.command", { agentId: "a2", action: "off" });
+      await emit("agent.turn_ended", { agent: { id: "a2", provider: "claude", cwd: top, title: null }, outcome: { kind: "completed" } });
+      expect(appended.filter(({ agentId, row }) => agentId === "a2" && row.id.startsWith("compaction-"))).toEqual([]);
+    });
+
+    it("reports status with /history, and turns the tools off and on for one chat", async () => {
+      expect(await call("history.command", { agentId: "a1", action: "status" })).toEqual({ title: "Reading this chat's history", lines: [] });
+      await vi.waitFor(() => expect(appended.at(-1)?.row.data.title).toBe("Chat history tools: on"));
+      const status = appended.at(-1)!.row;
+      expect(status.kind).toBe("history-note");
+      expect(status.data.lines.join("\n")).toContain("Compactions: 1");
+      expect(status.data.lines.join("\n")).toContain("Context now: 50,000 of 200,000 tokens (25%)");
+      await call("history.command", { agentId: "a1", action: "off" });
+      expect((await (await tool("history_search")).execute({ query: "tests" }, asChat)).text).toContain("off for this chat");
+      await call("history.command", { agentId: "a1", action: "on" });
+      expect((await (await tool("history_search")).execute({ query: "tests" }, asChat)).text).toContain("You: Run the tests");
+    });
   });
 
   describe("linked projects", () => {

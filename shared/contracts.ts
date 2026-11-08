@@ -449,6 +449,8 @@ export const snapshotSettingsSchema = z.object({
   knowledgeMaxFileKb: boundedCount(16, 2_048, 256),
   knowledgeMaxDocs: boundedCount(100, 20_000, 2_000),
   knowledgeAutoApproveTools: z.boolean().default(true),
+  // The history tools in every chat, the note pointing a chat at them, and a row after each compaction.
+  historyTools: z.boolean().default(true),
   // Generated knowledge: off until turned on, like Memorise's suggestions from sessions.
   knowledgeGenerate: z.boolean().default(false),
   knowledgeGenerateIdleMinutes: boundedCount(5, 240, 20),
