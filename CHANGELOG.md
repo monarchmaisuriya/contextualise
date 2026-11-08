@@ -2,6 +2,12 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## Unreleased
+
+### Fixed
+
+- **More secrets are removed before chat or terminal text is attached to another chat.** Klaviyo private keys (`pk_…`) and a bare `key` name with a generated-looking value (`KEY=…`, `key: …`, `"key": "…"`, `KLAVIYO_KEY=…`, `key => …`, a `--key` flag) passed through Attach > Chat, Terminal output, and the chat history tools unchanged; they are now replaced with `[removed: <kind>]`. Ordinary uses of "key" stay: `key: string`, `key={item.id}`, `key: "Enter"`, "public key", dotted paths, file names, and names joined by `-` or `_`.
+
 ## 0.28.0 - 2026-11-08
 
 ### Changed
