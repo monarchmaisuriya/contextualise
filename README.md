@@ -125,7 +125,7 @@ These are rebuilt whenever files change. On a 7,000-file Python repository the f
   - Secret-shaped text is removed before anything is sent.
   - Background agents have no tools, run in a hidden workspace, and are archived when done.
   - At most 20 runs a day (a setting).
-  - A session is summarised again only after new turns.
+  - After a pause, a session is summarised again only once it has twice the messages from you that its summary covers (after 2, 4, 8, 16 … messages), or once a day while it has new ones, so a long conversation does not start a helper agent after every pause. "Summarise past conversations" refreshes any summary whose messages changed.
 - **Never generated here:** decisions, pitfalls, and preferences; Memorise keeps those.
 - **Generated titles** also name agents in plain folders in Attach > Chat, where Paseo has only the first request.
 
