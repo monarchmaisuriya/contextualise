@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { shortenLink } from "../shared/links";
 import type { DirectoryWorkspace } from "./tags";
 
@@ -35,17 +36,19 @@ export function workspaceLabel(workspace: DirectoryWorkspace): string {
   return title === workspace.projectDisplayName ? title : `${workspace.projectDisplayName} / ${title}`;
 }
 
-// A worktree is one task, so its title names the task; a plain folder's title only names the first
-// thing done there. A title equal to the worktree's slug or branch is no title at all.
+// The workspace's own title, as Paseo's sidebar shows it: a worktree is one task, and Paseo gives
+// each chat on a local folder its own workspace and title too. A name that only repeats the folder,
+// the project, the worktree's slug, or its branch is no title at all.
 function taskTitle(workspace: DirectoryWorkspace | undefined): string | null {
-  if (!workspace || workspace.workspaceKind !== "worktree") return null;
+  if (!workspace) return null;
+  // Only a title Paseo or the user set: a name Paseo derived from the folder or branch is not one.
   const title = workspace.title?.trim();
-  if (!title || title === workspace.worktreeSlug || title === workspace.gitRuntime?.currentBranch) return null;
-  return title;
+  const plain = [workspace.worktreeSlug, workspace.gitRuntime?.currentBranch, workspace.projectDisplayName, basename(workspace.workspaceDirectory ?? workspace.projectRootPath)];
+  return title && !plain.includes(title) ? title : null;
 }
 
-// An agent's row title: its worktree's title when the worktree is its task ("title · prompt" when
-// several agents share it), else its generated session title or its own cleaned prompt. `includesWorkspace` keeps the subtitle
+// An agent's row title: its workspace's title when it has one ("title · prompt" when several agents
+// share the workspace), else its generated session title or its own cleaned prompt. `includesWorkspace` keeps the subtitle
 // from naming the workspace twice.
 export function agentTitle(
   agent: { title: string | null; id: string },

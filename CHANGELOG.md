@@ -9,6 +9,7 @@ All notable changes follow [semantic versioning](https://semver.org).
 - **A chat in a shared local folder can be attached.** The Workspaces tab hid local workspaces whose folder is a project's (such as the seven on `~/Develop`), so a chat like "Add render.yaml to sibml-transpiler" could not be found. Every workspace is listed now, and a local one attaches the repositories its chats changed (here `~/Develop/sibml-transpiler`), read from recorded tasks, or its whole folder while nothing is recorded.
 - **A worktree's folder typed as a path is refused:** it is attached only as its workspace, so it is detached when that worktree goes.
 - **The Attached button's count reads only the links,** not the popover's suggestions.
+- **Attach > Chat names a chat as the sidebar does:** a chat on a local folder (such as `~/Develop`) showed the title its summary helper wrote from its latest work ("Fix job store memory accounting…") instead of its workspace's title ("Add render.yaml to sibml-transpiler"), so it was hard to find. Any workspace with a title of its own now gives it to its chats, as worktrees did.
 - **Fewer summary helper agents:** a conversation was summarised again after every pause that followed a new message, so long conversations started many helper agents (130 for 43 conversations on one machine). After a pause it is now summarised again only once it has twice the messages its summary covers, or once a day while it has new ones; "Summarise past conversations" still refreshes any summary whose messages changed.
 
 ## 0.26.0 - 2026-11-04

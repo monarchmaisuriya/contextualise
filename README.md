@@ -127,7 +127,7 @@ These are rebuilt whenever files change. On a 7,000-file Python repository the f
   - At most 20 runs a day (a setting).
   - After a pause, a session is summarised again only once it has twice the messages from you that its summary covers (after 2, 4, 8, 16 … messages), or once a day while it has new ones, so a long conversation does not start a helper agent after every pause. "Summarise past conversations" refreshes any summary whose messages changed.
 - **Never generated here:** decisions, pitfalls, and preferences; Memorise keeps those.
-- **Generated titles** also name agents in plain folders in Attach > Chat, where Paseo has only the first request.
+- **Generated titles** also name agents in Attach > Chat whose workspace has no title of its own, where Paseo has only the first request.
 
 **Where to look.** Project knowledge in the sidebar footer (or "Open project knowledge" in the Command Center) shows each project, opening on the one you looked at last; tap the project name to pick another. Each workspace also has a Project knowledge tab for its own project ("Open project knowledge for this workspace" in the Command Center, or the new-tab menu). Both show:
 
@@ -194,8 +194,8 @@ Each picker row says what is inside before you send it: providers and member cou
 
 Agent rows are titled the way Paseo's sidebar titles the work:
 
-- **In a worktree:** an agent is titled with the worktree's title ("Review PR 5854"). When several agents share the worktree, each title also carries the agent's first request.
-- **Elsewhere:** in a plain folder, which collects unrelated work, an agent keeps its first request as its title, since Paseo has no other title for an agent.
+- **With a workspace title:** an agent is titled with its workspace's title, as Paseo's sidebar shows it ("Review PR 5854" for a worktree, "Add render.yaml to sibml-transpiler" for a chat on a local folder). When several agents share the workspace, each title also carries the agent's first request.
+- **Without one:** a workspace named only after its folder, project, or branch has no title of its own, so its agent is titled with its generated session title, or else its first request.
 
 The muted text after the title starts with what tells agents apart: how long ago it was active, written like the sidebar ("12m", "3h", "2d"), then git details from Paseo (branch, uncommitted changes such as `+12 −3`, and the pull request such as `PR #42`), then the workspace when the title does not already name it, then running or archived. Searching also matches the workspace title, branch, and pull request number or title. Every matching conversation is listed (the list scrolls); archived ones only when "Show archived conversations" is on, and background helper agents never. Each conversation is read once and again only after it changes, so the list stays quick. Paseo chats are not listed: plugins cannot read them.
 
