@@ -27,13 +27,18 @@ export const workspaceLinksSchema = z.object({
   sharedFolder: z.boolean(),
   // Every Paseo project with a workspace, by its own folder, to pick from when adding.
   suggestions: z.array(z.object({ name: z.string(), path: z.string() })),
-  // Every other Paseo workspace whose own folder can be attached: a worktree on its branch, or a
-  // local folder that is not already offered as a project.
-  workspaces: z.array(z.object({ workspaceId: z.string(), name: z.string(), project: z.string(), path: z.string(), branch: z.string().nullable() })),
+  // Every other Paseo workspace, by what picking it attaches: a worktree's own folder (the link lapses
+  // with the workspace), a repository a local workspace's chats changed, or a local workspace's folder
+  // while nothing it changed is recorded. A local workspace that changed several repositories has a row
+  // for each.
+  workspaces: z.array(z.object({ workspaceId: z.string(), name: z.string(), project: z.string(), path: z.string(), branch: z.string().nullable(), attaches: z.enum(["worktree", "repository", "folder"]) })),
 });
 export type WorkspaceLinksPayload = z.infer<typeof workspaceLinksSchema>;
 
 export const workspaceLinksRpc = defineRpc({ name: "links.list", input: workspaceInput, output: workspaceLinksSchema });
+// How many projects a workspace has attached, for the Attached button's label: it is read on agent
+// updates, so it reads only the links, not the popover's suggestions.
+export const workspaceLinkCountRpc = defineRpc({ name: "links.count", input: workspaceInput, output: z.object({ count: z.number().int() }) });
 // `attachedWorkspaceId` attaches that workspace's own folder (path must be it), so the link lapses with it.
 export const addLinkRpc = defineRpc({ name: "links.add", input: workspaceInput.extend({ path: z.string().min(1).max(1_000), attachedWorkspaceId: z.string().min(1).max(200).optional() }), output: workspaceLinksSchema });
 export const removeLinkRpc = defineRpc({ name: "links.remove", input: workspaceInput.extend({ path: z.string().min(1).max(1_000) }), output: workspaceLinksSchema });

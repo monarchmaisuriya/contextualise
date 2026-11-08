@@ -2,6 +2,14 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.26.1 - 2026-11-08
+
+### Fixed
+
+- **A chat in a shared local folder can be attached.** The Workspaces tab hid local workspaces whose folder is a project's (such as the seven on `~/Develop`), so a chat like "Add render.yaml to sibml-transpiler" could not be found. Every workspace is listed now, and a local one attaches the repositories its chats changed (here `~/Develop/sibml-transpiler`), read from recorded tasks, or its whole folder while nothing is recorded.
+- **A worktree's folder typed as a path is refused:** it is attached only as its workspace, so it is detached when that worktree goes.
+- **The Attached button's count reads only the links,** not the popover's suggestions.
+
 ## 0.26.0 - 2026-11-04
 
 ### Added

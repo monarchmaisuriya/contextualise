@@ -1,6 +1,6 @@
 import type { PluginButtonContentProps, PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
 import { View } from "react-native";
-import { attachedFileAttachmentSource, attachedFilesAvailableRpc, workspaceLinksRpc } from "../shared/linked-projects";
+import { attachedFileAttachmentSource, attachedFilesAvailableRpc, workspaceLinkCountRpc } from "../shared/linked-projects";
 import { followAvailability } from "./availability";
 import { ICONS } from "./icons";
 import { useStyles } from "./kit";
@@ -60,7 +60,7 @@ export function followLinkPills(client: PluginClientContext): () => void {
   async function refreshCount(workspaceId: string) {
     countedAt.set(workspaceId, Date.now());
     try {
-      counts.set(workspaceId, (await client.rpc(workspaceLinksRpc, { workspaceId })).links.length);
+      counts.set(workspaceId, (await client.rpc(workspaceLinkCountRpc, { workspaceId })).count);
       for (const pill of pills.values()) if (pill.workspaceId === workspaceId) pill.registration.update({ label: label(workspaceId) });
       source.refresh();
     } catch (error) {

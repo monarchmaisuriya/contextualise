@@ -33,6 +33,14 @@ function linksChanged(): void {
 // The tab last chosen, kept while the app runs, so the popover opens where M left it.
 let lastTab: AttachTab = "projects";
 
+// What a Workspaces row attaches, after its title: a worktree's branch and project, a repository's
+// folder name and project, or a local workspace's whole folder.
+function workspaceMeta(found: { attaches: "worktree" | "repository" | "folder"; branch: string | null; project: string; path: string }): string {
+  if (found.attaches === "worktree") return [found.branch, found.project].filter(Boolean).join(" · ");
+  if (found.attaches === "repository") return `${found.path.slice(found.path.lastIndexOf("/") + 1)} · ${found.project}`;
+  return `all of ${found.project}`;
+}
+
 // What was typed is a folder, not a search: it starts like a path.
 const typedFolder = (text: string) => (/^[~/.]/.test(text.trim()) ? text.trim() : null);
 
@@ -81,7 +89,7 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
   const rows =
     tab === "projects"
       ? (data?.suggestions ?? []).filter((found) => has(found.name, found.path)).map((found) => ({ key: found.path, title: found.name, meta: found.path, path: found.path, attachedWorkspaceId: undefined }))
-      : (data?.workspaces ?? []).filter((found) => has(found.name, found.project, found.branch, found.path)).map((found) => ({ key: found.workspaceId, title: found.name, meta: [found.branch, found.project].filter(Boolean).join(" · "), path: found.path, attachedWorkspaceId: found.workspaceId }));
+      : (data?.workspaces ?? []).filter((found) => has(found.name, found.project, found.branch, found.path)).map((found) => ({ key: `${found.workspaceId}|${found.path}`, title: found.name, meta: workspaceMeta(found), path: found.path, attachedWorkspaceId: found.attaches === "repository" ? undefined : found.workspaceId }));
   const folder = typedFolder(search);
   const attach = (path: string, attachedWorkspaceId?: string) => change.mutate(() => add({ workspaceId, path, ...(attachedWorkspaceId ? { attachedWorkspaceId } : {}) }));
   const noun = tab === "projects" ? "project" : "workspace";
