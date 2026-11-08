@@ -190,7 +190,8 @@ Claude, Codex, and OpenCode compact a long conversation, and the details they dr
 | `history_read` | Reads one long item in pages of up to 16,384 characters |
 
 - **What they read:** only the calling chat's own history, as Paseo stores it. The model's reasoning and the history tools' own calls are left out, and secret-shaped text is redacted. Paseo keeps at most 64K characters of a tool's output, so a longer output is already cut there.
-- **No prompts:** while "Let agents search without asking" is on, new chats get the tools pre-approved, and older chats' requests are allowed.
+- **Where they come from:** Paseo offers a plugin's tools to a chat through its own tool server, so they need Paseo's "inject MCP into agents" setting on (`daemon.mcp.injectIntoAgents` in `config.json`; Paseo's default is off). With it off, chats get no history tools, and the note says to use them only if they are available.
+- **No prompts:** while "Let agents search without asking" is on, Contextualise approves the history tools' permission requests.
 - **A note in each new chat** points it at the tools when it needs exact earlier text, instead of guessing or asking again.
 - **After each compaction** a row in the chat says so, with the size where the provider reports it (Claude does).
 - **`/history`** adds a row with whether the tools are on, the history's size, the compactions, and how full the context is. `/history off` and `/history on` switch the tools for one chat.
