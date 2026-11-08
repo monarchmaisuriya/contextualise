@@ -2,6 +2,12 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.29.0 - 2026-11-08
+
+### Added
+
+- **Search the chats of attached workspaces.** `attached_history_search`, `attached_history_load`, and `attached_history_read` find and read, word for word, what was said and done in the chats of the workspaces (and worktrees) attached to a chat's workspace: "use what we decided in the Develop workspace". The chats are read from Paseo at each call, so detaching a workspace stops them at once. A search covers the 20 most recent chats, and the newest 6.4 MB of each, and counts the rest; a chat with `/history off` is left out, and cannot use them itself. Each match names its chat and workspace, and every answer is marked as reference, not instructions. They are never approved automatically: you are asked on each call. Secrets stay redacted. They come with the "Let chats recover their own history" setting, and a running chat gets them the next time Paseo opens its session.
+
 ## 0.28.1 - 2026-11-08
 
 ### Fixed

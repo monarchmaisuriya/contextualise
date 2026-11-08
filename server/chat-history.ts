@@ -18,9 +18,9 @@ const BROWSE_COUNT = 10;
 const BROWSE_COUNT_MAX = 30;
 const LOAD_MAX = 3;
 const EXCERPT_CHARS = 160;
-// The history tools' own calls are never searched or loaded (Claude and Codex name them through
-// Paseo's MCP server, as mcp__paseo__history_search).
-// Codex names them paseo.history_search.
+// The history tools' own calls are never searched or loaded, the attached_history_* ones included
+// (Claude names them through Paseo's MCP server, as mcp__paseo__history_search; Codex as
+// paseo.history_search).
 const OWN_TOOL = /(^|[_.])history_(search|browse|load|read)$/;
 
 export type HistoryKind = "you" | "assistant" | "tool" | "compaction" | "error";
@@ -32,7 +32,22 @@ export interface HistoryRow {
   failed: boolean;
   time: string;
   text: string;
+  // The chat a row came from, when rows of several chats are searched together.
+  source?: string;
 }
+
+// What an answer calls the history it searched and the tools that read it further.
+export interface HistoryNames {
+  scope: string;
+  // The history one item belongs to.
+  itemHistory: string;
+  search: string;
+  load: string;
+  read: string;
+  // Where a valid id comes from.
+  idsFrom: string;
+}
+export const OWN_HISTORY: HistoryNames = { scope: "this chat's history", itemHistory: "this chat's history", search: "history_search", load: "history_load", read: "history_read", idsFrom: "history_search or history_browse" };
 
 export interface TimelineCursor {
   epoch: string;
@@ -152,7 +167,7 @@ export class ChatHistory {
   ) {}
 
   private static check(page: TimelinePage): TimelinePage {
-    if (page.error) throw new Error(`Paseo could not read this chat's history: ${page.error}`);
+    if (page.error) throw new Error(`Paseo could not read the chat's history: ${page.error}`);
     return page;
   }
 
@@ -239,7 +254,7 @@ const epochOf = (id: string) => id.slice(id.indexOf("@") + 1);
 
 const bytes = (value: string) => Buffer.byteLength(value, "utf8");
 const idList = (ids: readonly string[]) => `[${ids.map((id) => JSON.stringify(id)).join(", ")}]`;
-const label = (row: HistoryRow) => `${row.kind}${row.tool ? ` ${row.tool}` : ""}${row.failed && row.kind === "tool" ? ", failed" : ""}`;
+const label = (row: HistoryRow) => `${row.kind}${row.tool ? ` ${row.tool}` : ""}${row.failed && row.kind === "tool" ? ", failed" : ""}${row.source ? ` · in ${row.source}` : ""}`;
 const oneLine = (value: string) => value.replace(/\s+/g, " ").trim();
 
 function excerpt(row: HistoryRow, words: readonly string[]): string {
@@ -268,8 +283,18 @@ function fit(head: string, lines: readonly string[], tail = "", budget = ANSWER_
   return tail ? `${out}\n${tail}` : out;
 }
 
-const reloadedNote = (id: string) => `${id} is from before this chat's history was reloaded (Paseo rebuilds it after a restart or reload, with new ids). Search again with history_search.`;
-const unknown = (rows: readonly HistoryRow[], id: string) => (rows.length > 0 && epochOf(id) !== epochOf(rows[0].id) ? reloadedNote(id) : `No history item ${id}. Use an id from history_search or history_browse.`);
+const reloadedNote = (id: string, names: HistoryNames) => `${id} is from before ${names.itemHistory} was reloaded (Paseo rebuilds it after a restart or reload, with new ids). Search again with ${names.search}.`;
+// When rows of several chats are searched together, each id starts with its chat ("<chat>:<seq>@<epoch>");
+// an id is compared only with its own chat's rows. A chat's own ids have no chat part.
+const chatOf = (id: string) => {
+  const at = id.indexOf("@");
+  const seq = at < 0 ? id : id.slice(0, at);
+  return seq.slice(0, seq.lastIndexOf(":") + 1);
+};
+const unknown = (rows: readonly HistoryRow[], id: string, names: HistoryNames) => {
+  const sameChat = rows.find((row) => chatOf(row.id) === chatOf(id));
+  return sameChat && epochOf(id) !== epochOf(sameChat.id) ? reloadedNote(id, names) : `No history item ${id}. Use an id from ${names.idsFrom}.`;
+};
 
 export interface SearchInput {
   query?: string;
@@ -282,7 +307,7 @@ export interface SearchInput {
 
 // Matches, newest first: every word of `query` in the item, any of `tools`, all of `files`, and
 // failed items when `failed`. With `load`, the first three are loaded and the rest named.
-export function searchHistory(rows: readonly HistoryRow[], input: SearchInput, budget = ANSWER_MAX_BYTES): { text: string } {
+export function searchHistory(rows: readonly HistoryRow[], input: SearchInput, budget = ANSWER_MAX_BYTES, names = OWN_HISTORY): { text: string } {
   const words = (input.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
   const tools = (input.tools ?? []).map((tool) => tool.toLowerCase());
   const files = input.files ?? [];
@@ -293,23 +318,23 @@ export function searchHistory(rows: readonly HistoryRow[], input: SearchInput, b
     if (!files.every((file) => row.files.some((path) => path === file || path.endsWith(`/${file}`)) || row.text.includes(file))) return false;
     return !input.failed || row.failed;
   });
-  if (matches.length === 0) return { text: `No history matches${words.length ? ` "${words.join(" ")}"` : ""} in this chat's ${rows.length} items.` };
+  if (matches.length === 0) return { text: `No history matches${words.length ? ` "${words.join(" ")}"` : ""} in ${names.scope} (${rows.length} items).` };
   const limit = Math.min(Math.max(1, input.limit ?? SEARCH_LIMIT), SEARCH_LIMIT_MAX);
   const shown = matches.slice(0, limit);
-  const head = `${matches.length} match${matches.length === 1 ? "" : "es"} in this chat's history, newest first${matches.length > shown.length ? ` (showing ${shown.length})` : ""}:`;
-  if (!input.load) return { text: fit(head, shown.map((row) => reference(row, words)), "Load items with history_load({ ids: [...] }).", budget) };
+  const head = `${matches.length} match${matches.length === 1 ? "" : "es"} in ${names.scope}, newest first${matches.length > shown.length ? ` (showing ${shown.length})` : ""}:`;
+  if (!input.load) return { text: fit(head, shown.map((row) => reference(row, words)), `Load items with ${names.load}({ ids: [...] }).`, budget) };
   const loaded = shown.slice(0, LOAD_MAX);
   const rest = shown.slice(LOAD_MAX).map((row) => row.id);
-  const tail = rest.length ? `Not loaded: history_load({ ids: ${idList(rest.slice(0, LOAD_MAX))} })${rest.length > LOAD_MAX ? ` and ${rest.length - LOAD_MAX} more` : ""}.` : "";
+  const tail = rest.length ? `Not loaded: ${names.load}({ ids: ${idList(rest.slice(0, LOAD_MAX))} })${rest.length > LOAD_MAX ? ` and ${rest.length - LOAD_MAX} more` : ""}.` : "";
   // The references take at most half the answer, so loaded text keeps room.
   const refs = fit(head, shown.map((row) => reference(row, words)), "", Math.floor(budget / 2));
-  return { text: `${loadText(loaded, budget - bytes(tail) - 8, refs)}${tail ? `\n${tail}` : ""}` };
+  return { text: `${loadText(loaded, budget - bytes(tail) - 8, refs, names)}${tail ? `\n${tail}` : ""}` };
 }
 
 // Items next to one item: before it, after it, or around it.
 export function browseHistory(rows: readonly HistoryRow[], input: { id: string; direction: "before" | "after" | "around"; count?: number }, budget = ANSWER_MAX_BYTES): { text: string } {
   const at = rows.findIndex((row) => row.id === input.id);
-  if (at < 0) return { text: unknown(rows, input.id) };
+  if (at < 0) return { text: unknown(rows, input.id, OWN_HISTORY) };
   const count = Math.min(Math.max(1, input.count ?? BROWSE_COUNT), BROWSE_COUNT_MAX);
   const [from, to] = input.direction === "before" ? [at - count, at] : input.direction === "after" ? [at + 1, at + 1 + count] : [at - Math.floor(count / 2), at + Math.ceil(count / 2)];
   const picked = rows.slice(Math.max(0, from), Math.min(rows.length, to));
@@ -319,9 +344,9 @@ export function browseHistory(rows: readonly HistoryRow[], input: { id: string; 
 
 // The items in the order asked for: each whole while they fit `budget` (head included), smallest
 // first; any other as a handle for history_read. Handles are counted before any item is placed.
-function loadText(items: readonly HistoryRow[], budget: number, head = ""): string {
+function loadText(items: readonly HistoryRow[], budget: number, head = "", names = OWN_HISTORY): string {
   const block = (row: HistoryRow) => `\n=== ${row.id} · ${label(row)} · ${row.time} ===\n${row.text}\n`;
-  const handle = (row: HistoryRow) => `\n=== ${row.id} · ${label(row)} · ${row.time}: ${row.text.length.toLocaleString("en-US")} characters, too long to load here. Read it with history_read({ id: "${row.id}" }).\n`;
+  const handle = (row: HistoryRow) => `\n=== ${row.id} · ${label(row)} · ${row.time}: ${row.text.length.toLocaleString("en-US")} characters, too long to load here. Read it with ${names.read}({ id: "${row.id}" }).\n`;
   const whole = new Set<string>();
   let used = bytes(head) + items.reduce((sum, row) => sum + bytes(handle(row)), 0);
   for (const row of [...items].sort((a, b) => bytes(a.text) - bytes(b.text))) {
@@ -335,26 +360,26 @@ function loadText(items: readonly HistoryRow[], budget: number, head = ""): stri
 }
 
 // Up to three items, whole while they fit; a larger one comes back as a handle for history_read.
-export function loadHistory(rows: readonly HistoryRow[], ids: readonly string[], budget = ANSWER_MAX_BYTES): { text: string } {
+export function loadHistory(rows: readonly HistoryRow[], ids: readonly string[], budget = ANSWER_MAX_BYTES, names = OWN_HISTORY): { text: string } {
   const notes: string[] = [];
   const items: HistoryRow[] = [];
   for (const id of ids.slice(0, LOAD_MAX)) {
     const row = rows.find((candidate) => candidate.id === id);
     if (row) items.push(row);
-    else notes.push(unknown(rows, id));
+    else notes.push(unknown(rows, id, names));
   }
   if (ids.length > LOAD_MAX) notes.push(`Only ${LOAD_MAX} items load at a time; ask again for ${idList(ids.slice(LOAD_MAX))}.`);
   const tail = notes.join("\n");
-  return { text: [loadText(items, budget - bytes(tail) - 8), tail].filter(Boolean).join("\n") };
+  return { text: [loadText(items, budget - bytes(tail) - 8, "", names), tail].filter(Boolean).join("\n") };
 }
 
 // One page of an item's text, from `offset` (in characters), and where the next page starts.
-export function readHistory(rows: readonly HistoryRow[], input: { id: string; offset?: number; limit?: number }, budget = ANSWER_MAX_BYTES): { text: string; body: string; next: number | null } {
+export function readHistory(rows: readonly HistoryRow[], input: { id: string; offset?: number; limit?: number }, budget = ANSWER_MAX_BYTES, names = OWN_HISTORY): { text: string; body: string; next: number | null } {
   const row = rows.find((candidate) => candidate.id === input.id);
-  if (!row) return { text: unknown(rows, input.id), body: "", next: null };
+  if (!row) return { text: unknown(rows, input.id, names), body: "", next: null };
   const offset = Math.max(0, Math.min(input.offset ?? 0, row.text.length));
   let end = Math.min(row.text.length, offset + Math.min(Math.max(1, input.limit ?? 16_384), 16_384));
-  const header = (to: number) => `${row.id} · characters ${offset.toLocaleString("en-US")} to ${to.toLocaleString("en-US")} of ${row.text.length.toLocaleString("en-US")}${to < row.text.length ? `. Next: history_read({ id: "${row.id}", offset: ${to} })` : " (the end)"}\n`;
+  const header = (to: number) => `${row.id} · characters ${offset.toLocaleString("en-US")} to ${to.toLocaleString("en-US")} of ${row.text.length.toLocaleString("en-US")}${to < row.text.length ? `. Next: ${names.read}({ id: "${row.id}", offset: ${to} })` : " (the end)"}\n`;
   // Never split a surrogate pair, and shrink until the page fits the answer budget.
   const clean = (to: number) => (to < row.text.length && /[\uD800-\uDBFF]/.test(row.text[to - 1] ?? "") ? to - 1 : to);
   // A page always moves on by at least one whole character, so paging never stalls.

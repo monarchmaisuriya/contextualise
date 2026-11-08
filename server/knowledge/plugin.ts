@@ -36,6 +36,7 @@ import { z } from "zod";
 import { runWorker } from "../workers";
 import { ChatHistory } from "../chat-history";
 import { addCompactionRows, HistoryOff, historyStatus, historyTools, isHistoryTool, NotedCompactions, withHistoryRule } from "../history-tools";
+import { type AttachedChat, attachedHistoryCache, attachedHistoryTools } from "../attached-history";
 import { HISTORY_ROW_KIND, historyCommandRpc } from "../../shared/history";
 import { newestFirst, newestPerKey, workspaceTimes } from "../newest-first";
 import { shortTimeAgo } from "../../shared/time";
@@ -489,7 +490,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   server.before("agent.session_open", async ({ request }, { paseo }) => {
     remember(paseo);
     const opened = request as typeof request & { tools?: unknown[] };
-    const history = (await historyOn()) ? historyTools(chatHistory) : [];
+    const history = (await historyOn()) ? [...historyTools(chatHistory), ...attachedHistoryTools(attachedHistory)] : [];
     return { ...opened, tools: [...(opened.tools ?? []), projectAttachTool, ...history] } as typeof request;
   });
 
@@ -604,7 +605,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   };
 
   // Every chat Paseo has, archived ones too, read once per call.
-  type ListedAgent = { id: string; workspaceId?: string | null; updatedAt?: string | null };
+  type ListedAgent = { id: string; title?: string | null; workspaceId?: string | null; updatedAt?: string | null };
   const listAgents = async (paseo: PaseoApi): Promise<ListedAgent[]> => {
     const agents: ListedAgent[] = [];
     for (let cursor: string | undefined; ; ) {
@@ -625,6 +626,19 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       return [];
     }
   };
+  // The chats of the workspaces attached to a workspace now (attached workspaces and attached worktrees,
+  // lapsed ones left out), newest first, without the chat asking. Read on every call of the attached
+  // history tools, so detaching a workspace stops them reading its chats.
+  const attachedChats = async (paseo: PaseoApi, workspaceId: string, callerId: string): Promise<AttachedChat[]> => {
+    const live = (await liveLinks(remember(paseo), workspaceId)).get(workspaceId);
+    const names = new Map<string, string>();
+    for (const link of live?.links ?? []) if (link.workspaceId) names.set(link.workspaceId, link.name);
+    for (const entry of live?.workspaces ?? []) names.set(entry.workspaceId, entry.name);
+    if (names.size === 0) return [];
+    const chats = (await listAgents(paseo)).filter((agent) => agent.id !== callerId && agent.workspaceId && names.has(agent.workspaceId));
+    return newestFirst(chats, (agent) => agent.updatedAt).map((agent) => ({ id: agent.id, title: agent.title?.trim() || agent.id, workspace: names.get(agent.workspaceId!)! }));
+  };
+  const attachedHistory = { history: attachedHistoryCache(), off: chatHistory.off, enabled: historyOn, chats: attachedChats };
   const workspaceActivity = workspaceTimes;
   // Every Paseo project that has a workspace M can see, with its name and own folder. Paseo also lists
   // projects whose workspaces were all archived, so the workspaces decide. The projects M works in come

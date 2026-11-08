@@ -871,6 +871,60 @@ describe("contributeKnowledge", () => {
         expect(chat.config.systemPrompt).toContain("Project knowledge is off, so repositories the attached workspaces' chats start working in are not being added");
       });
 
+      it("lets a chat search the chats of its workspace's attached workspaces, never approving it, until the workspace is detached", async () => {
+        type Tool = { name: string; execute(input: unknown, context: unknown): Promise<{ text: string; isError?: boolean }> };
+        await turn(["sibml/render.yaml"]);
+        values = { ...values, historyTools: true };
+        // A worktree attached as its workspace counts too; its chat ran more recently.
+        mkdirSync(join(home, "worktrees", "22x8cau0", "lavish-otter"), { recursive: true });
+        const worktree = realpathSync(join(home, "worktrees", "22x8cau0", "lavish-otter"));
+        workspaceEntries.push({ id: "wt", workspaceDirectory: worktree, projectId: "p-api", name: "lavish-otter", projectDisplayName: "api", workspaceKind: "worktree" });
+        agentEntries.push({ agent: { id: "a-fix", workspaceId: "wt", cwd: worktree, provider: "codex", title: "Fix the list import", updatedAt: "2026-11-08T07:00:00.000Z" } });
+        agentEntries[0].agent.updatedAt = "2026-11-08T06:00:00.000Z";
+        const agents = paseo.agents as Record<string, unknown>;
+        const original = agents.ref;
+        // Each attached chat holds one message, older in the chat that ran more recently; others have none.
+        const said: Record<string, { text: string; at: string }> = { "a-render": { text: "Import into list 42", at: "2026-11-08T05:00:00.000Z" }, "a-fix": { text: "The list import failed", at: "2026-11-08T04:00:00.000Z" } };
+        agents.ref = (agentId: string) => ({
+          respondToPermission,
+          timeline: { refetch: async () => ({ epoch: "e1", reset: false, entries: said[agentId] ? [{ item: { type: "user_message", text: said[agentId].text }, timestamp: said[agentId].at, seqStart: 1 }] : [], hasOlder: false, hasNewer: false, startCursor: null, endCursor: null, error: null }) },
+        });
+        try {
+          const opened = await (before.get("agent.session_open") as (input: unknown, context: unknown) => Promise<{ tools: Tool[] }>)({ request: { agentId: "a-own", workspaceId: "w1", provider: "claude", cwd: top, reason: "create", purpose: "interactive", env: {}, tools: [], mcpServers: {} } }, { paseo });
+          expect(opened.tools.map((entry) => entry.name).filter((name) => name.startsWith("attached_history_"))).toEqual(["attached_history_search", "attached_history_load", "attached_history_read"]);
+          const search = opened.tools.find((entry) => entry.name === "attached_history_search")!;
+          const asChat = { agent: { id: "a-own", workspaceId: "w1" }, paseo };
+          expect((await search.execute({ query: "list" }, asChat)).text).toContain("No chats to search");
+          await call("links.add", { workspaceId: "w1", attachedWorkspaceId: "wd" });
+          expect((await search.execute({ query: "list" }, asChat)).text).toContain('- a-render:1@e1 · you · in "Add render.yaml" (Develop / Add render.yaml to sibml) · ');
+          await call("links.add", { workspaceId: "w1", path: worktree, attachedWorkspaceId: "wt" });
+          const both = (await search.execute({ query: "list", limit: 1 }, asChat)).text;
+          expect(both).toContain("Searched 2 chats in api / lavish-otter, Develop / Add render.yaml to sibml.");
+          expect(both).toContain('- a-render:1@e1 · you · in "Add render.yaml"');
+          // At most the newest chats are searched: newest first by the chat's last activity.
+          const { MAX_ATTACHED_CHATS } = await import("../attached-history");
+          for (let index = 0; index < MAX_ATTACHED_CHATS; index += 1) agentEntries.push({ agent: { id: `a-old${index}`, workspaceId: "wd", cwd: develop, provider: "claude", title: `Old ${index}`, updatedAt: "2026-11-01T00:00:00.000Z" } });
+          const capped = (await search.execute({ query: "list" }, asChat)).text;
+          expect(capped).toContain(`${MAX_ATTACHED_CHATS} chats`);
+          expect(capped).toContain("The list import failed");
+          expect(capped).toContain("Import into list 42");
+          agentEntries.splice(-MAX_ATTACHED_CHATS);
+          await call("links.remove", { workspaceId: "w1", path: worktree });
+          // The chat itself is never searched as an attached chat, even inside an attached workspace.
+          expect((await search.execute({ query: "list" }, { agent: { id: "a-render", workspaceId: "w1" }, paseo })).text).toContain("No chats to search");
+          // Unlike the history tools, it is left to M on every call.
+          respondToPermission.mockClear();
+          await emit("agent.permission_requested", { agent: { id: "a-own", cwd: top }, request: { id: "p-attached", name: "mcp__paseo__attached_history_search" } });
+          await emit("agent.permission_requested", { agent: { id: "a-own", cwd: top }, request: { id: "p-load", name: "mcp__paseo__attached_history_load" } });
+          await emit("agent.permission_requested", { agent: { id: "a-own", cwd: top }, request: { id: "p-codex", name: "CodexMcpElicitation", metadata: { serverName: "paseo" }, description: 'Allow the paseo MCP server to run tool "attached_history_search"?' } });
+          expect(respondToPermission).not.toHaveBeenCalled();
+          await call("links.remove", { workspaceId: "w1", attachedWorkspaceId: "wd" });
+          expect((await search.execute({ query: "list" }, asChat)).text).toContain("No chats to search");
+        } finally {
+          agents.ref = original;
+        }
+      });
+
       it("searches an attached workspace's folders for Attach > Project file, gives a folder once, and lapses with the workspace", async () => {
         await turn(["dash/app.ts"]);
         await call("links.add", { workspaceId: "w1", path: join(develop, "dash") });
