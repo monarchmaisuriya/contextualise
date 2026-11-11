@@ -1,4 +1,5 @@
 import type { PluginAttachmentItem } from "@getpaseo/plugin";
+import type { UpdatesGrantRequest } from "./knowledge/auth";
 import { shortTimeAgo } from "../shared/time";
 import { tokenEstimate } from "../shared/tokens";
 import { DOCS_URL, type AgentMember, type SnapshotSettings, type TagSummary } from "../shared/contracts";
@@ -88,11 +89,19 @@ export function includedParts(tag: TagSummary, options: SnapshotSettings): TagSu
   };
 }
 
-export async function tagAttachment(paseo: PaseoApi, memo: Memo, fullTag: TagSummary, options: SnapshotSettings): Promise<PluginAttachmentItem> {
+// The line an attachment ends with so the receiving chat can ask what changed in it later
+// (attachment_updates); null while that tool is off.
+export type GrantLine = (grant: UpdatesGrantRequest) => Promise<string | null>;
+const withGrant = async (text: string, grantLine: GrantLine | undefined, grant: UpdatesGrantRequest) => {
+  const line = await grantLine?.(grant).catch(() => null);
+  return line ? `${text}\n\n${line}` : text;
+};
+
+export async function tagAttachment(paseo: PaseoApi, memo: Memo, fullTag: TagSummary, options: SnapshotSettings, grantLine?: GrantLine): Promise<PluginAttachmentItem> {
   const tag = includedParts(fullTag, options);
   const readable = tag.agents.filter((agent) => agent.state !== "missing");
   const readings = await Promise.all(readable.map((agent) => memo.get(`agent:${agent.agentId}:${options.turnsPerAgent}`, () => readAgent(paseo, agent.agentId, options.turnsPerAgent))));
-  const text = renderSnapshot(tag, readings, options.snapshotMaxChars);
+  const text = await withGrant(renderSnapshot(tag, readings, options.snapshotMaxChars), grantLine, { kind: "tag", key: tag.key, upTo: new Date().toISOString() });
   return {
     id: tag.key,
     identifier: rowPrefix("tag", undefined, options.pickerPrefix),
@@ -108,8 +117,8 @@ export async function tagAttachment(paseo: PaseoApi, memo: Memo, fullTag: TagSum
 // A time in milliseconds as a row's age ("3h"), or null.
 const ageOf = (ms: number | null | undefined) => (ms === null || ms === undefined ? null : shortTimeAgo(new Date(ms).toISOString()));
 
-export async function searchTags(paseo: PaseoApi, memo: Memo, tags: readonly TagSummary[], query: string, options: SnapshotSettings): Promise<PluginAttachmentItem[]> {
-  return Promise.all(matchTags(tags, query).map((tag) => tagAttachment(paseo, memo, tag, options)));
+export async function searchTags(paseo: PaseoApi, memo: Memo, tags: readonly TagSummary[], query: string, options: SnapshotSettings, grantLine?: GrantLine): Promise<PluginAttachmentItem[]> {
+  return Promise.all(matchTags(tags, query).map((tag) => tagAttachment(paseo, memo, tag, options, grantLine)));
 }
 
 function words(query: string): string[] {
@@ -247,7 +256,7 @@ export async function searchAgents(paseo: PaseoApi, directory: Directory, query:
 }
 
 // Any terminal on this host, matched on name, workspace, and folder.
-export async function searchTerminals(paseo: PaseoApi, memo: Memo, directory: Directory, query: string, options: SnapshotSettings): Promise<PluginAttachmentItem[]> {
+export async function searchTerminals(paseo: PaseoApi, memo: Memo, directory: Directory, query: string, options: SnapshotSettings, grantLine?: GrantLine): Promise<PluginAttachmentItem[]> {
   const workspaces = workspacesById(directory);
   const { entries } = await paseo.terminals.list();
   // Terminals of the workspace whose chats ran most recently first: Paseo's SDK gives a terminal no
@@ -262,7 +271,7 @@ export async function searchTerminals(paseo: PaseoApi, memo: Memo, directory: Di
       const workspace = workspaces.get(terminal.workspaceId);
       const workspaceName = workspace ? workspaceLabel(workspace) : null;
       const capture = await memo.get(`terminal:${terminal.id}:${options.terminalLines}`, () => paseo.terminals.ref(terminal.id).capture({ start: -options.terminalLines, stripAnsi: true }));
-      const text = renderTerminal(terminal, workspaceName, capture.lines, capture.totalLines, options.snapshotMaxChars);
+      const text = await withGrant(renderTerminal(terminal, workspaceName, capture.lines, capture.totalLines, options.snapshotMaxChars), grantLine, { kind: "terminal", terminalId: terminal.id, lines: capture.totalLines });
       return {
         id: terminal.id,
         identifier: rowPrefix("terminal", undefined, options.pickerPrefix),

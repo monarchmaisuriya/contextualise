@@ -20,6 +20,7 @@ const HISTORY_RULE = [
   "## Chat history (Contextualise)",
   "If the `history_search` tool is available: Paseo keeps this chat's full history, including anything your context dropped when it was compacted. When you need exact earlier text (a message, a tool's output, a decision), use `history_search`, then `history_load` or `history_read`, instead of guessing or asking M again.",
   "If M refers to work done in a workspace attached to this one and `attached_history_search` is available, it searches that workspace's chats the same way; M is asked to approve each call.",
+  "If `attachment_updates` is available: at the start of every turn, before answering, call it, passing every `Contextualise attachment grant:` value in M's latest message. It tells you what changed in this chat's attachments (attached chats, terminals, tags, files, projects and workspaces) since you last asked, so you never work from a stale attachment. M does not need to ask for this.",
   HISTORY_END,
 ].join("\n");
 

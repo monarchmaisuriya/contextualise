@@ -456,6 +456,12 @@ export const snapshotSettingsSchema = z.object({
   knowledgeGenerateIdleMinutes: boundedCount(5, 240, 20),
   knowledgeGenerateMaxPerDay: boundedCount(1, 200, 20),
   knowledgeGenerateProvider: z.enum(["same", "claude", "codex"]).default("same"),
+  // A model-written summary of every chat, kept current, given to each new chat in the same workspace.
+  // Off until turned on: it sends chats, with secrets removed, to a model.
+  workspaceSummaries: z.boolean().default(false),
+  workspaceSummaryQuietMinutes: boundedCount(1, 60, 5),
+  workspaceSummaryMaxPerDay: boundedCount(1, 500, 100),
+  workspaceSummaryProvider: z.enum(["same", "claude", "codex"]).default("same"),
 });
 export type SnapshotSettings = z.infer<typeof snapshotSettingsSchema>;
 

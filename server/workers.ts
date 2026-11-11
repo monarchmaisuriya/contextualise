@@ -34,6 +34,15 @@ export function isWorkerCwd(root: string, cwd: string): boolean {
   return target === dir || target.startsWith(`${dir}${sep}`);
 }
 
+// A chat M works in: not a Contextualise worker, not one of Paseo's or another plugin's background
+// agents, and not in a background workspace. Every path that summarises or lists chats for other
+// chats asks this, so a summary worker's own turn never schedules a summary.
+export function isUserChat(root: string, chat: { cwd?: string | null; workspaceId?: string | null; internal?: boolean; background?: boolean }, backgroundWorkspaces: ReadonlySet<string>): boolean {
+  if (chat.internal || chat.background) return false;
+  if (chat.cwd && isWorkerCwd(root, chat.cwd)) return false;
+  return !chat.workspaceId || !backgroundWorkspaces.has(chat.workspaceId);
+}
+
 // The configured model when Paseo lists it for the provider; empty means the provider's default.
 // A configured model that Paseo does not list is an error, not a silent switch to another model.
 async function fetchModel(paseo: PaseoApi, provider: FetchProvider, configured: string): Promise<string> {

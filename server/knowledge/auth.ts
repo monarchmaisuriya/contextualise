@@ -26,8 +26,24 @@ export type AgentScope = z.infer<typeof agentScopeSchema>;
 const grantSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("conversation"), agentId: z.string().min(1).max(200), upTo: z.string().min(1).max(40) }).strict(),
   z.object({ kind: z.literal("project"), repoKey: z.string().min(1).max(600), top: z.string().min(1).max(1_000), id: z.string().min(1).max(40), expires: z.string().min(1).max(40) }).strict(),
+  // Updates grants, for attachment_updates: what later changed in an attached chat or tag (after
+  // `upTo`), terminal (after `lines`), or file (after `upTo`). Each has its own prefix, so no older
+  // grant (a conversation grant in a transcript) becomes one. Like a project grant it can be copied
+  // from a transcript, so it lapses at `expires` unless redeemed, and its `id` is bound to the first
+  // chat that redeems it; only that chat may use it after.
+  z.object({ kind: z.literal("chat-updates"), agentId: z.string().min(1).max(200), upTo: z.string().min(1).max(40), id: z.string().min(1).max(40), expires: z.string().min(1).max(40) }).strict(),
+  z.object({ kind: z.literal("terminal"), terminalId: z.string().min(1).max(200), lines: z.number().int().min(0), id: z.string().min(1).max(40), expires: z.string().min(1).max(40) }).strict(),
+  z.object({ kind: z.literal("tag"), key: z.string().min(1).max(400), upTo: z.string().min(1).max(40), id: z.string().min(1).max(40), expires: z.string().min(1).max(40) }).strict(),
+  z.object({ kind: z.literal("file"), path: z.string().min(1).max(4_000), upTo: z.string().min(1).max(40), id: z.string().min(1).max(40), expires: z.string().min(1).max(40) }).strict(),
 ]);
+export const UPDATES_GRANT_KINDS = ["chat-updates", "terminal", "tag", "file"] as const;
+export type UpdatesGrant = Extract<Grant, { kind: (typeof UPDATES_GRANT_KINDS)[number] }>;
+// What a caller asks for; minting adds the id and the redemption deadline.
+export type UpdatesGrantRequest = DistributiveOmit<UpdatesGrant, "id" | "expires">;
+// How long an updates grant may wait to be redeemed: M picks an attachment, then sends it.
+export const UPDATES_GRANT_MS = 24 * 60 * 60 * 1000;
 export type Grant = z.infer<typeof grantSchema>;
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 export const PROJECT_GRANT_MS = 60 * 60 * 1000;
 const grantPrefix = (kind: Grant["kind"]) => `${kind}-grant.`;
 
@@ -52,6 +68,11 @@ export class TokenAuthority {
   mintGrant(grant: Grant): string {
     const payload = Buffer.from(JSON.stringify(grantSchema.parse(grant))).toString("base64url");
     return `${payload}.${this.sign(`${grantPrefix(grant.kind)}${payload}`).toString("base64url")}`;
+  }
+
+  // An updates grant with a fresh id and its redemption deadline.
+  mintUpdatesGrant(grant: UpdatesGrantRequest, now = new Date()): string {
+    return this.mintGrant({ ...grant, id: randomBytes(12).toString("base64url"), expires: new Date(now.getTime() + UPDATES_GRANT_MS).toISOString() } as Grant);
   }
 
   mintProjectGrant(repoKey: string, top: string, now = new Date()): string {

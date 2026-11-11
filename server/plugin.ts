@@ -114,7 +114,7 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
 
   server.handle(searchTagsRpc, async ({ query }, { paseo }) => {
     const options = await currentSettings();
-    return { items: await searchTags(paseo, readings, await listTags(paseo), query, options) };
+    return { items: await searchTags(paseo, readings, await listTags(paseo), query, options, knowledge.attachmentGrant) };
   });
 
   server.handle(searchAgentsRpc, async ({ query }, { paseo }) => {
@@ -129,10 +129,10 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
 
   server.handle(searchTerminalsRpc, async ({ query }, { paseo }) => {
     const options = await currentSettings();
-    return { items: await searchTerminals(paseo, readings, await directory(paseo), query, options) };
+    return { items: await searchTerminals(paseo, readings, await directory(paseo), query, options, knowledge.attachmentGrant) };
   });
 
-  const knowledge = contributeKnowledge(server, { resolveRoot, settings: currentSettings });
+  const knowledge = contributeKnowledge(server, { resolveRoot, settings: currentSettings, listTags });
 
   return async () => {
     autoRefresh.stop();

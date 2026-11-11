@@ -17,6 +17,8 @@ type NumberKey =
   | "knowledgeMaxDocs"
   | "knowledgeGenerateIdleMinutes"
   | "knowledgeGenerateMaxPerDay"
+  | "workspaceSummaryQuietMinutes"
+  | "workspaceSummaryMaxPerDay"
   | "pickerTitleMaxChars"
   | "knowledgeMapLines"
   | "knowledgePort" | "snapshotMaxChars" | "turnsPerAgent" | "terminalLines" | "pillNameMaxChars" | "fetchTimeoutSeconds" | "maxConcurrentFetches" | "noteMaxChars" | "commentsPerItem" | "autoRefreshHours";
@@ -99,6 +101,10 @@ const FILE_NUMBERS: ReadonlyArray<Field<NumberKey>> = [
 const GENERATE_NUMBERS: ReadonlyArray<Field<NumberKey>> = [
   { key: "knowledgeGenerateIdleMinutes", label: "Write a summary after this many quiet minutes", hint: "A new message in the conversation restarts the wait (default 20). A conversation is summarised again once it has twice the messages it had, or a day later." },
   { key: "knowledgeGenerateMaxPerDay", label: "Most summaries per day", hint: "Each summary and each project description counts once (default 20)." },
+];
+const WORKSPACE_SUMMARY_NUMBERS: ReadonlyArray<Field<NumberKey>> = [
+  { key: "workspaceSummaryQuietMinutes", label: "Update a chat's summary after this many quiet minutes", hint: "A new message restarts the wait (default 5). Each update sends only what was added since." },
+  { key: "workspaceSummaryMaxPerDay", label: "Most summary updates per day", hint: "Each model run counts once; a long chat's first summary takes one run per 40 KB (default 100)." },
 ];
 const MAP_PART_LABELS: Record<KnowledgeMapPart, string> = {
   brief: "Description",
@@ -265,6 +271,13 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
             onValueChange={(value) => persist({ ...values, historyTools: value })}
           />
           <SettingsSwitch
+            label="Give new chats a summary of this workspace's other chats"
+            hint="Off by default. When on, a helper agent keeps a summary of each of your chats, sending it to Claude or Codex with passwords and keys removed, and every new chat starts with the summaries of the other chats in its workspace. Uses some of your plan."
+            value={values.workspaceSummaries}
+            disabled={settings.saving}
+            onValueChange={(value) => persist({ ...values, workspaceSummaries: value })}
+          />
+          <SettingsSwitch
             label="Let agents search without asking"
             hint="Searching only reads this project; when off, you approve each search."
             value={values.knowledgeAutoApproveTools}
@@ -377,6 +390,20 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
               />
               {GENERATE_NUMBERS.map(draftInput)}
               {saveRowFor(keysOf(GENERATE_NUMBERS))}
+            </SettingsCard>
+          </SettingsSection>
+          <SettingsSection title="Summaries of other chats">
+            <SettingsCard>
+              <SettingsSelect
+                label="Write chat summaries with"
+                hint="Uses the models chosen under Models."
+                value={values.workspaceSummaryProvider}
+                options={GENERATE_PROVIDER_OPTIONS}
+                disabled={settings.saving || !values.workspaceSummaries}
+                onValueChange={(value) => persist({ ...values, workspaceSummaryProvider: value })}
+              />
+              {WORKSPACE_SUMMARY_NUMBERS.map(draftInput)}
+              {saveRowFor(keysOf(WORKSPACE_SUMMARY_NUMBERS))}
             </SettingsCard>
           </SettingsSection>
           <SettingsSection title="Attachments">

@@ -178,6 +178,41 @@ Attach another project to one workspace, and every new Claude, Codex, or OpenCod
 
 Attached projects are stored in `<PASEO_HOME>/plugin-data/contextualise/knowledge/links.json`, by workspace, and work while Project knowledge is off.
 
+## Attachments that stay current
+
+An attachment is a copy made when you attach it, so on its own a chat never learns what happened afterwards. With "Let chats recover their own history" on, every chat gets `attachment_updates`, and every new chat is told to call it at the start of each turn, before answering. It returns what changed since the chat last asked:
+
+| Attached | What comes back |
+| --- | --- |
+| Chat (Attach > Chat) | Its new requests, replies, commands, files touched, and errors |
+| Terminal output | Its new output lines (and how many were lost from the terminal's scrollback) |
+| Tag | New chats tagged and their messages, new messages in its chats, new fetched items and links |
+| Project file | That the file changed, so the chat reads it again |
+| Projects and workspaces attached with the Attached button | New commits (subject and files), uncommitted changes when they change, and new messages in attached workspaces' chats |
+
+- **How it knows:** each attachment ends with a signed line, `Contextualise attachment grant: …`. The chat passes the new ones; Contextualise remembers them and how far this chat has seen each attachment, so later calls need nothing and still work after the chat's context is compacted. A grant belongs to the first chat that uses it, and must be used within 24 hours of being attached; a grant Contextualise did not sign, one used by another chat first, or an older Attach > Chat grant (from before this version) is refused. Something attached twice, or reached two ways (attached and tagged), is followed once.
+- **Terminals:** new lines come from one capture each call. When a terminal's line count stops growing because its scrollback is full, a change in its last lines is still noticed, and its last lines are given.
+- **Projects:** new commits since the last one seen; if the history was rewritten (a rebase or reset), it says so and goes on from there. A git error is reported, and the project is read again next turn.
+- **Whole items:** an answer holds as many whole items as fit in 16 KB; the rest come with the next call, and nothing is marked as seen until it was delivered. An item bigger than that is sent alone rather than cut.
+- **No prompts:** it reads only what you attached to that chat, so it is approved like the history tools while "Let agents search without asking" is on (with it off, you are asked each turn). Each attachment has 10 seconds per call; a slower one is read again next turn.
+- **What it cannot promise:** the model decides whether to call it. Paseo does not let a plugin add a hook that runs on every message (checked on Paseo 0.16: Claude and Codex chats with a hook in their settings are refused), so this is the strongest route available.
+- **Chats started before this version** have no instruction to call it; they can still call it by name.
+- Chats with `/history off` are left out, as from every other tool that reads other chats.
+
+## Summaries of a workspace's other chats
+
+Off by default; turn on "Give new chats a summary of this workspace's other chats" in Settings > Contextualise. Then every new chat in a workspace starts with a summary of each of the workspace's other chats, so it can carry on from them without you re-explaining or forking one at a time.
+
+- **What each summary covers:** the whole chat, from its first message: what was asked, what was done, what was decided and why, what is left, and the exact paths, branches, commands and ids. It is at most 2,000 characters and never cut mid-text. Each entry says how far it reaches ("Summary of all 42 messages, up to 14:05 UTC"); when the chat was active after its summary, the entry says its newest messages are missing.
+- **How it is kept current:** after a chat has been quiet for 5 minutes (a setting), a helper agent sends the chat's previous summary and only the messages added since, with passwords and keys removed, to Claude or Codex (the chat's own provider by default; OpenCode chats go to Claude), and stores the new summary. A long chat's first summary is written in pieces of 40 KB, oldest first, saved after each piece. Paseo does not expose a provider's own compaction summary, so this is a separate, model-written summary. Summaries cross providers: a Codex chat's summary can reach a Claude chat.
+- **Every chat, no limit:** all of the workspace's chats that are not archived, newest first. Archived chats, Contextualise's own helper agents, background agents, and chats with `/history off` are left out; `/history off` and archiving also delete a chat's summary.
+- **When a summary cannot be written:** if the model cannot keep a summary within the limit after three tries, the last good summary stays and the entry says where it stops; that chat is tried again once it has grown, and not before a day has passed. When today's limit of runs is reached (100 by default), a summary not finished yet says "the rest is still being summarised", and the waiting chats run the next day. Turning the setting off stops a summary between pieces.
+- **Exact text:** `workspace_history_search`, `workspace_history_load` and `workspace_history_read` search and read the workspace's other chats word for word, archived ones included. They read other chats' work, so you are asked on each call.
+- **Folders shared by several workspaces:** a chat started there from Paseo's own button cannot be placed in its workspace, so it gets a note instead of the summaries. **New Chat** in the Attached button (now in every workspace) places it, and gives it the summaries.
+- **Saved with the chat:** the section is part of the new chat's saved instructions, so turning the setting off later does not remove it from chats already created.
+
+Summaries are stored in `<PASEO_HOME>/plugin-data/contextualise/knowledge/chat-summaries.json`.
+
 ## Chat history
 
 Claude, Codex, and OpenCode compact a long conversation, and the details they drop are gone from the chat's context. Paseo keeps the whole conversation anyway, so Contextualise gives every chat tools to get those details back word for word (ported from the recovery half of [pi-context-paging](https://pi.dev/packages/@rochecompaan/pi-context-paging)):
