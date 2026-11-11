@@ -8,7 +8,7 @@ import { type SummaryEntry, SummaryStore } from "./chat-summaries";
 import { DailyRuns, RunQueue } from "./knowledge/background-runs";
 import type { PaseoApi } from "./paseo-types";
 import { isUserChat } from "./workers";
-import { sharedFolderNote, withWorkspaceChats, WorkspaceSummaries, workspaceChatsSection } from "./workspace-chats";
+import { sharedFolderNote, withWorkspaceChats, WorkspaceSummaries, workspaceChatsPage, workspaceChatsSection } from "./workspace-chats";
 
 const paseo = {} as PaseoApi;
 const reply = JSON.stringify({ goal: "Import the list", done: ["Imported 120 contacts"], decisions: [], open: [], facts: ["list 42"] });
@@ -186,6 +186,28 @@ describe("workspaceChatsSection", () => {
     expect(text).toContain("`workspace_history_search`");
     expect(workspaceChatsSection([{ id: "c-key", title: "x" }], {}, false, now)).not.toContain("workspace_history_search");
     expect(workspaceChatsSection([], {}, true, now)).toBeNull();
+  });
+
+  it("gives the tool's entries a page at a time, whole, never repeating one given before", () => {
+    const chats = Array.from({ length: 30 }, (_, index) => ({ id: `c${index}`, title: `Chat ${index}` }));
+    const entries = Object.fromEntries(chats.map((chat) => [chat.id, { ...entry, summary: { ...entry.summary!, done: ["x".repeat(1_500)] } }]));
+    const given = new Set<string>();
+    const seen: string[] = [];
+    for (let call = 0; call < 10; call += 1) {
+      const page = workspaceChatsPage(chats, entries, given, 8_192, now);
+      expect(Buffer.byteLength(page.text, "utf8")).toBeLessThan(8_192 + 400);
+      for (const id of page.given) given.add(id);
+      seen.push(...page.given);
+      if (page.left === 0) break;
+      expect(page.text).toContain(`${page.left} more chats not shown yet`);
+    }
+    expect(seen).toEqual(chats.map((chat) => chat.id));
+  });
+
+  it("words the shared-folder note by whether the update tool can be asked", () => {
+    expect(sharedFolderNote(true)).toContain("If `attachment_updates` is available, call it with `workspaceChats: true`");
+    expect(sharedFolderNote(true)).toContain("Otherwise, a chat started with New Chat");
+    expect(sharedFolderNote(false)).not.toContain("attachment_updates");
   });
 
   it("replaces a section a fork carried, and removes it when there is none", () => {
