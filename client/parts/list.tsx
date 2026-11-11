@@ -2,7 +2,7 @@ import { Icon, ScrollView } from "@getpaseo/plugin/client/ui";
 import { type ReactNode, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { Styles } from "../kit";
-import { actionColor, metaPlacement, PROSE_MAX_WIDTH, rowBackground, rowFrame } from "./rules";
+import { actionColor, HEADING_SPACE, metaPlacement, PROSE_MAX_WIDTH, rowBackground, rowFrame } from "./rules";
 
 // A plugin screen's scrolling body: full width like Paseo's own list screens, not a centered column.
 export function Page({ styles, children }: { styles: Styles; children: ReactNode }) {
@@ -90,13 +90,14 @@ export function ListRow({ title, meta, icon, trailing, onPress, selected = false
   );
 }
 
-// A group's heading, aligned with row text; the count reads in the same quiet style.
+// A group's heading, aligned with row text, closer to its rows than to the group above; the count
+// follows in a quieter style.
 export function SectionHeader({ label, count, action, styles }: { label: string; count?: number; action?: { label: string; onPress(): void }; styles: Styles }) {
   return (
-    <View style={[styles.row, { paddingHorizontal: 12, marginVertical: 8 }]}>
+    <View style={[styles.row, { paddingHorizontal: 12, marginTop: HEADING_SPACE.above, marginBottom: HEADING_SPACE.below }]}>
       <Text style={[styles.heading, styles.grow]} accessibilityRole="header" numberOfLines={1}>
         {label}
-        {count !== undefined ? ` ${count}` : ""}
+        {count !== undefined ? <Text style={styles.count}>{`  ${count}`}</Text> : null}
       </Text>
       {action ? (
         <Pressable onPress={action.onPress} hitSlop={{ top: 14, bottom: 14, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel={`${action.label}: ${label}`}>

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { KnowledgeBase } from "./base";
 import { FACTS_VERSION, factsAreCurrent, factsFor, updateFacts } from "./facts";
-import { KnowledgeService } from "./service";
+import { hasProse, KnowledgeService } from "./service";
 import { KnowledgeStore } from "./store";
 import { SymbolReader } from "./symbols";
 
@@ -171,5 +171,18 @@ describe("KnowledgeService search", () => {
     for (const name of ["a", "b", "c"]) store.replaceSource({ path: `jobs/${name}.ts`, kind: "code", blob: name, chunks: [], symbols: [symbol("drainQueue", `drainQueue ${"padding words that make this match rank lower ".repeat(8)}`)] });
     expect((await service.search(repo, "drain queue", [], 4)).map((hit) => hit.path).sort()).toEqual(["jobs/a.ts", "jobs/b.ts", "jobs/c.ts", "jobs/queue.ts"]);
     expect((await service.search(repo, "drain queue", [], 4, ["jobs/c.ts"])).map((hit) => hit.path)).toEqual(["jobs/c.ts"]);
+  });
+});
+
+describe("hasProse", () => {
+  it("passes over a logo, badges, HTML, headings, and code, and finds a sentence", () => {
+    expect(hasProse('<img src="logo.png" width="96" alt="Contextualise logo">')).toBe(false);
+    expect(hasProse("[![build](https://ci/badge.svg)](https://ci) [![npm](https://npm/badge.svg)](https://npm)")).toBe(false);
+    expect(hasProse("# Project title")).toBe(false);
+    expect(hasProse("```bash\nnpm install some package here\n```")).toBe(false);
+    expect(hasProse("A [Paseo](https://paseo.sh) plugin that gives agents knowledge.")).toBe(true);
+    // Cut short mid-tag, or badges by reference: still no prose.
+    expect(hasProse('<p align="center"><img src="https://raw.githubusercontent.com/org/repo/main/logo.svg" width="120"></p>\n<a href="https://github.com/org/repo/actions" title="Build status for the main branch')).toBe(false);
+    expect(hasProse("[![Build][build-badge]][build-link] [![npm][npm-badge]][npm-link]\n\n[build-badge]: https://ci/badge.svg\n[build-link]: https://ci")).toBe(false);
   });
 });

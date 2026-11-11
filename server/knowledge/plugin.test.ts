@@ -115,6 +115,18 @@ describe("contributeKnowledge", () => {
     expect(await call("knowledge.usage", { repoKey: projects[0].repoKey })).toMatchObject({ days: 7, agentsGiven: 2, agentsUsed: 0 });
   });
 
+  it("lists documents by file, reads one file's sections in order, and picks the README's first prose as its intro", async () => {
+    writeFileSync(join(top, "README.md"), '<img src="logo.png" alt="Api logo">\n\n# Api\n\nThe api serves orders to the shop front.\n\n## Install\n\nRun it.\n');
+    execFileSync("git", ["-C", top, "add", "-A"]);
+    await create(top);
+    const { projects } = (await call("knowledge.projects", {})) as { projects: { repoKey: string }[] };
+    const repoKey = projects[0].repoKey;
+    expect(await call("knowledge.files", { repoKey, kind: "doc" })).toEqual({ total: 1, files: [{ path: "README.md", count: 3 }] });
+    const { hits } = (await call("knowledge.file-entries", { repoKey, path: "README.md", kind: "doc" })) as { hits: { title: string; line: number }[] };
+    expect(hits.map((hit) => [hit.line, hit.title])).toEqual([[1, "README.md"], [3, "Api"], [7, "Api > Install"]]);
+    expect(await call("knowledge.intro", { repoKey })).toEqual({ intro: { id: "doc:README.md:3", title: "Api" } });
+  });
+
   it("names the project a workspace's folder belongs to, and says when Paseo has no such workspace", async () => {
     await create(top);
     workspaceEntries.splice(0, workspaceEntries.length, { id: "w1", workspaceDirectory: top });

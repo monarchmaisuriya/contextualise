@@ -176,6 +176,48 @@ export const browseKnowledgeRpc = defineRpc({
   output: z.object({ hits: z.array(searchHitSchema), total: z.number().int() }),
 });
 
+// The files holding one kind's entries, with how many each holds, in path order: what the
+// Documents and Code views list before a file is opened. `total` counts every file; at most
+// FILES_MAX are listed.
+export const FILES_MAX = 2_000;
+export const fileSummarySchema = z.object({ path: z.string(), count: z.number().int().min(1) });
+export type FileSummary = z.infer<typeof fileSummarySchema>;
+export const knowledgeFilesRpc = defineRpc({
+  name: "knowledge.files",
+  input: projectInput.extend({ kind: knowledgeKindSchema.exclude(["task"]) }),
+  output: z.object({ files: z.array(fileSummarySchema), total: z.number().int() }),
+});
+
+// One file's entries of one kind, in line order (at most FILE_ENTRIES_MAX).
+export const FILE_ENTRIES_MAX = 500;
+export const fileEntriesRpc = defineRpc({
+  name: "knowledge.file-entries",
+  input: projectInput.extend({ path: z.string().min(1).max(4_000), kind: knowledgeKindSchema.exclude(["task"]) }),
+  output: z.object({ hits: z.array(searchHitSchema), total: z.number().int() }),
+});
+
+// The README's first section with prose, to stand in for a project description: a section that
+// is only a logo, badges, or HTML is passed over. Null when the project has none.
+export const knowledgeIntroRpc = defineRpc({
+  name: "knowledge.intro",
+  input: projectInput,
+  output: z.object({ intro: z.object({ id: z.string(), title: z.string() }).nullable() }),
+});
+
+// A code entry is stored as a line that lets search find its name by its words ("function
+// parseItemRef (parse item ref)"), then its signature. The reader shows the signature alone.
+export function codeEntryBody(symbol: { kind: string; name: string; words: string; signature: string }): string {
+  return `${symbol.kind} ${symbol.name} (${symbol.words})\n${symbol.signature}`;
+}
+// The symbol's kind word ("function", "class"), the first word of a stored code entry.
+export function codeSymbolKind(body: string): string {
+  return body.slice(0, body.search(/\s|$/));
+}
+export function codeSignature(body: string): string {
+  const end = body.indexOf("\n");
+  return end === -1 ? body : body.slice(end + 1);
+}
+
 export const reindexRpc = defineRpc({
   name: "knowledge.reindex",
   input: projectInput,

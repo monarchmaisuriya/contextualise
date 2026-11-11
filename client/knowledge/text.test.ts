@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { connectionGroups, entryMeta, glanceLine, languageShares, readerBody } from "./text";
+import { connectionGroups, entryMeta, fileName, filesByFolder, titlesInFile, glanceLine, languageShares, readerBody } from "./text";
 
 describe("project knowledge text", () => {
   it("sums a project up in one line: files, areas, and its main languages", () => {
@@ -23,6 +23,8 @@ describe("project knowledge text", () => {
 
   it("reads code as a fenced block, agents' writing as plain text, and documents as Markdown", () => {
     expect(readerBody({ kind: "code", path: "a.ts", body: "x" })).toEqual({ text: "```typescript\nx\n```", plain: false });
+    // The stored search line is left out: the signature shows once.
+    expect(readerBody({ kind: "code", path: "a.ts", body: "function parseRef (parse ref)\nfunction parseRef(ref: string) {" })).toEqual({ text: "```typescript\nfunction parseRef(ref: string) {\n```", plain: false });
     expect(readerBody({ kind: "task", path: "", body: "Request: y" })).toEqual({ text: "Request: y", plain: true });
     expect(readerBody({ kind: "doc", path: "README.md", body: "# Hi" })).toEqual({ text: "# Hi", plain: false });
     // Written by an agent from repository text: never rendered as Markdown, so it cannot carry links.
@@ -38,5 +40,19 @@ describe("connectionGroups", () => {
       { label: "Tests", lines: ["a.test.ts"] },
     ]);
   });
+  it("groups code files by folder, the top level first, folders in path order", () => {
+    const files = [{ path: "server/b.ts", count: 2 }, { path: "index.ts", count: 1 }, { path: "client/a.tsx", count: 3 }, { path: "server/a.ts", count: 1 }];
+    expect(filesByFolder(files)).toEqual([
+      { folder: "", files: [{ path: "index.ts", count: 1 }] },
+      { folder: "client", files: [{ path: "client/a.tsx", count: 3 }] },
+      { folder: "server", files: [{ path: "server/b.ts", count: 2 }, { path: "server/a.ts", count: 1 }] },
+    ]);
+    expect(fileName("server/knowledge/store.ts")).toBe("store.ts");
+    expect(fileName("README.md")).toBe("README.md");
+  });
+  it("drops the heading every section of a file starts with, and only then", () => {
+    expect(titlesInFile(["Changelog", "Changelog > 0.32.0 > Added", "Changelog > 0.31.0"])).toEqual(["Changelog", "0.32.0 > Added", "0.31.0"]);
+    expect(titlesInFile(["README.md", "Api", "Api > Install"])).toEqual(["README.md", "Api", "Api > Install"]);
+    expect(titlesInFile([])).toEqual([]);
+  });
 });
-

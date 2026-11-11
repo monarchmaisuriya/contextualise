@@ -3,37 +3,47 @@ import type { Attention, Hotspot } from "../../shared/knowledge";
 import { timeAgo } from "../../shared/time";
 import { plural } from "../plural";
 
-// One tile: a number to see at a glance and one sentence saying what it counts. `muted` tiles teach
-// what would show there; `warning` ones count something to look at.
-export interface TileText {
-  value: string;
-  sentence: string;
-  tone: "normal" | "warning" | "muted";
-}
-
 const number = (value: number) => value.toLocaleString("en-US");
 
-export function workTile(work: { done: number; failed: number; canceled: number }): TileText {
-  if (work.done + work.failed + work.canceled === 0) return { value: "0", sentence: "Agents' finished work shows here", tone: "muted" };
-  return { value: number(work.done), sentence: `tasks done${work.failed > 0 ? ` · ${work.failed} failed` : ""}`, tone: work.failed > 0 ? "warning" : "normal" };
+export interface PeriodFacts {
+  days: number;
+  // Each is absent until its answer arrives; the sentence says what is known so far.
+  agents?: { available: boolean; problem: string | null; running: number; needsYou: number };
+  work?: { done: number; failed: number; canceled: number };
+  changes?: { available: boolean; problem: string | null; commits: number; commitsTruncated: boolean; filesChanged: number; filesTruncated: boolean; untested: number; hotspots: number; analysed: boolean };
 }
 
-// Counts cut at git's output limit are floors, so they say "+".
-export function changesTile(changes: { available: boolean; problem: string | null; commits: number; commitsTruncated: boolean; filesChanged: number; filesTruncated: boolean }): TileText {
-  if (!changes.available) return { value: "–", sentence: changes.problem ?? "Change history needs git", tone: "muted" };
-  return { value: `${number(changes.commits)}${changes.commitsTruncated ? "+" : ""}`, sentence: `commits · ${number(changes.filesChanged)}${changes.filesTruncated ? "+" : ""} files`, tone: "normal" };
+// The period in a few plain sentences, in place of a row of number tiles: what changed, what agents
+// finished, who is running now, and what is risky. Counts cut at git's output limit say "+".
+export function periodSummary(facts: PeriodFacts): string {
+  const period = facts.days === 1 ? "Today" : `Last ${facts.days} days`;
+  const changed: string[] = [];
+  if (facts.changes?.available) {
+    const { commits, filesChanged } = facts.changes;
+    changed.push(commits === 0 ? "no commits" : `${number(commits)}${facts.changes.commitsTruncated ? "+" : ""} ${commits === 1 ? "commit" : "commits"} touching ${number(filesChanged)}${facts.changes.filesTruncated ? "+" : ""} ${filesChanged === 1 ? "file" : "files"}`);
+  }
+  if (facts.work) {
+    const { done, failed, canceled } = facts.work;
+    const ended = [[done, "finished"], [failed, "failed"], [canceled, "canceled"]].filter(([count]) => (count as number) > 0) as [number, string][];
+    changed.push(ended.length === 0 ? "no agent work" : ended.map(([count, how], index) => (index === 0 ? `${plural(count, "agent task")} ${how}` : `${number(count)} ${how}`)).join(", "));
+  }
+  const sentences = changed.length > 0 ? [`${period}: ${changed.join("; ")}.`] : [];
+  if (facts.changes && !facts.changes.available) sentences.push(asSentence(facts.changes.problem ?? "Change history needs git"));
+  if (facts.agents?.available) {
+    const { running, needsYou } = facts.agents;
+    const waiting = needsYou > 0 ? `, ${number(needsYou)} ${needsYou === 1 ? "needs" : "need"} you` : "";
+    sentences.push(`${running === 0 ? "No agents running now" : `${plural(running, "agent")} running now`}${waiting}.`);
+  } else if (facts.agents) sentences.push(asSentence(facts.agents.problem ?? "Could not read Paseo's agents"));
+  if (facts.changes?.available && facts.changes.analysed && facts.changes.untested > 0) {
+    const { untested } = facts.changes;
+    sentences.push(`${plural(untested, "often-changed file")} ${untested === 1 ? "has" : "have"} no tests.`);
+  }
+  return sentences.join(" ");
 }
 
-export function riskTile(risk: { untested: number; hotspots: number; analysed: boolean }): TileText {
-  if (!risk.analysed) return { value: "–", sentence: "Risk needs Python, TypeScript, JavaScript, or Go code", tone: "muted" };
-  if (risk.hotspots === 0) return { value: "0", sentence: "code files changed lately", tone: "muted" };
-  return { value: number(risk.untested), sentence: "hot files without tests", tone: risk.untested > 0 ? "warning" : "normal" };
-}
-
-export function agentsTile(now: { available: boolean; problem: string | null; running: number; needsYou: number; finished: number }): TileText {
-  if (!now.available) return { value: "–", sentence: now.problem ?? "Could not read Paseo's agents", tone: "muted" };
-  if (now.needsYou > 0) return { value: number(now.needsYou), sentence: `need you · ${now.running} running`, tone: "warning" };
-  return { value: number(now.running), sentence: now.finished > 0 ? `running · ${now.finished} finished` : "agents running", tone: now.running > 0 ? "normal" : "muted" };
+// A message as a sentence: a full stop only when it has no closing mark of its own.
+function asSentence(text: string): string {
+  return /[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`;
 }
 
 const ATTENTION_ROWS = 3;

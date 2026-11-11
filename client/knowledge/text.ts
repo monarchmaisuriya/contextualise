@@ -1,4 +1,4 @@
-import { type FileConnections, KIND_LABELS, type KnowledgeEntry, type ProjectFacts } from "../../shared/knowledge";
+import { codeSignature, type FileConnections, type FileSummary, KIND_LABELS, type KnowledgeEntry, type ProjectFacts } from "../../shared/knowledge";
 import { plural } from "../plural";
 
 const GLANCE_LANGUAGES = 2;
@@ -35,7 +35,7 @@ export function entryMeta(entry: Pick<KnowledgeEntry, "kind" | "path" | "line" |
 export function readerBody(entry: Pick<KnowledgeEntry, "kind" | "path" | "body">): { text: string; plain: boolean } {
   if (entry.kind === "brief" || entry.kind === "task") return { text: entry.body, plain: true };
   if (entry.kind !== "code") return { text: entry.body, plain: false };
-  return { text: `\`\`\`${FENCE_LANGUAGE[entry.path.split(".").pop() ?? ""] ?? ""}\n${entry.body}\n\`\`\``, plain: false };
+  return { text: `\`\`\`${FENCE_LANGUAGE[entry.path.split(".").pop() ?? ""] ?? ""}\n${codeSignature(entry.body)}\n\`\`\``, plain: false };
 }
 
 // A code file's connections as the reader lists them: each group's files, or "None found".
@@ -50,3 +50,28 @@ export function connectionGroups(connections: FileConnections): { label: string;
 
 export const CONNECTIONS_NOTE = "From the imports Contextualise can follow in TypeScript, JavaScript, Python, and Go; dynamic imports and path aliases are not seen.";
 export const CONNECTIONS_UPDATING = "The index is still being refreshed, so these may be incomplete.";
+
+// Code files grouped by their folder, folders in path order; files at the top level form their own
+// group, listed first.
+export function filesByFolder(files: readonly FileSummary[]): { folder: string; files: FileSummary[] }[] {
+  const groups = new Map<string, FileSummary[]>();
+  for (const file of files) {
+    const cut = file.path.lastIndexOf("/");
+    const folder = cut === -1 ? "" : file.path.slice(0, cut);
+    groups.set(folder, [...(groups.get(folder) ?? []), file]);
+  }
+  return [...groups.entries()].sort(([a], [b]) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b))).map(([folder, list]) => ({ folder, files: list }));
+}
+
+// A file's name within its folder group.
+export function fileName(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
+}
+
+// Section titles inside one opened file, without the heading every one of them starts with
+// ("Changelog > 0.32.0" reads "0.32.0" under CHANGELOG.md). A title that is only that heading stays.
+export function titlesInFile(titles: readonly string[]): string[] {
+  const first = titles[0]?.split(" > ")[0];
+  if (!first || titles.some((title) => title !== first && !title.startsWith(`${first} > `))) return [...titles];
+  return titles.map((title) => (title === first ? title : title.slice(first.length + 3)));
+}

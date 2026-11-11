@@ -6,12 +6,14 @@ import type { PluginTheme } from "@getpaseo/plugin";
 type Colors = PluginTheme["colors"];
 
 // Each kind of text has one size, line height, and weight; screens name the kind, never a size.
-// Headings are small and medium like Paseo's section titles; prose is the size Paseo's Markdown
-// renders at, so agent-written text reads the same as a README beside it.
+// A section heading is larger and bolder than the rows it leads, so a screen scans by its groups;
+// prose is the size Paseo's Markdown renders at, so agent-written text reads like a README beside it.
 export const TEXT = {
-  // The one subject of a view: a project, tag, or area name.
+  // A screen's own subject, like a page title: a project's name.
+  page: { fontSize: 20, lineHeight: 26, fontWeight: "600" },
+  // The subject of a view inside a screen: a tag or area name.
   title: { fontSize: 16, lineHeight: 22, fontWeight: "600" },
-  heading: { fontSize: 12, lineHeight: 16, fontWeight: "500" },
+  heading: { fontSize: 15, lineHeight: 20, fontWeight: "600" },
   // Rows, controls, tabs, and short lines.
   body: { fontSize: 14, lineHeight: 20, fontWeight: "400" },
   prose: { fontSize: 15, lineHeight: 21, fontWeight: "400" },
@@ -24,6 +26,8 @@ export const TEXT = {
 export const CONTROL_HEIGHT = 32;
 export const BAR_HEIGHT = 28;
 export const PROSE_MAX_WIDTH = 820;
+// A section heading has more space above it than below, so it sits with the rows it leads.
+export const HEADING_SPACE = { above: 20, below: 6 } as const;
 export const SEARCH_MAX_WIDTH = 420;
 
 export function pageInset(compact: boolean): number {

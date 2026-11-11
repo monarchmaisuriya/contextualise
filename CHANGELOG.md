@@ -2,6 +2,22 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.33.0 - 2026-11-12
+
+### Changed
+
+- **Project knowledge has a new layout**, built on Hallmark's, Impeccable's, and Notion's rules for tool screens:
+  - **A page header:** the project name as the page title, one line with when it was read and its files and languages, and the switch now says what it does ("New agents get this project's knowledge").
+  - **A rail on wide windows:** projects and their views (Overview, Areas, Documents, Code, Past work, with counts) sit beside the page, like a Notion sidebar. Phones keep the tabs, which now fit.
+  - **Section headings lead their rows:** larger and bolder than the rows under them, with more space above than below. The Tags screen shares them.
+  - **The overview reads top to bottom:** Needs you, About, This week, Start here, Risky to change, Recent work, What agents get. The four number tiles are gone; a few sentences say what changed, what agents finished, who is running now, and what is risky, and day bars show only when they have something.
+  - **Documents and Code list files.** Documents come under their kind and code under its folder, each file with its count; opening one lists its sections or symbols in line order. Rows no longer repeat their kind.
+
+### Fixed
+
+- **About shows the README's first prose, not its logo.** A README whose first section is only an image showed the image's alt text ("Contextualise logo") as the description.
+- **A code symbol's reader shows its signature once.** The line search uses to find a name by its words was shown above the signature.
+
 ## 0.32.0 - 2026-11-12
 
 ### Added
