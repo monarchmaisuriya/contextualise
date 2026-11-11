@@ -2,6 +2,17 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.31.0 - 2026-11-11
+
+### Fixed
+
+- **A large re-index no longer stops chats from being created or opened.** Removing one file from a large index read every section of the project (46 ms a file in a 236,000-section index), in a loop that kept the plugin's only thread, so a few thousand changed files held it for minutes and Paseo's 30-second hook limit failed chat creation ("agent.create.before failed: Plugin RPC timed out"). Sections now live in a table indexed by path, id and kind, with the full-text index kept in step by triggers, and indexing hands the thread back every 20 ms. Measured on a copy of a 50,000-file index with 1,000 removed and 1,000 changed files: the longest hold went from 51 seconds to under a second. Each index is upgraded once when opened: entries written by Contextualise are kept, and files are read again in the background.
+- **A folder outside git indexes each repository inside it once.** Copies of a repository (its worktrees, other clones of the same remote, matched by the origin in their git config) are left out, the copy nearest the folder's top is used, and a repository is indexed whole or not at all. A scratch folder with 24 copies of 10 repositories went from 50,000 files, cut through the copies and shifting with every new worktree, to 13,463 files that stay put.
+
+### Added
+
+- **"Notify when a helper agent finishes"** (Settings > Contextualise > Project knowledge, off by default). Contextualise's helper agents, which write chat summaries and titles and save linked items, are now created as Paseo background agents, so they no longer raise Paseo's "Agent finished" notification. Turn the setting on to get it again.
+
 ## 0.30.1 - 2026-11-11
 
 ### Fixed
