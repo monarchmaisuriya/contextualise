@@ -462,6 +462,9 @@ export const snapshotSettingsSchema = z.object({
   workspaceSummaryQuietMinutes: boundedCount(1, 60, 5),
   workspaceSummaryMaxPerDay: boundedCount(1, 500, 100),
   workspaceSummaryProvider: z.enum(["same", "claude", "codex"]).default("same"),
+  // Paseo's "Agent finished" notification for Contextualise's helper agents (summaries, titles,
+  // fetches). Off: they are created as background agents, which Paseo never notifies about.
+  notifyBackgroundWork: z.boolean().default(false),
 });
 export type SnapshotSettings = z.infer<typeof snapshotSettingsSchema>;
 

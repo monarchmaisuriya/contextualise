@@ -129,6 +129,7 @@ export class Fetcher {
           prompt: buildFetchPrompt(item, route, { maxChars: settings.noteMaxChars, commentsPerItem: settings.commentsPerItem, extraInstructions: settings.extraInstructions }),
           model: route.provider === "claude" ? settings.claudeFetchModel : settings.codexFetchModel,
           timeoutMs: settings.fetchTimeoutSeconds * 1_000,
+          notify: settings.notifyBackgroundWork,
         },
         (agentId) => {
           workerId = agentId;

@@ -109,13 +109,19 @@ describe("Generator", () => {
     expect(runWorker).not.toHaveBeenCalled();
   });
 
+  it("asks Paseo to notify when the summary worker finishes only while that setting is on", async () => {
+    values = { ...values, notifyBackgroundWork: true };
+    expect(await generator.summarize(paseo, await project(), agents[0])).toBe("done");
+    expect(jobs[0]).toMatchObject({ notify: true });
+  });
+
   it("summarises a session once per set of turns, with secrets removed and the session's own provider", async () => {
     const repo = await project();
     const agent = agents[0];
     expect(await generator.summarize(paseo, repo, agent)).toBe("done");
     expect(await generator.summarize(paseo, repo, agent)).toBe("skipped");
     expect(runWorker).toHaveBeenCalledTimes(1);
-    expect(jobs[0]).toMatchObject({ provider: "codex", outputSchema: { required: ["title", "summary"] } });
+    expect(jobs[0]).toMatchObject({ provider: "codex", outputSchema: { required: ["title", "summary"] }, notify: false });
     expect(jobs[0].prompt).toContain("[removed: GitHub token]");
     expect(jobs[0].prompt).not.toContain("ghp_");
     expect((await base.open(repo)).task("task:a1")).toMatchObject({ generatedTitle: "Fixed the queue retry", summary: "Asked to fix retries. Changed the worker. Tests pass.", summarizedTurns: 1 });

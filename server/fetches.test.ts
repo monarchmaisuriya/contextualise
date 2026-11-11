@@ -58,7 +58,7 @@ test("a fetch is recorded at once, finished in the background, and remembers its
   expect(outcome).toMatchObject({ changed: true, provider: "claude", server: "claude_ai_Atlassian_Rovo" });
   await settle();
   expect((await store.read()).auth.notes[0]).toMatchObject({ status: "ready", title: "Login fails", provider: "claude", error: null });
-  expect(jobs[0]).toMatchObject({ model: "claude-sonnet-5-5", timeoutMs: 60_000 });
+  expect(jobs[0]).toMatchObject({ model: "claude-sonnet-5-5", timeoutMs: 60_000, notify: false });
   expect(String((jobs[0] as { prompt: string }).prompt)).toContain("up to 3");
 });
 
@@ -75,6 +75,18 @@ test("an unreadable item and a failed worker both leave the reason on the note",
     ["PROJ-2", "failed", "No access to PROJ-2"],
     ["PROJ-3", "failed", "did not finish in 180 s"],
   ]);
+});
+
+test("a fetch worker asks Paseo to notify when it finishes only while that setting is on", async () => {
+  const jobs: unknown[] = [];
+  const run: RunWorker = async (_p, _r, job, onCreated) => {
+    jobs.push(job);
+    onCreated("w1");
+    return "{}";
+  };
+  await fetcher(run, { notifyBackgroundWork: true }).start(paseo, "auth", { vendor: "jira", ref: "PROJ-5" });
+  await settle();
+  expect(jobs[0]).toMatchObject({ notify: true });
 });
 
 test("the stored copy is capped by the setting", async () => {

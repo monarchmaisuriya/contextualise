@@ -278,6 +278,13 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
             onValueChange={(value) => persist({ ...values, workspaceSummaries: value })}
           />
           <SettingsSwitch
+            label="Notify when a helper agent finishes"
+            hint="Off by default. Contextualise's helper agents (chat summaries, titles, reading linked items) finish quietly; on, each one raises Paseo's Agent finished notification."
+            value={values.notifyBackgroundWork}
+            disabled={settings.saving}
+            onValueChange={(value) => persist({ ...values, notifyBackgroundWork: value })}
+          />
+          <SettingsSwitch
             label="Let agents search without asking"
             hint="Searching only reads this project; when off, you approve each search."
             value={values.knowledgeAutoApproveTools}

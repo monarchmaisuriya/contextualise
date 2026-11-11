@@ -81,7 +81,7 @@ Every new agent started in a project, a git repository or a folder outside git, 
 - agents in the subfolders of a Paseo project share the project's knowledge;
 - a folder that no longer exists is not listed; what was read from it is kept, and it is listed again if the folder comes back.
 
-Files are found by walking the folder, skipping hidden, dependency, and build folders, up to 50,000 entries. A git repository inside the folder adds only the files its index lists, so what it ignores (virtual environments, build output) stays out; only its index is read, so no command its own git config names ever runs. Files it does not track, repositories inside it, and one git cannot read are left out. A file is read again when its modified time or size changes. The home folder, the filesystem root, and Paseo's plugin data folders never become projects.
+Files are found by walking the folder, skipping hidden, dependency, and build folders, up to 50,000 entries. A git repository inside the folder adds only the files its index lists, so what it ignores (virtual environments, build output) stays out; only its index is read, so no command its own git config names ever runs. Each repository is indexed once: copies of it (its worktrees, other clones of the same remote) are left out, and the copy nearest the folder's top is used. A repository is indexed whole or not at all, so adding a copy or a file never shifts which files are in. Files it does not track, repositories inside it, and one git cannot read are left out. A file is read again when its modified time or size changes. The home folder, the filesystem root, and Paseo's plugin data folders never become projects.
 
 What is indexed (in git, the files git tracks, so `.gitignore` is honoured):
 
@@ -97,7 +97,7 @@ What is indexed (in git, the files git tracks, so `.gitignore` is honoured):
 
 Documents are split by heading, so a search hit points at the section that matters. Files over 256 KB (a setting), files matching "Never index", and `node_modules`, `vendor`, `dist`, and `build` folders are skipped. Search matches words (SQLite full-text search ranked by relevance; `parseItemRef` is also found by "item ref"), not meaning.
 
-**Staying current.** Each time an agent starts or searches, Contextualise checks every file against what it indexed: git's hash in a repository, modified time and size outside git. It reads again only the files that changed, including edits not yet committed. A task entry whose changed files have changed since is marked "needs check", and so is a superseded ADR. A large repository finishes indexing in the background; the first agent's map then says the index is updating.
+**Staying current.** Each time an agent starts or searches, Contextualise checks every file against what it indexed: git's hash in a repository, modified time and size outside git. It reads again only the files that changed, including edits not yet committed. A task entry whose changed files have changed since is marked "needs check", and so is a superseded ADR. A large repository finishes indexing in the background; the first agent's map then says the index is updating. Indexing gives Paseo the plugin's thread back every 20 ms, so even a large re-index never holds up creating or opening a chat.
 
 **Understanding a project.** From the index, Contextualise works out the project's structure, with no model:
 
@@ -287,6 +287,7 @@ Settings > Contextualise opens on eight switches and choices: knowledge on, incl
 | | Also index as docs; never index (comma-separated globs) | empty |
 | | Largest file to index (KB); most documents per project | 256 (16 to 2,048); 2,000 (100 to 20,000) |
 | | Approve the knowledge tools automatically | on |
+| | Notify when a helper agent finishes (Paseo's "Agent finished" for summaries, titles, and saved items) | off |
 | Conversation summaries | Write summaries of finished conversations | off |
 | | Read sessions with: the session's own provider, Claude, or Codex | the session's own |
 | | Summarise after a quiet period of (minutes); background runs per day | 20 (5 to 240); 20 (1 to 200) |
