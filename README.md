@@ -131,18 +131,19 @@ These are rebuilt whenever files change. On a 7,000-file Python repository the f
 - **Never generated here:** decisions, pitfalls, and preferences; Memorise keeps those.
 - **Generated titles** also name agents in Attach > Chat whose workspace has no title of its own, where Paseo has only the first request.
 
-**Where to look.** Project knowledge in the sidebar footer (or "Open project knowledge" in the Command Center) shows each project, opening on the one you looked at last; tap the project name to pick another. Each workspace also has a Project knowledge tab for its own project ("Open project knowledge for this workspace" in the Command Center, or the new-tab menu). Both show:
+**Where to look.** Project knowledge in the sidebar footer (or "Open project knowledge" in the Command Center) shows each project, opening on the one you looked at last. On a wide window a rail beside the page lists the projects and, under the one shown, its views with their counts, like a Notion sidebar; on a phone, the project name switches projects and the views are tabs. Each workspace also has a Project knowledge tab for its own project ("Open project knowledge for this workspace" in the Command Center, or the new-tab menu). Both show:
 
-- **Overview**, leading with what to know now:
+- **The page header:** the project name, one line with when it was read and its files, areas, and languages, and the switch "New agents get this project's knowledge". Re-read and a ⋮ menu (Add past conversations, Summarise past conversations) sit beside the name.
+- **Overview**, read top to bottom:
   - **Needs you:** agents in this project waiting on a permission or stopped with an error (tap to open the agent), then tasks that failed in the last 48 hours unless the same agent finished one since. Hidden when there is nothing.
-  - **Pulse**, over the last 7, 30, or 90 days (remembered): four tiles (agents running and waiting for you; agent tasks done and failed; commits and files changed; hot files without tests), and bars of agent tasks and commits per day, in your time zone.
-  - **Risky to change:** code changed in the window, ranked by changes times the files that use it, with how many tests cover each ("no tests" only where its area has tests). Tap one for what it imports, what uses it, and its tests.
+  - **About:** the written description, or the README's first section with prose (a logo or badges at its top are passed over).
+  - **This week** (or the last 30 or 90 days, remembered): a few sentences on commits and files changed, agent work finished and failed, agents running now, and often-changed files without tests, then bars per day, in your time zone, for whichever of agent tasks and commits has any.
   - **Start here:** the README and the files the most others use.
-  - Then recent work, About (the written description, or the README's opening), and What agents get (how many agents used project knowledge lately, and Preview, which shows the exact overview a new agent gets).
-  One line under the project name sums up its files, areas, and languages. Usage keeps only counts, per project and day, for 30 days: no queries, paths, or agent ids.
+  - **Risky to change:** code changed in the window, ranked by changes times the files that use it, with how many tests cover each ("no tests" only where its area has tests). Tap one for what it imports, what uses it, and its tests.
+  - Then recent work, and What agents get (how many agents used project knowledge lately, Preview, which shows the exact overview a new agent gets, and whether Memorise is there).
+  Usage keeps only counts, per project and day, for 30 days: no queries, paths, or agent ids.
 - **An area's page:** its explanation, the areas it uses and that use it, its key names, main files, busy files, documents, and recent work.
-- **Areas, Documents, Code, and Past work** list everything of each, a page at a time; Areas also has the diagram of how they connect, and Documents can be narrowed to design documents, decisions, rules, or other docs. Search covers all of it. Every entry opens in a reader with Copy and Pin.
-- The project name (to switch projects), a switch to turn the project off, and a ⋮ menu with Re-index, Add past conversations, and Summarise past conversations.
+- **Documents and Code** list files, not entries: documents under their kind (design documents, conventions, decisions, other docs), code under its folder, each with how many sections or symbols it holds. Open a file to see them in line order, without the heading every section of the file shares. **Areas** has the diagram of how they connect; **Past work** lists finished tasks a page at a time. Search covers all of it. Every entry opens in a reader with Copy and Pin; a code symbol shows its signature once.
 
 Diagrams are drawn by Paseo's own Markdown renderer (Mermaid), so they follow the theme and open full screen. The project's documents render as Markdown; text an agent wrote stays plain text, so it cannot carry links or images.
 

@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { KNOWLEDGE_KINDS, type KnowledgeKind, type TaskSummary, taskSummarySchema } from "../../shared/knowledge";
+import { codeEntryBody, KNOWLEDGE_KINDS, type KnowledgeKind, type TaskSummary, taskSummarySchema } from "../../shared/knowledge";
 import type { FileLink } from "./facts";
 import type { AdrInfo, TextChunk } from "./sources";
 import type { CodeImport, CodeSymbol } from "./symbols";
@@ -171,7 +171,7 @@ export class KnowledgeStore {
       const symbol = this.db.prepare("INSERT INTO symbols (path, name, kind, line, signature, params, shape) VALUES (?, ?, ?, ?, ?, ?, ?)");
       for (const found of source.symbols ?? []) {
         symbol.run(source.path, found.name, found.kind, found.line, found.signature, found.params, found.shape);
-        chunk.run(`code:${source.path}:${found.line}:${found.name}`, source.path, "code", found.line, found.name, `${found.kind} ${found.name} (${identifierWords(found.name)})\n${found.signature}`);
+        chunk.run(`code:${source.path}:${found.line}:${found.name}`, source.path, "code", found.line, found.name, codeEntryBody({ kind: found.kind, name: found.name, words: identifierWords(found.name), signature: found.signature }));
       }
       const imported = this.db.prepare("INSERT INTO imports (path, spec, names) VALUES (?, ?, ?)");
       for (const entry of source.imports ?? []) imported.run(source.path, entry.spec, JSON.stringify(entry.names));
@@ -332,6 +332,22 @@ export class KnowledgeStore {
     const rows = this.db
       .prepare("SELECT id, kind, path, line, title, substr(body, 1, 200) AS body FROM chunk_rows WHERE kind = ? ORDER BY path, CAST(line AS INTEGER) LIMIT ? OFFSET ?")
       .all(kind, limit, offset) as unknown as StoredEntry[];
+    return { entries: rows.map((row) => ({ ...row, line: Number(row.line) })), total };
+  }
+
+  // The files holding one kind's entries and how many each holds, in path order.
+  files(kind: Exclude<KnowledgeKind, "task">, limit: number): { files: { path: string; count: number }[]; total: number } {
+    const total = (this.db.prepare("SELECT COUNT(DISTINCT path) AS n FROM chunk_rows WHERE kind = ?").get(kind) as { n: number }).n;
+    const files = this.db.prepare("SELECT path, COUNT(*) AS count FROM chunk_rows WHERE kind = ? GROUP BY path ORDER BY path LIMIT ?").all(kind, limit) as { path: string; count: number }[];
+    return { files: files.map((file) => ({ path: file.path, count: Number(file.count) })), total };
+  }
+
+  // One file's entries of one kind, in line order, with the first `bodyChars` of each body.
+  fileEntries(path: string, kind: Exclude<KnowledgeKind, "task">, limit: number, bodyChars = 200): { entries: StoredEntry[]; total: number } {
+    const total = (this.db.prepare("SELECT COUNT(*) AS n FROM chunk_rows WHERE path = ? AND kind = ?").get(path, kind) as { n: number }).n;
+    const rows = this.db
+      .prepare("SELECT id, kind, path, line, title, substr(body, 1, ?) AS body FROM chunk_rows WHERE path = ? AND kind = ? ORDER BY CAST(line AS INTEGER), id LIMIT ?")
+      .all(bodyChars, path, kind, limit) as unknown as StoredEntry[];
     return { entries: rows.map((row) => ({ ...row, line: Number(row.line) })), total };
   }
 

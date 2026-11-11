@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { actionColor, emptyActions, metaPlacement, pageInset, rowBackground, rowFrame, searchWidth, segmentedScrolls, TEXT } from "./rules";
+import { actionColor, emptyActions, HEADING_SPACE, metaPlacement, pageInset, rowBackground, rowFrame, searchWidth, segmentedScrolls, TEXT } from "./rules";
 
 const colors = { surface0: "s0", surface1: "s1", surface2: "s2", border: "b", foreground: "fg", foregroundMuted: "mu", accent: "ac", accentForeground: "af", statusSuccess: "ok", statusWarning: "wa", statusDanger: "da" };
 
@@ -10,8 +10,11 @@ test("every kind of text uses a size from Paseo's own scale", () => {
   for (const kind of Object.values(TEXT)) expect(paseoScale).toContain(kind.fontSize);
 });
 
-test("headings and notes are smaller than rows, reading text matches Paseo's Markdown, the title leads", () => {
-  expect(TEXT.heading.fontSize).toBeLessThan(TEXT.body.fontSize);
+test("headings lead their rows, notes are smaller, reading text matches Paseo's Markdown, the page title leads", () => {
+  expect(TEXT.heading.fontSize).toBeGreaterThan(TEXT.body.fontSize);
+  expect(Number(TEXT.heading.fontWeight)).toBeGreaterThan(Number(TEXT.body.fontWeight));
+  expect(HEADING_SPACE.above).toBeGreaterThanOrEqual(2 * HEADING_SPACE.below);
+  expect(TEXT.page.fontSize).toBeGreaterThan(TEXT.title.fontSize);
   expect(TEXT.note.fontSize).toBeLessThan(TEXT.body.fontSize);
   expect([TEXT.prose.fontSize, TEXT.prose.lineHeight]).toEqual([15, 21]);
   expect(TEXT.title.fontSize).toBeGreaterThan(TEXT.prose.fontSize);

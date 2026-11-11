@@ -5,7 +5,7 @@ import { basename, dirname, join } from "node:path";
 import type { PluginRpcContract } from "@getpaseo/plugin";
 import type { PluginBeforeRequests, PluginHandlerContext, PluginServerContext } from "@getpaseo/plugin/server";
 import { type SnapshotSettings, splitGlobs, type TagSummary } from "../../shared/contracts";
-import { areaRpc, browseKnowledgeRpc, describeProjectRpc, explainAreaRpc, fileConnectionsRpc, generateKnowledgeRpc, KIND_LABELS, knowledgeAgentsNowRpc, knowledgeChangesRpc, knowledgeOverviewRpc, knowledgePulseRpc, knowledgeUsageRpc, projectForWorkspaceRpc, listProjectsRpc, listTasksRpc, memoriseStatusRpc, pinEntryRpc, projectFactsRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc, setProjectEnabledRpc } from "../../shared/knowledge";
+import { areaRpc, browseKnowledgeRpc, fileEntriesRpc, knowledgeFilesRpc, knowledgeIntroRpc, describeProjectRpc, explainAreaRpc, fileConnectionsRpc, generateKnowledgeRpc, KIND_LABELS, knowledgeAgentsNowRpc, knowledgeChangesRpc, knowledgeOverviewRpc, knowledgePulseRpc, knowledgeUsageRpc, projectForWorkspaceRpc, listProjectsRpc, listTasksRpc, memoriseStatusRpc, pinEntryRpc, projectFactsRpc, readKnowledgeRpc, reindexRpc, searchKnowledgeAttachmentsRpc, searchKnowledgeRpc, setProjectEnabledRpc } from "../../shared/knowledge";
 import { addLinkRpc, LINK_WORKSPACE_ENV, newLinkedChatRpc, attachedFilesAvailableRpc, removeLinkRpc, searchAttachedFilesRpc, workspaceFilesRpc, workspaceLinkCountRpc, type WorkspaceLinksPayload, workspaceLinksRpc } from "../../shared/linked-projects";
 import type { PaseoApi } from "../paseo-types";
 import { readAgent } from "../sources";
@@ -1274,6 +1274,18 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   handleOn(browseKnowledgeRpc, async ({ repoKey, kind, limit, offset }, { paseo }) => {
     remember(paseo);
     return service.browse(await project(repoKey), kind, limit, offset);
+  });
+  handleOn(knowledgeFilesRpc, async ({ repoKey, kind }, { paseo }) => {
+    remember(paseo);
+    return service.files(await project(repoKey), kind);
+  });
+  handleOn(fileEntriesRpc, async ({ repoKey, path, kind }, { paseo }) => {
+    remember(paseo);
+    return service.fileEntries(await project(repoKey), path, kind);
+  });
+  handleOn(knowledgeIntroRpc, async ({ repoKey }, { paseo }) => {
+    remember(paseo);
+    return { intro: await service.intro(await project(repoKey)) };
   });
   handleOn(reindexRpc, async ({ repoKey }, { paseo }) => {
     remember(paseo);

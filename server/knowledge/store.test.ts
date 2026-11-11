@@ -156,6 +156,18 @@ describe("KnowledgeStore", () => {
     expect(store.tasks(10)).toHaveLength(1);
   });
 
+  it("lists the files holding a kind with their counts, and one file's entries in line order", () => {
+    store.replaceSource({ path: "docs/b.md", kind: "doc", blob: "1", chunks: [{ title: "B", body: "b", line: 1 }] });
+    store.replaceSource({ path: "docs/a.md", kind: "doc", blob: "2", chunks: [{ title: "Later", body: "two", line: 9 }, { title: "First", body: "one", line: 2 }] });
+    store.replaceSource({ path: "src/q.ts", kind: "code", blob: "3", chunks: [], symbols: [{ name: "parseItemRef", kind: "function", line: 4, signature: "function parseItemRef(ref: string) {", params: 1, shape: "s" }] });
+    expect(store.files("doc", 10)).toEqual({ total: 2, files: [{ path: "docs/a.md", count: 2 }, { path: "docs/b.md", count: 1 }] });
+    expect(store.files("doc", 1)).toEqual({ total: 2, files: [{ path: "docs/a.md", count: 2 }] });
+    expect(store.fileEntries("docs/a.md", "doc", 10)).toMatchObject({ total: 2, entries: [{ title: "First", line: 2 }, { title: "Later", line: 9 }] });
+    expect(store.fileEntries("docs/a.md", "code", 10)).toEqual({ total: 0, entries: [] });
+    // A code entry's body is the shared format: its search line, then the signature.
+    expect(store.fileEntries("src/q.ts", "code", 10).entries[0].body).toBe("function parseItemRef (parse item ref)\nfunction parseItemRef(ref: string) {");
+  });
+
   it("keeps search in step with a file's sections as they are replaced and removed", () => {
     store.replaceSource({ path: "a.md", kind: "doc", blob: "1", chunks: [{ title: "Queue", body: "retry budget", line: 1 }] });
     store.replaceSource({ path: "b.md", kind: "doc", blob: "1", chunks: [{ title: "Queue", body: "dead letters", line: 1 }] });

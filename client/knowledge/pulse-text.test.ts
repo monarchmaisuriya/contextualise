@@ -1,33 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { agentsTile, attentionRow, attentionRows, barHeights, changesTile, hotspotMeta, riskTile, workTile } from "./pulse-text";
+import { attentionRow, attentionRows, barHeights, hotspotMeta, periodSummary } from "./pulse-text";
 
-describe("tiles", () => {
-  it("says agent work as done and failed, and teaches when there is none", () => {
-    expect(workTile({ done: 12, failed: 2, canceled: 1 })).toEqual({ value: "12", sentence: "tasks done · 2 failed", tone: "warning" });
-    expect(workTile({ done: 3, failed: 0, canceled: 0 })).toEqual({ value: "3", sentence: "tasks done", tone: "normal" });
-    expect(workTile({ done: 0, failed: 0, canceled: 0 })).toEqual({ value: "0", sentence: "Agents' finished work shows here", tone: "muted" });
+describe("periodSummary", () => {
+  const changes = { available: true, problem: null, commits: 1, commitsTruncated: false, filesChanged: 192, filesTruncated: false, untested: 1, hotspots: 5, analysed: true };
+  const agents = { available: true, problem: null, running: 0, needsYou: 0 };
+  const idle = { done: 0, failed: 0, canceled: 0 };
+
+  it("says the period in plain sentences: changes, agent work, agents now, risk", () => {
+    expect(periodSummary({ days: 7, changes, work: idle, agents })).toBe("Last 7 days: 1 commit touching 192 files; no agent work. No agents running now. 1 often-changed file has no tests.");
+    expect(periodSummary({ days: 30, changes: { ...changes, commits: 20_000, commitsTruncated: true, filesChanged: 2, untested: 0 }, work: { done: 3, failed: 1, canceled: 0 }, agents: { ...agents, running: 2, needsYou: 1 } })).toBe(
+      "Last 30 days: 20,000+ commits touching 2 files; 3 agent tasks finished, 1 failed. 2 agents running now, 1 needs you.",
+    );
   });
 
-  it("says commits and files, marks a count cut at git's limit, and teaches outside git", () => {
-    expect(changesTile({ available: true, problem: null, commits: 48, commitsTruncated: false, filesChanged: 31, filesTruncated: false })).toEqual({ value: "48", sentence: "commits · 31 files", tone: "normal" });
-    expect(changesTile({ available: true, problem: null, commits: 20000, commitsTruncated: true, filesChanged: 900, filesTruncated: true })).toEqual({ value: "20,000+", sentence: "commits · 900+ files", tone: "normal" });
-    expect(changesTile({ available: false, problem: null, commits: 0, commitsTruncated: false, filesChanged: 0, filesTruncated: false })).toEqual({ value: "–", sentence: "Change history needs git", tone: "muted" });
-    expect(changesTile({ available: false, problem: "Could not read the change history: boom", commits: 0, commitsTruncated: false, filesChanged: 0, filesTruncated: false }).sentence).toBe("Could not read the change history: boom");
-  });
-
-  it("leads the agents tile with those that need M, then those running", () => {
-    const live = { available: true, problem: null };
-    expect(agentsTile({ ...live, running: 3, needsYou: 1, finished: 0 })).toEqual({ value: "1", sentence: "need you · 3 running", tone: "warning" });
-    expect(agentsTile({ ...live, running: 2, needsYou: 0, finished: 1 })).toEqual({ value: "2", sentence: "running · 1 finished", tone: "normal" });
-    expect(agentsTile({ ...live, running: 0, needsYou: 0, finished: 0 })).toEqual({ value: "0", sentence: "agents running", tone: "muted" });
-    expect(agentsTile({ available: false, problem: "Could not read Paseo's agents: down", running: 0, needsYou: 0, finished: 0 })).toEqual({ value: "–", sentence: "Could not read Paseo's agents: down", tone: "muted" });
-  });
-
-  it("counts hot files without tests, and says when the languages are not analysed", () => {
-    expect(riskTile({ untested: 3, hotspots: 5, analysed: true })).toEqual({ value: "3", sentence: "hot files without tests", tone: "warning" });
-    expect(riskTile({ untested: 0, hotspots: 5, analysed: true })).toEqual({ value: "0", sentence: "hot files without tests", tone: "normal" });
-    expect(riskTile({ untested: 0, hotspots: 0, analysed: true })).toEqual({ value: "0", sentence: "code files changed lately", tone: "muted" });
-    expect(riskTile({ untested: 0, hotspots: 0, analysed: false })).toEqual({ value: "–", sentence: "Risk needs Python, TypeScript, JavaScript, or Go code", tone: "muted" });
+  it("says only what has arrived, and why a part is missing", () => {
+    expect(periodSummary({ days: 7 })).toBe("");
+    expect(periodSummary({ days: 7, work: idle })).toBe("Last 7 days: no agent work.");
+    expect(periodSummary({ days: 7, work: { done: 0, failed: 2, canceled: 1 } })).toBe("Last 7 days: 2 agent tasks failed, 1 canceled.");
+    // An agent stopped with an error needs M without running.
+    expect(periodSummary({ days: 7, agents: { ...agents, needsYou: 1 } })).toBe("No agents running now, 1 needs you.");
+    // A problem's own text is kept as written, full stops and paths included.
+    expect(periodSummary({ days: 7, changes: { ...changes, available: false, problem: "Could not read ../repo." } })).toBe("Could not read ../repo.");
+    expect(periodSummary({ days: 7, changes: { ...changes, available: false, problem: null }, agents: { ...agents, available: false, problem: "Could not read Paseo's agents" } })).toBe("Change history needs git. Could not read Paseo's agents.");
+    expect(periodSummary({ days: 7, changes: { ...changes, commits: 0, filesChanged: 0, analysed: false } })).toBe("Last 7 days: no commits.");
   });
 });
 

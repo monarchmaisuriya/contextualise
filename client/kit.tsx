@@ -17,8 +17,11 @@ export function useStyles(theme: Theme, compact: boolean) {
   return useMemo(
     () => ({
       compact,
+      page: { ...TEXT.page, color: theme.colors.foreground },
       title: { ...TEXT.title, color: theme.colors.foreground },
-      heading: { ...TEXT.heading, color: theme.colors.foregroundMuted },
+      heading: { ...TEXT.heading, color: theme.colors.foreground },
+      // A heading's count, quieter than the heading it follows.
+      count: { ...TEXT.body, color: theme.colors.foregroundMuted },
       body: { ...TEXT.body, color: theme.colors.foreground },
       muted: { ...TEXT.body, color: theme.colors.foregroundMuted },
       prose: { ...TEXT.prose, color: theme.colors.foreground },
@@ -54,7 +57,7 @@ export type Styles = ReturnType<typeof useStyles>;
 export { plural };
 export { Button, Chip, CopyButton, IconButton, SearchField, Segmented, Toggle } from "./parts/controls";
 export { ListRow, type ListRowProps, Page, Prose, SectionHeader } from "./parts/list";
-export { DayBars, Tile } from "./parts/tiles";
+export { DayBars } from "./parts/tiles";
 export { ActionSheet, ReaderSheet, type ReaderSheetProps, type SheetAction, StateView, useActionSheet, type ViewState } from "./parts/sheets";
 
 export function summary(tag: TagSummary): string {

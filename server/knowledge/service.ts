@@ -1,5 +1,5 @@
 import { posix } from "node:path";
-import { type Busy, busySchema, type FileConnections, type KnowledgeEntry, type KnowledgeKind, type ProjectFacts, type RelatedMemory, type SearchHit } from "../../shared/knowledge";
+import { type Busy, busySchema, FILE_ENTRIES_MAX, type FileConnections, FILES_MAX, type FileSummary, type KnowledgeEntry, type KnowledgeKind, type ProjectFacts, type RelatedMemory, type SearchHit } from "../../shared/knowledge";
 import type { KnowledgeBase } from "./base";
 import { AREA_PREFIX, areaOf, factsAreCurrent, factsFor, goPackage, isTestFile } from "./facts";
 import type { ProjectRoot } from "./git";
@@ -346,10 +346,51 @@ export class KnowledgeService {
   async browse(repo: ProjectRoot, kind: Exclude<KnowledgeKind, "task">, limit: number, offset: number): Promise<{ hits: SearchHit[]; total: number }> {
     const store = await this.current(repo);
     const { entries, total } = store.browse(kind, limit, offset);
-    const hits = await this.withRelated(
+    return { hits: await this.listed(repo, store, entries), total };
+  }
+
+  async files(repo: ProjectRoot, kind: Exclude<KnowledgeKind, "task">): Promise<{ files: FileSummary[]; total: number }> {
+    return (await this.current(repo)).files(kind, FILES_MAX);
+  }
+
+  async fileEntries(repo: ProjectRoot, path: string, kind: Exclude<KnowledgeKind, "task">): Promise<{ hits: SearchHit[]; total: number }> {
+    const store = await this.current(repo);
+    const { entries, total } = store.fileEntries(path, kind, FILE_ENTRIES_MAX);
+    return { hits: await this.listed(repo, store, entries), total };
+  }
+
+  // The README's first section with prose, standing in for a description.
+  async intro(repo: ProjectRoot): Promise<{ id: string; title: string } | null> {
+    const store = await this.current(repo);
+    // Whole sections: a logo and badge row cut short would leave a tag's words that read as prose.
+    const found = store.fileEntries("README.md", "doc", FILE_ENTRIES_MAX, INTRO_SECTION_CHARS).entries.find((entry) => hasProse(entry.body));
+    return found ? { id: found.id, title: found.title } : null;
+  }
+
+  private listed(repo: ProjectRoot, store: KnowledgeStore, entries: { id: string; kind: KnowledgeKind; path: string; line: number; title: string; body: string }[]): Promise<SearchHit[]> {
+    return this.withRelated(
       repo.key,
       entries.map(({ body, ...entry }) => ({ ...entry, snippet: body.replace(/\s+/g, " ").trim(), needsCheck: entry.kind === "adr" && store.sourceStatus(entry.path)?.status === "superseded" })),
     );
-    return { hits, total };
   }
+}
+
+// Enough of a README section to judge it; an intro longer than this is prose.
+const INTRO_SECTION_CHARS = 20_000;
+
+// Whether a section says something in words: HTML tags, images and badges (inline or by reference),
+// links' targets, bare addresses, headings, and code are set aside, and at least four words must be
+// left. A tag or link cut off at the end is set aside too.
+export function hasProse(body: string): boolean {
+  const text = body
+    .replace(/```[\s\S]*?(```|$)/g, " ")
+    .replace(/<[^>]*(>|$)/g, " ")
+    .replace(/!\[[^\]]*\](\([^)]*(\)|$)|\[[^\]]*(\]|$))/g, " ")
+    .replace(/\]\([^)]*(\)|$)/g, "] ")
+    .replace(/\]\[[^\]]*(\]|$)/g, "] ")
+    .replace(/^\[[^\]]+\]:\s*\S+.*$/gm, " ")
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/[[\]]/g, " ")
+    .replace(/^#+ .*$/gm, " ");
+  return (text.match(/\p{L}{2,}/gu) ?? []).length >= 4;
 }
