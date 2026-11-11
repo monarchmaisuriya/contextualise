@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -153,6 +154,67 @@ describe("KnowledgeStore", () => {
     expect(store.browse("doc", 10, 0).total).toBe(0);
     expect(store.browse("brief", 10, 0).total).toBe(1);
     expect(store.tasks(10)).toHaveLength(1);
+  });
+
+  it("keeps search in step with a file's sections as they are replaced and removed", () => {
+    store.replaceSource({ path: "a.md", kind: "doc", blob: "1", chunks: [{ title: "Queue", body: "retry budget", line: 1 }] });
+    store.replaceSource({ path: "b.md", kind: "doc", blob: "1", chunks: [{ title: "Queue", body: "dead letters", line: 1 }] });
+    store.replaceSource({ path: "a.md", kind: "doc", blob: "2", chunks: [{ title: "Queue", body: "backoff only", line: 1 }] });
+    expect(store.search("retry", { kinds: [], limit: 10 })).toEqual([]);
+    expect(store.search("backoff", { kinds: [], limit: 10 }).map((hit) => hit.path)).toEqual(["a.md"]);
+    expect(store.search("queue", { kinds: [], limit: 10 }).map((hit) => hit.path).sort()).toEqual(["a.md", "b.md"]);
+    store.removeSource("a.md");
+    expect(store.search("queue", { kinds: [], limit: 10 }).map((hit) => hit.path)).toEqual(["b.md"]);
+    expect(store.outline("a.md")).toEqual([]);
+  });
+
+  // A removal that reads every section of the project held the plugin's only thread for minutes in a
+  // large index; each lookup by path, id or kind must use an index.
+  it("finds and removes a file's sections through an index, never by reading every section", () => {
+    const db = new DatabaseSync(join(dir, "index.sqlite"));
+    const plan = (sql: string) => (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all("x") as { detail: string }[]).map((row) => row.detail).join("; ");
+    try {
+      expect(plan("DELETE FROM chunk_rows WHERE path = ?")).toMatch(/SEARCH chunk_rows USING (COVERING )?INDEX chunk_rows_by_path/);
+      expect(plan("SELECT body FROM chunk_rows WHERE id = ?")).toMatch(/SEARCH chunk_rows USING (COVERING )?INDEX chunk_rows_by_id/);
+      expect(plan("SELECT COUNT(*) FROM chunk_rows WHERE kind = ?")).toMatch(/SEARCH chunk_rows USING (COVERING )?INDEX chunk_rows_by_kind/);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("moves an index from schema 1 on: written entries stay, entries read from files are read again", () => {
+    const file = join(dir, "old.sqlite");
+    const old = new DatabaseSync(file);
+    old.exec(`
+      CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE files (path TEXT PRIMARY KEY, blob TEXT NOT NULL);
+      CREATE TABLE sources (path TEXT PRIMARY KEY, kind TEXT NOT NULL, blob TEXT NOT NULL, status TEXT, superseded_by TEXT);
+      CREATE TABLE symbols (path TEXT NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL, line INTEGER NOT NULL, signature TEXT NOT NULL, params INTEGER NOT NULL, shape TEXT NOT NULL);
+      CREATE TABLE imports (path TEXT NOT NULL, spec TEXT NOT NULL, names TEXT NOT NULL);
+      CREATE TABLE file_links (from_path TEXT NOT NULL, to_path TEXT NOT NULL, kind TEXT NOT NULL);
+      CREATE VIRTUAL TABLE chunks USING fts5(id UNINDEXED, path UNINDEXED, kind UNINDEXED, line UNINDEXED, title, body, tokenize = 'unicode61');
+      CREATE TABLE tasks (id TEXT PRIMARY KEY, ended_at TEXT NOT NULL, record TEXT NOT NULL);
+      CREATE VIRTUAL TABLE tasks_text USING fts5(id UNINDEXED, title, request, files, tokenize = 'unicode61');
+      INSERT INTO meta VALUES ('schema', '1'), ('sourcesRevision', '7');
+      INSERT INTO sources VALUES ('(brief)', 'brief', 'b', NULL, NULL), ('README.md', 'doc', 'r', NULL, NULL);
+      INSERT INTO files VALUES ('README.md', 'r');
+      INSERT INTO chunks VALUES ('brief:(brief):1', '(brief)', 'brief', 1, 'Brief', 'Orders service overview'), ('doc:README.md:1', 'README.md', 'doc', 1, 'Readme', 'Orders setup');
+    `);
+    old.close();
+    const upgraded = new KnowledgeStore(file);
+    try {
+      expect(upgraded.getMeta("schema")).toBe("2");
+      expect(upgraded.read("brief:(brief):1")).toMatchObject({ path: "(brief)", body: "Orders service overview" });
+      expect(upgraded.search("orders", { kinds: [], limit: 10 }).map((hit) => hit.path)).toEqual(["(brief)"]);
+      expect(upgraded.indexedSources().has("README.md")).toBe(false);
+      expect(upgraded.fileBlobs().size).toBe(0);
+      expect(upgraded.sourcesRevision()).toBe("8");
+    } finally {
+      upgraded.close();
+    }
+    const reopened = new KnowledgeStore(file);
+    expect(reopened.read("brief:(brief):1")).not.toBeNull();
+    reopened.close();
   });
 
   it("splits identifiers into words", () => {

@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, sy
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { currentBlobs, indexRepo, trackedBlobs } from "./indexer";
+import { currentBlobs, indexRepo, trackedBlobs, workSlicer } from "./indexer";
 import { KnowledgeStore } from "./store";
 import { SymbolReader } from "./symbols";
 
@@ -63,6 +63,22 @@ describe("indexRepo", () => {
     expect(changes.find((change) => change.path === "docs/adr/0001-use-sqlite.md")).toMatchObject({ adrBefore: { status: "accepted" }, adrAfter: { status: "superseded", supersededBy: "0002-use-postgres.md" } });
     expect(changes.find((change) => change.path === "ARCHITECTURE.md")).toMatchObject({ deleted: true });
     expect(store.titles("architecture")).toEqual([]);
+  });
+
+  // Indexing shares the plugin's thread with Paseo's hooks: every file it lists, removes, or reads
+  // is a point where it can hand the thread back.
+  it("can pause before every file it lists, removes, or reads", async () => {
+    await index();
+    for (let i = 0; i < 50; i += 1) store.replaceSource({ path: `gone/${i}.md`, kind: "doc", blob: "x", chunks: [{ title: "Gone", body: "gone", line: 1 }] });
+    write("docs/new.md", "# New\n");
+    commit();
+    let pauses = 0;
+    await indexRepo({ key: "github.com/acme/api", top, git: true }, store, { symbols, codeSymbols: true, pause: async () => void (pauses += 1) });
+    const listed = 5;
+    const indexedBefore = 3 + 50;
+    const wanted = 4;
+    expect(pauses).toBe(listed + indexedBefore + wanted);
+    expect(store.indexedSources().has("gone/0.md")).toBe(false);
   });
 
   it("redacts secret-shaped text before storing it", async () => {
@@ -137,6 +153,30 @@ describe("currentBlobs in a folder outside git", () => {
     expect(blobs.get("app/src/main.py")).toMatch(/^stat:\d+:\d+$/);
   });
 
+  // A scratch folder held 8 copies of one repository; indexing every copy passed the file limit, and
+  // each new copy moved the cut, so thousands of files were read again.
+  it("indexes each repository once, from its copy nearest the top, whatever other copies exist", async () => {
+    const repo = (dir: string, remote: string | null) => {
+      write(`${dir}/main.py`, "def main():\n    pass\n");
+      execFileSync("git", ["init", "-q", join(folder, dir)]);
+      if (remote) execFileSync("git", ["-C", join(folder, dir), "remote", "add", "origin", remote]);
+      execFileSync("git", ["-C", join(folder, dir), "add", "-A"]);
+      execFileSync("git", ["-C", join(folder, dir), "-c", "user.email=a@example.com", "-c", "user.name=a", "commit", "-q", "-m", "one"]);
+    };
+    repo("backend", "git@github.com:acme/backend.git");
+    repo("copies/backend-clone", "https://github.com/acme/backend");
+    repo("other", "git@github.com:acme/other.git");
+    repo("loose-a", null);
+    repo("loose-b", null);
+    execFileSync("git", ["-C", join(folder, "backend"), "worktree", "add", "-q", join(folder, "worktrees", "backend-feature"), "-b", "feature"]);
+    const listed = async () => [...(await currentBlobs({ key: "folder/work", top: folder, git: false })).keys()].sort();
+    const expected = ["backend/main.py", "loose-a/main.py", "loose-b/main.py", "other/main.py"];
+    expect(await listed()).toEqual(expected);
+    // Another copy, even one whose name sorts first, changes nothing.
+    repo("aaa/backend-again", "git@github.com:acme/backend.git");
+    expect(await listed()).toEqual(expected);
+  });
+
   it("never runs a command a repository's own git config names (fsmonitor, clean filter)", async () => {
     const marker = join(folder, "ran");
     write("hook.sh", `#!/bin/sh\necho ran >> "${marker}"\ncat\n`);
@@ -174,5 +214,17 @@ describe("currentBlobs in a folder outside git", () => {
     const blobs = await currentBlobs({ key: "folder/work", top: folder, git: false });
     expect([...blobs.keys()]).toEqual(["notes.md"]);
     expect(logged).toHaveBeenCalledWith(expect.stringContaining("broken"));
+  });
+});
+
+describe("workSlicer", () => {
+  it("hands the thread back once its slice of work has run, and not before", async () => {
+    const order: string[] = [];
+    setImmediate(() => order.push("waiting call"));
+    await workSlicer(60_000)();
+    order.push("slice not used up");
+    await workSlicer(0)();
+    order.push("after the pause");
+    expect(order).toEqual(["slice not used up", "waiting call", "after the pause"]);
   });
 });

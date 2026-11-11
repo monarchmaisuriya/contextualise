@@ -23,7 +23,41 @@ export interface StoredEntry extends Omit<StoredHit, "snippet"> {
 export const taskRecordSchema = taskSummarySchema.omit({ needsCheck: true }).extend({ citations: z.array(z.object({ path: z.string(), blob: z.string() })) });
 export type TaskRecord = Omit<TaskSummary, "needsCheck"> & { citations: { path: string; blob: string }[] };
 
-const SCHEMA_VERSION = "1";
+// 2: sections live in chunk_rows, indexed by path, id and kind; the full-text table only indexes them.
+const SCHEMA_VERSION = "2";
+const SCHEMA = `
+  CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS files (path TEXT PRIMARY KEY, blob TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS sources (path TEXT PRIMARY KEY, kind TEXT NOT NULL, blob TEXT NOT NULL, status TEXT, superseded_by TEXT);
+  CREATE TABLE IF NOT EXISTS symbols (path TEXT NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL, line INTEGER NOT NULL, signature TEXT NOT NULL, params INTEGER NOT NULL, shape TEXT NOT NULL);
+  CREATE INDEX IF NOT EXISTS symbols_by_path ON symbols (path);
+  CREATE TABLE IF NOT EXISTS imports (path TEXT NOT NULL, spec TEXT NOT NULL, names TEXT NOT NULL);
+  CREATE INDEX IF NOT EXISTS imports_by_path ON imports (path);
+  CREATE TABLE IF NOT EXISTS file_links (from_path TEXT NOT NULL, to_path TEXT NOT NULL, kind TEXT NOT NULL);
+  CREATE INDEX IF NOT EXISTS file_links_from ON file_links (from_path, kind);
+  CREATE INDEX IF NOT EXISTS file_links_to ON file_links (to_path, kind);
+  -- A file's sections and code symbols. Reads and deletes by path, id or kind use these indexes; a
+  -- full-text table cannot index such columns, so finding them there reads every row.
+  CREATE TABLE IF NOT EXISTS chunk_rows (n INTEGER PRIMARY KEY, id TEXT NOT NULL, path TEXT NOT NULL, kind TEXT NOT NULL, line INTEGER NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL);
+  CREATE INDEX IF NOT EXISTS chunk_rows_by_path ON chunk_rows (path);
+  CREATE INDEX IF NOT EXISTS chunk_rows_by_id ON chunk_rows (id);
+  CREATE INDEX IF NOT EXISTS chunk_rows_by_kind ON chunk_rows (kind);
+  -- The words of chunk_rows, kept in step by the triggers below (SQLite FTS5 "external content").
+  -- Only searches (MATCH) read it; everything else reads chunk_rows.
+  CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(id UNINDEXED, path UNINDEXED, kind UNINDEXED, line UNINDEXED, title, body, tokenize = 'unicode61', content = 'chunk_rows', content_rowid = 'n');
+  CREATE TRIGGER IF NOT EXISTS chunk_rows_added AFTER INSERT ON chunk_rows BEGIN
+    INSERT INTO chunks (rowid, id, path, kind, line, title, body) VALUES (new.n, new.id, new.path, new.kind, new.line, new.title, new.body);
+  END;
+  CREATE TRIGGER IF NOT EXISTS chunk_rows_removed AFTER DELETE ON chunk_rows BEGIN
+    INSERT INTO chunks (chunks, rowid, id, path, kind, line, title, body) VALUES ('delete', old.n, old.id, old.path, old.kind, old.line, old.title, old.body);
+  END;
+  CREATE TRIGGER IF NOT EXISTS chunk_rows_changed AFTER UPDATE ON chunk_rows BEGIN
+    INSERT INTO chunks (chunks, rowid, id, path, kind, line, title, body) VALUES ('delete', old.n, old.id, old.path, old.kind, old.line, old.title, old.body);
+    INSERT INTO chunks (rowid, id, path, kind, line, title, body) VALUES (new.n, new.id, new.path, new.kind, new.line, new.title, new.body);
+  END;
+  CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, ended_at TEXT NOT NULL, record TEXT NOT NULL);
+  CREATE VIRTUAL TABLE IF NOT EXISTS tasks_text USING fts5(id UNINDEXED, title, request, files, tokenize = 'unicode61');
+`;
 export { BRIEF_ID } from "../../shared/knowledge";
 
 // Splits camelCase and snake_case so "parseItemRef" is found by "item" and "parse ref".
@@ -53,25 +87,28 @@ export class KnowledgeStore {
 
   constructor(file: string) {
     this.db = new DatabaseSync(file);
-    this.db.exec(`
-      PRAGMA journal_mode = WAL;
-      CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS files (path TEXT PRIMARY KEY, blob TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS sources (path TEXT PRIMARY KEY, kind TEXT NOT NULL, blob TEXT NOT NULL, status TEXT, superseded_by TEXT);
-      CREATE TABLE IF NOT EXISTS symbols (path TEXT NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL, line INTEGER NOT NULL, signature TEXT NOT NULL, params INTEGER NOT NULL, shape TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS symbols_by_path ON symbols (path);
-      CREATE TABLE IF NOT EXISTS imports (path TEXT NOT NULL, spec TEXT NOT NULL, names TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS imports_by_path ON imports (path);
-      CREATE TABLE IF NOT EXISTS file_links (from_path TEXT NOT NULL, to_path TEXT NOT NULL, kind TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS file_links_from ON file_links (from_path, kind);
-      CREATE INDEX IF NOT EXISTS file_links_to ON file_links (to_path, kind);
-      CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(id UNINDEXED, path UNINDEXED, kind UNINDEXED, line UNINDEXED, title, body, tokenize = 'unicode61');
-      CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, ended_at TEXT NOT NULL, record TEXT NOT NULL);
-      CREATE VIRTUAL TABLE IF NOT EXISTS tasks_text USING fts5(id UNINDEXED, title, request, files, tokenize = 'unicode61');
-    `);
+    this.db.exec("PRAGMA journal_mode = WAL; CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
     const version = this.getMeta("schema");
-    if (version !== null && version !== SCHEMA_VERSION) throw new Error(`Knowledge index ${file} has schema ${version}; expected ${SCHEMA_VERSION}`);
+    if (version === "1") this.upgradeFromSchema1();
+    else if (version !== null && version !== SCHEMA_VERSION) throw new Error(`Knowledge index ${file} has schema ${version}; expected ${SCHEMA_VERSION}`);
+    this.db.exec(SCHEMA);
     this.setMeta("schema", SCHEMA_VERSION);
+  }
+
+  // Schema 1 kept sections in the full-text table itself, so removing one file's sections read every
+  // section of the project (46 ms a file in a 236,000-section index). The written entries (the brief,
+  // area notes) move to chunk_rows; entries read from files are dropped and read again by the next
+  // refresh, which yields to other work, rather than copied here while nothing else can run.
+  private upgradeFromSchema1(): void {
+    this.transaction(() => {
+      const written = this.db.prepare("SELECT id, path, kind, line, title, body FROM chunks WHERE path LIKE '(%'").all() as { id: string; path: string; kind: string; line: number; title: string; body: string }[];
+      this.db.exec("DROP TABLE chunks");
+      this.db.exec(SCHEMA);
+      const insert = this.db.prepare("INSERT INTO chunk_rows (id, path, kind, line, title, body) VALUES (?, ?, ?, ?, ?, ?)");
+      for (const row of written) insert.run(row.id, row.path, row.kind, row.line, row.title, row.body);
+      this.clearFileEntries();
+      this.setMeta("schema", SCHEMA_VERSION);
+    });
   }
 
   close(): void {
@@ -122,7 +159,7 @@ export class KnowledgeStore {
     this.transaction(() => {
       this.deleteSource(source.path);
       this.db.prepare("INSERT INTO sources (path, kind, blob, status, superseded_by) VALUES (?, ?, ?, ?, ?)").run(source.path, source.kind, source.blob, source.adr?.status ?? null, source.adr?.supersededBy ?? null);
-      const chunk = this.db.prepare("INSERT INTO chunks (id, path, kind, line, title, body) VALUES (?, ?, ?, ?, ?, ?)");
+      const chunk = this.db.prepare("INSERT INTO chunk_rows (id, path, kind, line, title, body) VALUES (?, ?, ?, ?, ?, ?)");
       // A long section is stored in several parts that start on the same line; the first keeps the
       // plain id, later ones get #2, #3, so every part can be read and pinned on its own.
       const parts = new Map<number, number>();
@@ -142,7 +179,7 @@ export class KnowledgeStore {
   }
 
   private deleteSource(path: string): void {
-    for (const table of ["sources", "chunks", "symbols", "imports"]) this.db.prepare(`DELETE FROM ${table} WHERE path = ?`).run(path);
+    for (const table of ["sources", "chunk_rows", "symbols", "imports"]) this.db.prepare(`DELETE FROM ${table} WHERE path = ?`).run(path);
     if (!path.startsWith("(")) this.bumpSourcesRevision();
   }
 
@@ -182,8 +219,8 @@ export class KnowledgeStore {
   documents(limit: number): { id: string; kind: KnowledgeKind; path: string; title: string }[] {
     return this.db
       .prepare(
-        `SELECT c.id AS id, c.kind AS kind, c.path AS path, c.title AS title FROM chunks c JOIN sources s ON s.path = c.path
-         WHERE s.kind NOT IN ('code', 'brief') AND CAST(c.line AS INTEGER) = (SELECT MIN(CAST(line AS INTEGER)) FROM chunks WHERE path = s.path)
+        `SELECT c.id AS id, c.kind AS kind, c.path AS path, c.title AS title FROM chunk_rows c JOIN sources s ON s.path = c.path
+         WHERE s.kind NOT IN ('code', 'brief') AND CAST(c.line AS INTEGER) = (SELECT MIN(CAST(line AS INTEGER)) FROM chunk_rows WHERE path = s.path)
          ORDER BY s.path LIMIT ?`,
       )
       .all(limit) as { id: string; kind: KnowledgeKind; path: string; title: string }[];
@@ -197,7 +234,7 @@ export class KnowledgeStore {
     return this.db
       .prepare(
         `SELECT s.path AS path, s.status AS status, s.superseded_by AS supersededBy,
-          COALESCE((SELECT title FROM chunks c WHERE c.path = s.path ORDER BY CAST(c.line AS INTEGER) LIMIT 1), s.path) AS title
+          COALESCE((SELECT title FROM chunk_rows c WHERE c.path = s.path ORDER BY CAST(c.line AS INTEGER) LIMIT 1), s.path) AS title
          FROM sources s WHERE s.kind = 'adr' ORDER BY s.path`,
       )
       .all() as { path: string; title: string; status: string | null; supersededBy: string | null }[];
@@ -206,13 +243,13 @@ export class KnowledgeStore {
   // The first heading of each file of a kind, for the project map.
   titles(kind: KnowledgeKind): { path: string; title: string }[] {
     return this.db
-      .prepare(`SELECT s.path AS path, COALESCE((SELECT title FROM chunks c WHERE c.path = s.path ORDER BY CAST(c.line AS INTEGER) LIMIT 1), s.path) AS title FROM sources s WHERE s.kind = ? ORDER BY s.path`)
+      .prepare(`SELECT s.path AS path, COALESCE((SELECT title FROM chunk_rows c WHERE c.path = s.path ORDER BY CAST(c.line AS INTEGER) LIMIT 1), s.path) AS title FROM sources s WHERE s.kind = ? ORDER BY s.path`)
       .all(kind) as { path: string; title: string }[];
   }
 
   counts(): Record<KnowledgeKind, number> {
     const counts = Object.fromEntries(KNOWLEDGE_KINDS.map((kind) => [kind, 0])) as Record<KnowledgeKind, number>;
-    for (const row of this.db.prepare("SELECT kind, COUNT(*) AS n FROM chunks GROUP BY kind").all() as { kind: KnowledgeKind; n: number }[]) counts[row.kind] = row.n;
+    for (const row of this.db.prepare("SELECT kind, COUNT(*) AS n FROM chunk_rows GROUP BY kind").all() as { kind: KnowledgeKind; n: number }[]) counts[row.kind] = row.n;
     counts.task = (this.db.prepare("SELECT COUNT(*) AS n FROM tasks").get() as { n: number }).n;
     return counts;
   }
@@ -232,18 +269,17 @@ export class KnowledgeStore {
 
   // A file's sections or code symbols in line order.
   outline(path: string): { id: string; kind: KnowledgeKind; title: string; line: number }[] {
-    const rows = this.db.prepare("SELECT id, kind, title, line FROM chunks WHERE path = ?").all(path) as unknown as { id: string; kind: KnowledgeKind; title: string; line: number }[];
+    const rows = this.db.prepare("SELECT id, kind, title, line FROM chunk_rows WHERE path = ?").all(path) as unknown as { id: string; kind: KnowledgeKind; title: string; line: number }[];
     return rows.map((row) => ({ ...row, line: Number(row.line) })).sort((a, b) => a.line - b.line);
   }
 
-  // Every document of these kinds with its sections in file order, by path. One pass over the
-  // sections: their path and kind are not indexed, so a lookup per document would read them all each
-  // time. A long section is stored in parts under one line, kept in the order they were written.
+  // Every document of these kinds with its sections in file order, by path. A long section is stored
+  // in parts under one line, kept in the order they were written.
   documentsOf(kinds: readonly KnowledgeKind[]): Map<string, { kind: KnowledgeKind; sections: { title: string; body: string }[] }> {
     const documents = new Map<string, { kind: KnowledgeKind; sections: { title: string; body: string }[] }>();
     if (kinds.length === 0) return documents;
     const rows = this.db
-      .prepare(`SELECT path, kind, title, body FROM chunks WHERE kind IN (${kinds.map(() => "?").join(", ")}) ORDER BY path, CAST(line AS INTEGER), rowid`)
+      .prepare(`SELECT path, kind, title, body FROM chunk_rows WHERE kind IN (${kinds.map(() => "?").join(", ")}) ORDER BY path, CAST(line AS INTEGER), n`)
       .all(...kinds) as { path: string; kind: KnowledgeKind; title: string; body: string }[];
     for (const row of rows) {
       const document = documents.get(row.path) ?? { kind: row.kind, sections: [] };
@@ -253,15 +289,15 @@ export class KnowledgeStore {
     return documents;
   }
 
-  // The text of each of these entries, in one pass over the sections (their id is not indexed).
+  // The text of each of these entries.
   bodies(ids: readonly string[]): Map<string, string> {
     if (ids.length === 0) return new Map();
-    const rows = this.db.prepare(`SELECT id, body FROM chunks WHERE id IN (${ids.map(() => "?").join(", ")})`).all(...ids) as { id: string; body: string }[];
+    const rows = this.db.prepare(`SELECT id, body FROM chunk_rows WHERE id IN (${ids.map(() => "?").join(", ")})`).all(...ids) as { id: string; body: string }[];
     return new Map(rows.map((row) => [row.id, row.body]));
   }
 
   read(id: string): StoredEntry | null {
-    const row = this.db.prepare("SELECT id, kind, path, line, title, body FROM chunks WHERE id = ?").get(id) as unknown as StoredEntry | undefined;
+    const row = this.db.prepare("SELECT id, kind, path, line, title, body FROM chunk_rows WHERE id = ?").get(id) as unknown as StoredEntry | undefined;
     return row ? { ...row, line: Number(row.line) } : null;
   }
 
@@ -292,9 +328,9 @@ export class KnowledgeStore {
 
   // Every entry of one kind, in file order, a page at a time: what the screen lists without a search.
   browse(kind: Exclude<KnowledgeKind, "task">, limit: number, offset: number): { entries: StoredEntry[]; total: number } {
-    const total = (this.db.prepare("SELECT COUNT(*) AS n FROM chunks WHERE kind = ?").get(kind) as { n: number }).n;
+    const total = (this.db.prepare("SELECT COUNT(*) AS n FROM chunk_rows WHERE kind = ?").get(kind) as { n: number }).n;
     const rows = this.db
-      .prepare("SELECT id, kind, path, line, title, substr(body, 1, 200) AS body FROM chunks WHERE kind = ? ORDER BY path, CAST(line AS INTEGER) LIMIT ? OFFSET ?")
+      .prepare("SELECT id, kind, path, line, title, substr(body, 1, 200) AS body FROM chunk_rows WHERE kind = ? ORDER BY path, CAST(line AS INTEGER) LIMIT ? OFFSET ?")
       .all(kind, limit, offset) as unknown as StoredEntry[];
     return { entries: rows.map((row) => ({ ...row, line: Number(row.line) })), total };
   }
@@ -302,11 +338,13 @@ export class KnowledgeStore {
   // Drops everything indexed from files, keeping tasks: the next refresh reads every file again.
   // Used when the way files are read changes, so old entries do not keep old titles.
   resetSources(): void {
-    this.transaction(() => {
-      for (const table of ["sources", "chunks", "symbols", "imports", "files"]) this.db.exec(`DELETE FROM ${table} WHERE path NOT LIKE '(%'`);
-      this.db.exec("DELETE FROM file_links");
-      this.bumpSourcesRevision();
-    });
+    this.transaction(() => this.clearFileEntries());
+  }
+
+  private clearFileEntries(): void {
+    for (const table of ["sources", "chunk_rows", "symbols", "imports", "files"]) this.db.exec(`DELETE FROM ${table} WHERE path NOT LIKE '(%'`);
+    this.db.exec("DELETE FROM file_links");
+    this.bumpSourcesRevision();
   }
 
   // The links between code files, replaced together with the facts they were built with.
