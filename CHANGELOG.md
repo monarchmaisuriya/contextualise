@@ -2,6 +2,19 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## Unreleased
+
+### Added
+
+- **New chats start with summaries of their workspace's other chats** (off by default: Settings > Contextualise > "Give new chats a summary of this workspace's other chats"). Contextualise keeps a running summary of each chat, covering it from its first message: written by Claude or Codex after the chat has been quiet for 5 minutes, from the previous summary and only what was added since, with secrets removed. Every new chat in the workspace gets the summary of every other chat that is not archived, newest first, each whole and saying how far it reaches. Summaries are never cut: one that cannot be kept within 2,000 characters keeps its last good version and says where it stops. Runs are capped at 100 a day (a setting) and share one queue with the task summaries.
+- **Attachments stay current: `attachment_updates`.** Every chat can ask what changed in its attachments since it last asked: new messages in attached chats, new terminal output, new tagged chats and items, changed files, and new commits and uncommitted changes in projects and workspaces attached with the Attached button. Each attachment now ends with a signed `Contextualise attachment grant:` line; the tool remembers grants and how far each was seen, so it keeps working after compaction. Answers hold whole items (16 KB), with the rest on the next call. New chats are told to call it at the start of every turn, and it is approved without asking, like the history tools. It follows "Let chats recover their own history".
+- **`workspace_history_search`, `workspace_history_load` and `workspace_history_read`** search and read the workspace's other chats word for word, archived ones included; you approve each call.
+
+### Changed
+
+- **New Chat and Fork Chat** in the Attached button show in every workspace, not only once something is attached, so a chat in a folder several workspaces share can be placed in its workspace.
+- **`/history off`** also keeps the chat out of other chats' summaries and deletes its summary.
+
 ## 0.29.0 - 2026-11-08
 
 ### Added

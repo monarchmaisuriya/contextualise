@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -393,6 +393,127 @@ describe("contributeKnowledge", () => {
     expect((await create(top)).config.systemPrompt).toContain('"Document the queue" (completed; README.md)');
   });
 
+  describe("summaries of the workspace's other chats", () => {
+    const createWith = (config: Record<string, unknown>, env?: Record<string, string>) =>
+      (before.get("agent.create") as (input: unknown, context: unknown) => Promise<{ config: { systemPrompt?: string } }>)({ request: { config: { provider: "claude", cwd: top, ...config }, ...(env ? { env } : {}) } }, { paseo });
+    const summary = (goal: string, updatedAt: string) => ({ summary: { goal, done: [], decisions: [], open: [], facts: [] }, anchor: { units: 2, tail: "x" }, messages: 2, coveredTo: "2026-11-11T09:00:00.000Z", updatedAt, complete: true });
+    beforeEach(() => {
+      values = { ...values, workspaceSummaries: true };
+      const root = join(home, "plugin-data", "contextualise");
+      workspaceEntries.push({ id: "w-bg", workspaceDirectory: join(home, "bg"), background: true });
+      agentEntries.push(
+        { agent: { id: "a-old", workspaceId: "w-top", cwd: top, provider: "claude", title: "Old work", updatedAt: "2026-11-11T08:00:00.000Z", status: "idle" } },
+        { agent: { id: "a-new", workspaceId: "w-top", cwd: top, provider: "codex", title: "New work", updatedAt: "2026-11-11T11:00:00.000Z", status: "running" } },
+        { agent: { id: "a-archived", workspaceId: "w-top", cwd: top, provider: "claude", title: "Archived", updatedAt: "2026-11-11T11:30:00.000Z", archivedAt: "2026-11-11T11:31:00.000Z" } },
+        { agent: { id: "a-internal", workspaceId: "w-top", cwd: top, provider: "claude", title: "Helper", updatedAt: "2026-11-11T11:30:00.000Z", internal: true } },
+        { agent: { id: "a-worker", workspaceId: "w-top", cwd: join(root, "workers", "x"), provider: "claude", title: "contextualise: summarise chat a-old", updatedAt: "2026-11-11T11:30:00.000Z" } },
+        { agent: { id: "a-bg", workspaceId: "w-bg", cwd: join(home, "bg"), provider: "claude", title: "Background", updatedAt: "2026-11-11T11:30:00.000Z" } },
+        { agent: { id: "a-elsewhere", workspaceId: "w-other", cwd: "/elsewhere", provider: "claude", title: "Other workspace", updatedAt: "2026-11-11T11:30:00.000Z" } },
+      );
+      mkdirSync(join(root, "knowledge"), { recursive: true });
+      writeFileSync(join(root, "knowledge", "chat-summaries.json"), JSON.stringify({ version: 1, chats: { "a-old": summary("Ship the import", "2026-11-11T09:05:00.000Z"), "a-new": summary("Write the docs", "2026-11-11T10:00:00.000Z") } }));
+    });
+    afterEach(() => {
+      agentEntries.splice(0);
+    });
+
+    it("gives a new chat every other chat of its workspace, newest first, with its summary, and none of the others", async () => {
+      const prompt = (await createWith({ systemPrompt: "Be brief." })).config.systemPrompt!;
+      expect(prompt).toContain("## Other chats in this workspace (Contextualise)");
+      expect(prompt.indexOf('"New work"')).toBeLessThan(prompt.indexOf('"Old work"'));
+      expect(prompt).toContain("Goal: Ship the import");
+      // Active after its summary was written: the entry says its newest messages are missing.
+      expect(prompt).toContain("Summary of its first 2 messages, up to 2026-11-11 09:00 UTC; the chat was active after that");
+      for (const left of ["Archived", "Helper", "summarise chat", "Background", "Other workspace"]) expect(prompt).not.toContain(left);
+    });
+
+    it("leaves out a chat whose history M turned off, and adds nothing while the setting is off", async () => {
+      const stored = () => Object.keys(JSON.parse(readFileSync(join(home, "plugin-data", "contextualise", "knowledge", "chat-summaries.json"), "utf8")).chats);
+      await call("history.command", { agentId: "a-old", action: "off" });
+      expect(stored()).toEqual(["a-new"]);
+      await emit("agent.archived", { agent: { id: "a-new" }, archivedAt: "2026-11-11T12:00:00.000Z" });
+      expect(stored()).toEqual([]);
+      const prompt = (await createWith({})).config.systemPrompt!;
+      expect(prompt).toContain('"New work"');
+      expect(prompt).not.toContain('"Old work"');
+      values = { ...values, workspaceSummaries: false };
+      expect((await createWith({})).config.systemPrompt ?? "").not.toContain("Other chats in this workspace");
+    });
+
+    it("still creates the chat when Paseo cannot list chats, saying why, and keeps one section in a fork", async () => {
+      agentsDown = true;
+      try {
+        expect((await createWith({})).config.systemPrompt).toContain("Contextualise could not list this workspace's other chats: daemon busy");
+      } finally {
+        agentsDown = false;
+      }
+      const first = (await createWith({ systemPrompt: "Be brief." })).config.systemPrompt!;
+      const fork = (await createWith({ systemPrompt: first })).config.systemPrompt!;
+      expect(fork.split("## Other chats in this workspace").length).toBe(2);
+    });
+
+    it("lets a chat search its workspace's other chats word for word, never approving it, and never its own or a worker's", async () => {
+      type Tool = { name: string; execute(input: unknown, context: unknown): Promise<{ text: string; isError?: boolean }> };
+      values = { ...values, historyTools: true };
+      const agents = paseo.agents as Record<string, unknown>;
+      const original = agents.ref;
+      agents.ref = (agentId: string) => ({
+        respondToPermission,
+        timeline: { refetch: async () => ({ epoch: "e1", reset: false, entries: [{ item: { type: "user_message", text: `the list import in ${agentId}` }, timestamp: "2026-11-11T09:00:00.000Z", seqStart: 1 }], hasOlder: false, hasNewer: false, startCursor: null, endCursor: null, error: null }) },
+      });
+      try {
+        const opened = await (before.get("agent.session_open") as (input: unknown, context: unknown) => Promise<{ tools: Tool[] }>)({ request: { agentId: "a-new", workspaceId: "w-top", provider: "claude", cwd: top, reason: "create", purpose: "interactive", env: {}, tools: [], mcpServers: {} } }, { paseo });
+        expect(opened.tools.map((entry) => entry.name).filter((name) => name.startsWith("workspace_history_"))).toEqual(["workspace_history_search", "workspace_history_load", "workspace_history_read"]);
+        const found = (await opened.tools.find((entry) => entry.name === "workspace_history_search")!.execute({ query: "list import" }, { agent: { id: "a-new", workspaceId: "w-top" }, paseo })).text;
+        expect(found).toContain("Quoted from M's other chats in this workspace.");
+        // Archived chats are searched; the caller, workers, helpers and other workspaces are not.
+        expect(found).toContain("the list import in a-old");
+        expect(found).toContain("the list import in a-archived");
+        for (const left of ["a-new", "a-worker", "a-internal", "a-bg", "a-elsewhere"]) expect(found).not.toContain(`the list import in ${left}`);
+        respondToPermission.mockClear();
+        await emit("agent.permission_requested", { agent: { id: "a-new", cwd: top }, request: { id: "p-ws", name: "mcp__paseo__workspace_history_search" } });
+        expect(respondToPermission).not.toHaveBeenCalled();
+      } finally {
+        agents.ref = original;
+      }
+    });
+
+    it("creates the chat within the listing deadline when Paseo is slow, saying why", async () => {
+      const agents = paseo.agents as Record<string, unknown>;
+      const original = agents.list;
+      agents.list = () => new Promise(() => undefined);
+      try {
+        const started = Date.now();
+        expect((await createWith({})).config.systemPrompt).toContain("Contextualise could not list this workspace's other chats: Paseo took longer than 5 seconds to list them.");
+        expect(Date.now() - started).toBeLessThan(8_000);
+      } finally {
+        agents.list = original;
+      }
+    }, 10_000);
+
+    it("says so when it cannot tell the chat's workspace because the lookup failed", async () => {
+      const workspaces = paseo.workspaces as Record<string, unknown>;
+      const original = workspaces.list;
+      workspaces.list = async () => {
+        throw new Error("daemon restarting");
+      };
+      try {
+        expect((await createWith({})).config.systemPrompt).toContain("Contextualise could not list this workspace's other chats: daemon restarting");
+      } finally {
+        workspaces.list = original;
+      }
+    });
+
+    it("says why in a folder several workspaces share, and gives the summaries to a chat started with New Chat there", async () => {
+      workspaceEntries.push({ id: "w-twin", workspaceDirectory: top });
+      const shared = (await createWith({})).config.systemPrompt!;
+      expect(shared).toContain("This chat's folder is shared by several Paseo workspaces");
+      expect(shared).not.toContain('"New work"');
+      const marked = (await createWith({}, { CONTEXTUALISE_LINK_WORKSPACE: "w-top" })).config.systemPrompt!;
+      expect(marked).toContain('"New work"');
+    });
+  });
+
   describe("chat history", () => {
     type Tool = { name: string; execute(input: unknown, context: unknown): Promise<{ text: string; isError?: boolean }> };
     const appended: { agentId: string; row: { id: string; kind: string; data: { title: string; lines: string[] } } }[] = [];
@@ -466,6 +587,44 @@ describe("contributeKnowledge", () => {
       await call("history.command", { agentId: "a2", action: "off" });
       await emit("agent.turn_ended", { agent: { id: "a2", provider: "claude", cwd: top, title: null }, outcome: { kind: "completed" } });
       expect(appended.filter(({ agentId, row }) => agentId === "a2" && row.id.startsWith("compaction-"))).toEqual([]);
+    });
+
+    it("tells a chat what changed in an attached chat since it was attached, every turn, without asking M", async () => {
+      const grantLine = (await contribution.conversationGrant("a2"))!;
+      expect(grantLine).toContain("Contextualise attachment grant: ");
+      const grant = grantLine.split("Contextualise attachment grant: ")[1].trim();
+      // The attached chat gains a message after it was attached.
+      const later = new Date(Date.now() + 60_000).toISOString();
+      const agents = paseo.agents as Record<string, unknown>;
+      agents.ref = (agentId: string) => ({
+        respondToPermission,
+        refresh: async () => {},
+        current: () => ({ createdAt: "2026-11-08T00:00:00.000Z" }),
+        timeline: { refetch: async () => ({ epoch: "e1", reset: false, entries: agentId === "a2" ? [{ item: { type: "user_message", text: "before the attachment" }, timestamp: "2026-11-08T05:00:00.000Z", seqStart: 1 }, { item: { type: "assistant_message", text: "Found the cause in api.ts" }, timestamp: later, seqStart: 2 }] : [], hasOlder: false, hasNewer: false, startCursor: null, endCursor: null, error: null }) },
+      });
+      const updates = await tool("attachment_updates");
+      const first = (await updates.execute({ grants: [grant] }, asChat)).text;
+      expect(first).toContain("agent: Found the cause in api.ts");
+      expect(first).not.toContain("before the attachment");
+      // Remembered: the next turn needs no grant, and has nothing new.
+      expect((await updates.execute({}, asChat)).text).toContain("Nothing new in this chat's 1 attachment");
+      expect((await updates.execute({ grants: [`${grant.slice(0, -2)}xx`] }, asChat)).text).toContain("1 grant refused");
+      // Attached a second time: still followed once.
+      const again = (await contribution.conversationGrant("a2"))!.split("Contextualise attachment grant: ")[1].trim();
+      expect(again).not.toBe(grant);
+      expect((await updates.execute({ grants: [again] }, asChat)).text).toContain("Nothing new in this chat's 1 attachment");
+      // A conversation_read grant (older attachments carry only that) is not a feed of the chat's future.
+      values = { ...values, knowledgeEnabled: true };
+      const readLine = (await contribution.conversationGrant("a2"))!.split("\n").find((line) => line.includes("with grant: "));
+      expect(readLine).toBeDefined();
+      expect((await updates.execute({ grants: [readLine!.split("with grant: ")[1].trim()] }, asChat)).text).toContain("1 grant refused: not written by Contextualise, or changed.");
+      // Approved without M, like the history tools.
+      respondToPermission.mockClear();
+      await emit("agent.permission_requested", { agent: { id: "a1", cwd: top }, request: { id: "u1", name: "mcp__paseo__attachment_updates" } });
+      expect(respondToPermission).toHaveBeenCalledWith({ requestId: "u1", response: { behavior: "allow" } });
+      // New chats are told to call it every turn.
+      const made = (await (before.get("agent.create") as (input: unknown, context: unknown) => Promise<{ config: { systemPrompt?: string } }>)({ request: { config: { provider: "claude", cwd: top } } }, { paseo })).config;
+      expect(made.systemPrompt).toContain("at the start of every turn, before answering, call it");
     });
 
     it("reports status with /history, and turns the tools off and on for one chat", async () => {

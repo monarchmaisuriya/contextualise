@@ -68,7 +68,7 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
     mutationFn: (carryConversation: boolean) => newChat({ workspaceId, fromAgentId: agentId as string, carryConversation }),
     onSuccess: ({ agentId: created }, carried) => {
       if (openAgent) openAgent(created);
-      else toast.show(carried ? "Started a chat with the attached projects that carries this conversation; it is in this workspace's tabs" : "Started a chat with the attached projects; it is in this workspace's tabs", { variant: "success" });
+      else toast.show(carried ? "Started a chat that carries this conversation; it is in this workspace's tabs" : "Started a new chat; it is in this workspace's tabs", { variant: "success" });
     },
     onError: (error) => toast.error(errorText(error)),
   });
@@ -152,8 +152,10 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
           <Text style={[styles.note, styles.grow]}>Shared folder: start chats with New Chat to get these projects.</Text>
         </View>
       ) : null}
-      {agentId && attachedCount ? (
-        // Two equal choices, so neither is primary.
+      {agentId ? (
+        // Two equal choices, so neither is primary. Shown in every workspace: a chat started here is
+        // known to be in this workspace even where several share a folder, so it gets the attached
+        // projects and the summaries of this workspace's other chats.
         <View style={[styles.row, { borderTopWidth: 1, borderColor: styles.colors.border, paddingTop: 8, justifyContent: "space-evenly" }]}>
           <Button label="New Chat" icon={ICONS.add} styles={styles} onPress={() => starting.mutate(false)} disabled={starting.isPending} />
           <Button label="Fork Chat" icon={ICONS.fork} styles={styles} onPress={() => starting.mutate(true)} disabled={starting.isPending} />

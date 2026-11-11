@@ -171,11 +171,11 @@ export class ChatHistory {
     return page;
   }
 
-  private trim(indexed: Indexed): Indexed {
+  private trim(indexed: Indexed, maxBytes = this.maxBytes): Indexed {
     const keys = [...indexed.rows.keys()].sort((a, b) => a - b);
     let bytes = keys.reduce((sum, key) => sum + rowBytes(indexed.rows.get(key)!), 0);
     let capped = indexed.capped;
-    for (let at = 0; at < keys.length && (keys.length - at > this.maxRows || bytes > this.maxBytes); at += 1) {
+    for (let at = 0; at < keys.length && (keys.length - at > this.maxRows || bytes > maxBytes); at += 1) {
       bytes -= rowBytes(indexed.rows.get(keys[at])!);
       indexed.rows.delete(keys[at]);
       capped = true;
@@ -191,7 +191,7 @@ export class ChatHistory {
     }
   }
 
-  private async full(fetch: TimelineFetch): Promise<Indexed> {
+  private async full(fetch: TimelineFetch, maxBytes = this.maxBytes): Promise<Indexed> {
     let page = ChatHistory.check(await fetch({ direction: "tail", limit: PAGE }));
     const indexed: Indexed = { epoch: page.epoch, rows: new Map(), cursor: page.endCursor, capped: false, bytes: 0 };
     this.merge(indexed, page.entries);
@@ -202,30 +202,33 @@ export class ChatHistory {
         break;
       }
       page = ChatHistory.check(await fetch({ direction: "before", cursor: page.startCursor, limit: PAGE }));
-      if (page.epoch !== indexed.epoch) return this.full(fetch);
+      if (page.epoch !== indexed.epoch) return this.full(fetch, maxBytes);
       this.merge(indexed, page.entries);
       read += page.entries.length;
     }
-    return this.trim(indexed);
+    return this.trim(indexed, maxBytes);
   }
 
-  async rows(agentId: string, fetch: TimelineFetch): Promise<{ rows: HistoryRow[]; reloaded: boolean; capped: boolean }> {
+  // `maxBytes`, when given, holds this chat to less than the cache's own limit for this read (its
+  // newest items kept), so a caller reading many chats at once can bound them all.
+  async rows(agentId: string, fetch: TimelineFetch, maxBytes = this.maxBytes): Promise<{ rows: HistoryRow[]; reloaded: boolean; capped: boolean }> {
+    const limit = Math.min(maxBytes, this.maxBytes);
     const known = this.chats.get(agentId);
-    let indexed = known ?? (await this.full(fetch));
+    let indexed = known ?? (await this.full(fetch, limit));
     let reloaded = false;
     if (known) {
       let cursor = known.cursor;
       for (let pages = 0; ; pages += 1) {
         const page = ChatHistory.check(await fetch(cursor ? { direction: "after", cursor, limit: PAGE } : { direction: "tail", limit: PAGE }));
         if (page.reset || page.epoch !== known.epoch) {
-          indexed = await this.full(fetch);
+          indexed = await this.full(fetch, limit);
           reloaded = true;
           break;
         }
         this.merge(known, page.entries);
         if (page.endCursor) cursor = page.endCursor;
         if (!page.hasNewer || !page.endCursor || pages > this.maxRows / PAGE) {
-          indexed = this.trim({ ...known, cursor });
+          indexed = this.trim({ ...known, cursor }, limit);
           break;
         }
       }

@@ -1,5 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { z } from "zod";
 import type { FetchProvider, SnapshotSettings } from "../../shared/contracts";
 import { areaLabel } from "../../shared/diagram";
@@ -8,6 +7,7 @@ import type { PaseoApi } from "../paseo-types";
 import { redactSecrets } from "../secrets";
 import { jsonObjectIn } from "../vendor-fetch";
 import type { WorkerJob } from "../workers";
+import { DailyRuns, QuietTimers, RunQueue } from "./background-runs";
 import type { KnowledgeBase } from "./base";
 import { AREA_PREFIX, factsFor } from "./facts";
 import { readProjectFile } from "./files";
@@ -58,12 +58,6 @@ const describeSchema = z.object({
 });
 const explainSchema = z.object({ explanation: z.string().trim().min(1).max(2_000) });
 
-const stateSchema = z.object({
-  version: z.literal(1),
-  day: z.object({ date: z.string(), runs: z.number().int() }),
-});
-type GenerationState = z.infer<typeof stateSchema>;
-
 export type RunWorkerFn = (paseo: PaseoApi, root: string, job: WorkerJob, onCreated: (agentId: string) => void) => Promise<string>;
 
 export interface GenerationAgent {
@@ -81,6 +75,8 @@ export interface GeneratorDeps {
   runWorker: RunWorkerFn;
   readTimeline: (paseo: PaseoApi, agentId: string) => Promise<TimelineEntry[]>;
   now?: () => Date;
+  // Shared with the other background runs, so only one runs at a time.
+  runs?: RunQueue;
 }
 
 export interface GenerationStatus {
@@ -123,7 +119,7 @@ function areaFacts(area: Area, facts: ProjectFacts, store: KnowledgeStore, signa
   ];
 }
 
-function providerFor(choice: SnapshotSettings["knowledgeGenerateProvider"], agentProvider: string | null): FetchProvider {
+export function providerFor(choice: SnapshotSettings["knowledgeGenerateProvider"], agentProvider: string | null): FetchProvider {
   if (choice !== "same") return choice;
   const name = (agentProvider ?? "").split("/")[0];
   // OpenCode cannot be kept read-only, so its sessions are summarised by Claude.
@@ -131,13 +127,16 @@ function providerFor(choice: SnapshotSettings["knowledgeGenerateProvider"], agen
 }
 
 export class Generator {
-  private queue: Promise<unknown> = Promise.resolve();
-  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly queue: RunQueue;
+  private readonly daily: DailyRuns;
+  private readonly timers = new QuietTimers();
   private readonly statuses = new Map<string, GenerationStatus>();
   private readonly now: () => Date;
 
   constructor(private readonly deps: GeneratorDeps) {
     this.now = deps.now ?? (() => new Date());
+    this.queue = deps.runs ?? new RunQueue();
+    this.daily = new DailyRuns(async () => join(await deps.root(), "knowledge", "generation.json"), async () => (await deps.settings()).knowledgeGenerateMaxPerDay, this.now);
   }
 
   status(key: string): GenerationStatus | null {
@@ -145,50 +144,16 @@ export class Generator {
   }
 
   stop(): void {
-    for (const timer of this.timers.values()) clearTimeout(timer);
-    this.timers.clear();
+    this.timers.stop();
   }
 
   private serialize<T>(work: () => Promise<T>): Promise<T> {
-    const next = this.queue.then(work, work);
-    this.queue = next.catch(() => undefined);
-    return next;
-  }
-
-  private async statePath(): Promise<string> {
-    return join(await this.deps.root(), "knowledge", "generation.json");
-  }
-
-  // The file only counts today's runs, so one that cannot be read starts a fresh count (logged)
-  // instead of stopping every summary until someone deletes it.
-  private async readState(): Promise<GenerationState> {
-    const path = await this.statePath();
-    const text = await readFile(path, "utf8").catch(() => null);
-    let data: unknown = null;
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch (error) {
-      console.error(`[contextualise] ${path} is not valid JSON, so today's run count starts again: ${String(error)}`);
-    }
-    const parsed = data === null ? null : stateSchema.safeParse(data);
-    return parsed?.success ? parsed.data : { version: 1, day: { date: "", runs: 0 } };
-  }
-
-  private async writeState(state: GenerationState): Promise<void> {
-    const path = await this.statePath();
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    await writeFile(`${path}.tmp`, JSON.stringify(state), { mode: 0o600 });
-    await rename(`${path}.tmp`, path);
+    return this.queue.run(work);
   }
 
   // One background run, if today's cap allows it.
-  private async takeRun(): Promise<boolean> {
-    const state = await this.readState();
-    const today = this.now().toISOString().slice(0, 10);
-    const runs = state.day.date === today ? state.day.runs : 0;
-    if (runs >= (await this.deps.settings()).knowledgeGenerateMaxPerDay) return false;
-    await this.writeState({ ...state, day: { date: today, runs: runs + 1 } });
-    return true;
+  private takeRun(): Promise<boolean> {
+    return this.daily.take();
   }
 
   // After each finished turn: summarise the session once the agent has been quiet for the set
@@ -196,15 +161,11 @@ export class Generator {
   async schedule(paseo: PaseoApi, project: ProjectRoot, agent: GenerationAgent): Promise<void> {
     const values = await this.deps.settings();
     if (!values.knowledgeGenerate) return;
-    clearTimeout(this.timers.get(agent.id));
-    const timer = setTimeout(() => {
-      this.timers.delete(agent.id);
+    this.timers.set(agent.id, values.knowledgeGenerateIdleMinutes * 60_000, () => {
       void this.serialize(async () => {
         if ((await this.summarize(paseo, project, agent, "grown")) === "done") await this.describe(paseo, project, false);
       }).catch((error: unknown) => console.error(`[contextualise] could not summarise agent ${agent.id}: ${String(error)}`));
-    }, values.knowledgeGenerateIdleMinutes * 60_000);
-    timer.unref?.();
-    this.timers.set(agent.id, timer);
+    });
   }
 
   // A title and summary for one session, unless the one it has is still current. "changed" (asked for by

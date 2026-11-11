@@ -126,6 +126,17 @@ test("terminal search captures the newest lines from the setting and says how lo
   expect(items[0].text).toContain("ok 12 tests");
 });
 
+test("a terminal attachment ends with a grant for its output after the lines it carries", async () => {
+  const { paseo } = fakePaseo({}, [{ id: "t1", workspaceId: "w1", cwd: "/src/payments", name: "tests" }]);
+  const grants: unknown[] = [];
+  const [item] = await searchTerminals(paseo, new Memo(30_000), directory, "test", options, async (grant) => (grants.push(grant), "Contextualise attachment grant: g.s"));
+  expect(grants).toEqual([{ kind: "terminal", terminalId: "t1", lines: 940 }]);
+  expect(item.text.endsWith("\n\nContextualise attachment grant: g.s")).toBe(true);
+  // With the tool off there is no line.
+  const [plain] = await searchTerminals(paseo, new Memo(30_000), directory, "test", options, async () => null);
+  expect(plain.text).not.toContain("attachment grant");
+});
+
 test("Memo reuses a result within its window and forgets failures", async () => {
   const memo = new Memo(30_000);
   const build = vi.fn(async () => "value");
