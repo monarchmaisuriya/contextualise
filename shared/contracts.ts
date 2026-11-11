@@ -410,6 +410,9 @@ export const snapshotSettingsSchema = z.object({
   includeLinks: z.boolean().default(true),
   includeItems: z.boolean().default(true),
   includeAgents: z.boolean().default(true),
+  // Tags. Off: no tag button, screen, commands, Attach > Tag, saving or refreshing items; the daemon
+  // refuses tag work. Stored tags, links, and items are kept for when it is switched back on.
+  tagsEnabled: z.boolean().default(true),
   // Tags pill
   showPill: z.boolean().default(true),
   pillLabel: z.enum(["names", "count"]).default("names"),

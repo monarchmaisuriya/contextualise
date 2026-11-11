@@ -50,6 +50,19 @@ describe("attachmentUpdates", () => {
     expect(await call([])).toContain('## Chat "c1"\nuser: third');
   });
 
+  it("keeps a paused attachment's place without reading it, and resumes there without repeating", async () => {
+    let paused = false;
+    const pausable = async (grants: readonly UpdatesGrant[]) => (await subjects(grants)).map((subject) => ({ ...subject, paused }));
+    expect(await call(["good.c1"], { subjects: pausable })).toContain("agent: second reply");
+    paused = true;
+    items.push(user("third, while paused"));
+    expect(await call([], { subjects: pausable })).toContain("Nothing new in this chat's 0 attachments since you last asked.");
+    paused = false;
+    const resumed = await call([], { subjects: pausable });
+    expect(resumed).toContain('## Chat "c1"\nuser: third, while paused');
+    expect(resumed).not.toContain("second reply");
+  });
+
   it("refuses a grant Contextualise did not write and reads nothing for it", async () => {
     const answer = await call(["forged.c1"]);
     expect(answer).toContain("1 grant refused");

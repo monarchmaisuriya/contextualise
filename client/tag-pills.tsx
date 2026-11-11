@@ -72,19 +72,20 @@ export function followAgentPills(client: PluginClientContext, openTagsFor: (agen
     });
   }
 
-  // Settings decide whether pills show and how they are labeled. Invalid settings keep the last
-  // choice; the settings screen shows the problem.
+  // Settings decide whether pills show and how they are labeled; while tags are off they are hidden.
+  // Invalid settings keep the last choice; the settings screen shows the problem.
   async function refreshDisplay() {
     const state = await client.rpc(settingsRpc(snapshotSettings.id).read, {});
     const parsed = state.status === "ready" ? snapshotSettingsSchema.safeParse(state.values) : null;
-    if (parsed?.success) display = { visible: parsed.data.showPill, style: parsed.data.pillLabel, maxChars: parsed.data.pillNameMaxChars };
+    if (parsed?.success) display = { visible: parsed.data.tagsEnabled && parsed.data.showPill, style: parsed.data.pillLabel, maxChars: parsed.data.pillNameMaxChars };
   }
 
-  // One tags.list call per change, shared by every pill. A failed refresh keeps the last labels.
+  // One tags.list call per change, shared by every pill, and none while the pills are hidden (the
+  // daemon refuses it while tags are off). A failed refresh keeps the last labels.
   async function refreshLabels() {
     try {
-      const [{ tags }] = await Promise.all([client.rpc(listTagsRpc, {}), refreshDisplay()]);
-      names = tagNamesByAgent(tags);
+      await refreshDisplay();
+      if (display.visible) names = tagNamesByAgent((await client.rpc(listTagsRpc, {})).tags);
       for (const [agentId, pill] of pills) pill.registration.update({ label: label(agentId), visible: display.visible });
     } catch (error) {
       if (!stopped) console.error("[contextualise] could not refresh tag pills", error);

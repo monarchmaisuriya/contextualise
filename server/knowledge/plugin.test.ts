@@ -28,6 +28,7 @@ describe("contributeKnowledge", () => {
   const projectEntries: { projectId: string; projectDisplayName: string; projectCustomName?: string | null; projectRootPath: string }[] = [];
   const agentEntries: { agent: Record<string, unknown> }[] = [];
   let agentsDown = false;
+  let tagSummaries: unknown[] = [];
   const timeline = [
     { item: { type: "user_message", text: "Document the queue" }, timestamp: "2026-10-29T10:00:00.000Z" },
     { item: { type: "tool_call", name: "edit", status: "completed", detail: { type: "edit", filePath: "README.md" } }, timestamp: "2026-10-29T10:01:00.000Z" },
@@ -83,12 +84,14 @@ describe("contributeKnowledge", () => {
       on: (name: string, handler: Handler) => on.set(name, [...(on.get(name) ?? []), handler]),
       handle: (contract: { name: string }, handler: Handler) => rpcs.set(contract.name, handler),
     };
+    tagSummaries = [];
     contribution = contributeKnowledge(server as never, {
       resolveRoot: async () => join(home, "plugin-data", "contextualise"),
       settings: async () => {
         if (settingsProblem) throw settingsProblem;
         return values;
       },
+      listTags: async () => tagSummaries as never,
     });
   });
   afterEach(async () => {
@@ -535,6 +538,29 @@ describe("contributeKnowledge", () => {
         // With the summaries off, it says so.
         values = { ...values, workspaceSummaries: false };
         expect((await updates.execute({ workspaceChats: true }, { agent: { id: "a-new", workspaceId: "w-top" }, paseo })).text).toContain("Summaries of the workspace's other chats are off");
+      } finally {
+        agents.ref = original;
+      }
+    });
+
+    it("follows an attached tag in attachment_updates only while tags are on", async () => {
+      type Tool = { name: string; execute(input: unknown, context: unknown): Promise<{ text: string; isError?: boolean }> };
+      values = { ...values, historyTools: true, workspaceSummaries: false };
+      tagSummaries = [{ key: "auth", name: "auth", hasWorkspaceLabel: false, workspaces: [], agents: [], links: [], notes: [] }];
+      const agents = paseo.agents as Record<string, unknown>;
+      const original = agents.ref;
+      agents.ref = () => ({ respondToPermission, refresh: async () => {}, current: () => ({ createdAt: "2026-11-11T11:50:00.000Z" }) });
+      try {
+        const opened = await (before.get("agent.session_open") as (input: unknown, context: unknown) => Promise<{ tools: Tool[] }>)({ request: { agentId: "a-new", workspaceId: "w-top", provider: "claude", cwd: top, reason: "create", purpose: "interactive", env: {}, tools: [], mcpServers: {} } }, { paseo });
+        const updates = opened.tools.find((entry) => entry.name === "attachment_updates")!;
+        // A grant is redeemed once, so each ask gets its own.
+        const ask = async (agentId: string) => {
+          const grant = (await contribution.attachmentGrant({ kind: "tag", key: "auth", upTo: "2026-11-11T11:00:00.000Z" }))!.split(" ").at(-1)!;
+          return (await updates.execute({ grants: [grant] }, { agent: { id: agentId, workspaceId: "w-top" }, paseo })).text;
+        };
+        expect(await ask("a-on")).toContain("Nothing new in this chat's 1 attachment since you last asked.");
+        values = { ...values, tagsEnabled: false };
+        expect(await ask("a-off")).toContain("Nothing new in this chat's 0 attachments since you last asked.");
       } finally {
         agents.ref = original;
       }
