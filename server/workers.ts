@@ -62,6 +62,8 @@ export interface FetchJob {
   prompt: string;
   model: string;
   timeoutMs: number;
+  // The "notifyBackgroundWork" setting: whether Paseo notifies M when this worker finishes.
+  notify: boolean;
 }
 
 // Any background agent: a locked-down Claude or Codex agent in the hidden worker workspace that
@@ -73,6 +75,8 @@ export interface WorkerJob {
   model: string;
   timeoutMs: number;
   outputSchema: Record<string, unknown>;
+  // The "notifyBackgroundWork" setting: whether Paseo notifies M when this worker finishes.
+  notify: boolean;
 }
 
 const workspaceLookups = new Map<string, Promise<string>>();
@@ -126,7 +130,7 @@ export async function runWorker(paseo: PaseoApi, root: string, job: WorkerJob, o
   try {
     const { modeId, options } = LOCKDOWN[job.provider];
     const provider = await beforeDeadline(fetchModel(paseo, job.provider, job.model), deadline, "listing models");
-    const creating = paseo.workspaces.ref(workspaceId).agents.create({ title: job.title.slice(0, 120), config: { provider, modeId, options }, prompt: job.prompt, outputSchema: job.outputSchema });
+    const creating = paseo.workspaces.ref(workspaceId).agents.create({ title: job.title.slice(0, 120), config: { provider, modeId, options }, prompt: job.prompt, outputSchema: job.outputSchema, background: !job.notify });
     try {
       handle = await beforeDeadline(creating, deadline, "creating the agent");
     } catch (error) {

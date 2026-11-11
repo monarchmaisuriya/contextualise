@@ -813,7 +813,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     write: async (paseo, chat, prompt) => {
       const values = await deps.settings();
       const provider = providerFor(values.workspaceSummaryProvider, chat.provider);
-      return runWorker(paseo, await deps.resolveRoot(), { provider, model: provider === "claude" ? values.claudeFetchModel : values.codexFetchModel, title: `contextualise: summarise chat ${chat.id}`, prompt, timeoutMs: SUMMARY_WORKER_MS, outputSchema: SUMMARY_OUTPUT_SCHEMA as unknown as Record<string, unknown> }, () => undefined);
+      return runWorker(paseo, await deps.resolveRoot(), { provider, model: provider === "claude" ? values.claudeFetchModel : values.codexFetchModel, title: `contextualise: summarise chat ${chat.id}`, prompt, timeoutMs: SUMMARY_WORKER_MS, outputSchema: SUMMARY_OUTPUT_SCHEMA as unknown as Record<string, unknown>, notify: values.notifyBackgroundWork }, () => undefined);
     },
   });
   // The section for a new chat in workspace W: every other chat of W that is M's own and not archived,
