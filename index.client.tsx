@@ -9,6 +9,7 @@ import { SnapshotSettingsScreen } from "./client/settings-screen";
 import { tagsChanged } from "./client/tag-events";
 import { KnowledgeScreen, WorkspaceKnowledgePanel } from "./client/knowledge-screen";
 import { followAgentPills } from "./client/tag-pills";
+import { followTagsSetting } from "./client/tag-registrations";
 import { TagsScreen } from "./client/tags-screen";
 import {
   addLinkRpc,
@@ -33,8 +34,10 @@ import { followLinkPills } from "./client/link-pills";
 import { HistoryNoteRow } from "./client/history-row";
 import { HISTORY_ROW_KIND, historyCommandRpc, historyNoteSchema, parseHistoryCommand } from "./shared/history";
 
-// Shown, hidden, and moved under Paseo's Settings > Sidebar.
+// Shown, hidden, and moved under Paseo's Settings > Sidebar; hidden while tags are off.
 function TagsSidebarItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
+  const settings = useSettings(snapshotSettings);
+  if (settings.status === "ready" && !settings.values.tagsEnabled) return null;
   return <SidebarRow icon={ICONS.tags} active={currentScreen?.screenId === "tags"} onPress={() => openScreen({ screenId: "tags" })} />;
 }
 
@@ -48,34 +51,9 @@ function KnowledgeSidebarItem({ currentScreen, openScreen }: PluginSidebarItemPr
 export default function contribute(client: PluginClientContext) {
   const openTagsFor = (agentId: string, workspaceId?: string) => client.openScreen({ screenId: "tags", params: workspaceId ? { agentId, workspaceId } : { agentId } });
   const openItem = (tag: string, note: string) => client.openScreen({ screenId: "tags", params: { tag, note } });
-  const removers = [
-    client.addScreen({ id: "tags", title: (params) => (params.agentId ? "Tags for this agent" : "Tags"), Component: TagsScreen }),
-    client.addSidebarFooterItem({ id: "tags", title: "Tags", Component: TagsSidebarItem }),
-    client.addScreen({ id: "knowledge", title: "Project knowledge", Component: KnowledgeScreen }),
-    client.addSidebarFooterItem({ id: "knowledge", title: "Project knowledge", Component: KnowledgeSidebarItem }),
-    client.addWorkspacePanel({ id: "knowledge", title: "Project knowledge", icon: ICONS.knowledge, Component: WorkspaceKnowledgePanel }),
-    client.addSettingsScreen({ id: "snapshot", title: "Contextualise", icon: LOGO, Component: SnapshotSettingsScreen }),
+  // Everything that exists only for tags, added while tags are on (see followTagsSetting).
+  const registerTags = () => [
     client.addAttachmentSource(tagAttachmentSource),
-    // Paseo's Attach menu lists sources in this order: Project sits right after Chat.
-    client.addAttachmentSource(agentAttachmentSource),
-    client.addAttachmentSource(knowledgeAttachmentSource),
-    client.addAttachmentSource(terminalAttachmentSource),
-    // Tagging no longer adds timeline rows; this still draws the rows v0.2.1 added.
-    client.addTimelineRenderer({ kind: RECEIPT_KIND, version: 1, schema: receiptSchema, Component: (props) => <ReceiptRow {...props} openTags={openTagsFor} /> }),
-    client.addTimelineRenderer({ kind: HISTORY_ROW_KIND, version: 1, schema: historyNoteSchema, Component: HistoryNoteRow }),
-    client.addTimelineRenderer({ kind: FETCH_RESULT_KIND, version: 1, schema: fetchResultSchema, Component: (props) => <FetchResultRow {...props} openItem={openItem} openTags={openTagsFor} /> }),
-    followAgentPills(client, openTagsFor),
-    followLinkPills(client),
-    // The status shows as a row in the chat; Paseo shows a thrown error as a toast.
-    client.addSlashCommand({
-      name: "history",
-      description: "This chat's history tools: status and size, or turn them on or off",
-      argumentHint: "[status | on | off]",
-      context: "agent",
-      async onSubmit({ args, agent, rpc }) {
-        await readable(() => rpc(historyCommandRpc, { agentId: agent.id, action: parseHistoryCommand(args) }));
-      },
-    }),
     // Paseo shows a thrown error as a toast and clears the composer either way. The Tags pill's
     // label is the confirmation; a /tag that changed nothing says so.
     client.addSlashCommand({
@@ -133,6 +111,45 @@ export default function contribute(client: PluginClientContext) {
         openTagsFor(agent.id, agent.workspaceId);
       },
     }),
+    client.addCommandCenterItem({
+      id: "open-tags",
+      title: "Open tags",
+      icon: ICONS.tags,
+      keywords: ["tag", "label", "contextualise"],
+      context: "global",
+      onSelect({ openScreen }) {
+        openScreen({ screenId: "tags" });
+      },
+    }),
+  ];
+  const removers = [
+    client.addScreen({ id: "tags", title: (params) => (params.agentId ? "Tags for this agent" : "Tags"), Component: TagsScreen }),
+    client.addSidebarFooterItem({ id: "tags", title: "Tags", Component: TagsSidebarItem }),
+    client.addScreen({ id: "knowledge", title: "Project knowledge", Component: KnowledgeScreen }),
+    client.addSidebarFooterItem({ id: "knowledge", title: "Project knowledge", Component: KnowledgeSidebarItem }),
+    client.addWorkspacePanel({ id: "knowledge", title: "Project knowledge", icon: ICONS.knowledge, Component: WorkspaceKnowledgePanel }),
+    client.addSettingsScreen({ id: "snapshot", title: "Contextualise", icon: LOGO, Component: SnapshotSettingsScreen }),
+    // Paseo's Attach menu lists sources in this order: Project sits right after Chat.
+    client.addAttachmentSource(agentAttachmentSource),
+    client.addAttachmentSource(knowledgeAttachmentSource),
+    client.addAttachmentSource(terminalAttachmentSource),
+    // Tagging no longer adds timeline rows; this still draws the rows v0.2.1 added.
+    client.addTimelineRenderer({ kind: RECEIPT_KIND, version: 1, schema: receiptSchema, Component: (props) => <ReceiptRow {...props} openTags={openTagsFor} /> }),
+    client.addTimelineRenderer({ kind: HISTORY_ROW_KIND, version: 1, schema: historyNoteSchema, Component: HistoryNoteRow }),
+    client.addTimelineRenderer({ kind: FETCH_RESULT_KIND, version: 1, schema: fetchResultSchema, Component: (props) => <FetchResultRow {...props} openItem={openItem} openTags={openTagsFor} /> }),
+    followAgentPills(client, openTagsFor),
+    followTagsSetting(client, registerTags),
+    followLinkPills(client),
+    // The status shows as a row in the chat; Paseo shows a thrown error as a toast.
+    client.addSlashCommand({
+      name: "history",
+      description: "This chat's history tools: status and size, or turn them on or off",
+      argumentHint: "[status | on | off]",
+      context: "agent",
+      async onSubmit({ args, agent, rpc }) {
+        await readable(() => rpc(historyCommandRpc, { agentId: agent.id, action: parseHistoryCommand(args) }));
+      },
+    }),
     // Two items, so each title says what it will do; Command Center items cannot report a result.
     ...([true, false] as const).map((pinned) =>
       client.addCommandCenterItem({
@@ -165,16 +182,6 @@ export default function contribute(client: PluginClientContext) {
       context: "workspace",
       onSelect({ openPanel }) {
         openPanel("knowledge");
-      },
-    }),
-    client.addCommandCenterItem({
-      id: "open-tags",
-      title: "Open tags",
-      icon: ICONS.tags,
-      keywords: ["tag", "label", "contextualise"],
-      context: "global",
-      onSelect({ openScreen }) {
-        openScreen({ screenId: "tags" });
       },
     }),
   ];

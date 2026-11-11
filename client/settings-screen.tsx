@@ -306,8 +306,15 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
       </SettingsSection>
       <SettingsSection title="Tags and attachments">
         <SettingsCard>
-          <SettingsSwitch label="Show the Tags button" hint="The Tags button in every message box." value={values.showPill} disabled={settings.saving} onValueChange={(value) => persist({ ...values, showPill: value })} />
-          <SettingsSelect label="Tags button shows" value={values.pillLabel} options={PILL_LABEL_OPTIONS} disabled={settings.saving || !values.showPill} onValueChange={(value) => persist({ ...values, pillLabel: value })} />
+          <SettingsSwitch
+            label="Tags"
+            hint="Group chats under tags and save Jira, Sentry, Slack, and Notion items into them. Off removes the Tags button, the Tags screen, Attach > Tag, and the /tag commands, and stops keeping items up to date; your tags and items are kept for when you switch it back on."
+            value={values.tagsEnabled}
+            disabled={settings.saving}
+            onValueChange={(value) => persist({ ...values, tagsEnabled: value })}
+          />
+          <SettingsSwitch label="Show the Tags button" hint="The Tags button in every message box." value={values.showPill} disabled={settings.saving || !values.tagsEnabled} onValueChange={(value) => persist({ ...values, showPill: value })} />
+          <SettingsSelect label="Tags button shows" value={values.pillLabel} options={PILL_LABEL_OPTIONS} disabled={settings.saving || !values.tagsEnabled || !values.showPill} onValueChange={(value) => persist({ ...values, pillLabel: value })} />
         </SettingsCard>
       </SettingsSection>
       {/* The Attached popover stays a list and a search box; how attaching works is said here. */}
@@ -326,14 +333,14 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
             hint="Which assistant reads Jira, Sentry, Slack, and Notion items for you; Automatic picks Claude when it can reach the app, else Codex."
             value={values.fetchProvider}
             options={PROVIDER_OPTIONS}
-            disabled={settings.saving}
+            disabled={settings.saving || !values.tagsEnabled}
             onValueChange={(value) => persist({ ...values, fetchProvider: value })}
           />
           <SettingsSwitch
             label="Tell the conversation when an item is saved"
             hint="Adds a short note with Read and Open tags to the conversation that asked for it."
             value={values.notifyFetchResults}
-            disabled={settings.saving}
+            disabled={settings.saving || !values.tagsEnabled}
             onValueChange={(value) => persist({ ...values, notifyFetchResults: value })}
           />
         </SettingsCard>
@@ -459,7 +466,7 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
                 label="Keep saved items up to date"
                 hint="When on, a helper agent saves items older than the hours below again in the background, using some of your plan."
                 value={values.autoRefreshItems}
-                disabled={settings.saving}
+                disabled={settings.saving || !values.tagsEnabled}
                 onValueChange={(value) => persist({ ...values, autoRefreshItems: value })}
               />
               {ADVANCED_FIELDS.map(draftInput)}

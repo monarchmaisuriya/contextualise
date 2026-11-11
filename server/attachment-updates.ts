@@ -43,6 +43,9 @@ export interface SubjectRead {
 export interface Subject {
   key: string;
   read: (seen: unknown) => Promise<SubjectRead>;
+  // Still attached but switched off for now (attached tags while tags are off): not read, not
+  // counted, and its place is kept, so switching back on resumes where it stopped.
+  paused?: boolean;
 }
 
 // `workspaceChats`: the chats of its workspace whose summaries this chat was given by the tool.
@@ -180,7 +183,8 @@ export async function attachmentUpdates(chatId: string, newGrants: readonly stri
   for (const reason of new Set(refused)) notes.push(`${plural(refused.filter((entry) => entry === reason).length, "grant")} refused: ${reason}.`);
   const receiver = await deps.store.get(chatId);
   const grants = receiver.grants.map((raw) => deps.verify(raw)).filter((grant): grant is UpdatesGrant => grant !== null && receiver.redeemed[grant.id] === chatId);
-  const subjects = await deps.subjects(grants);
+  const all = await deps.subjects(grants);
+  const subjects = all.filter((subject) => !subject.paused);
   const reads = await Promise.allSettled(subjects.map((subject) => within(subject.read(receiver.seen[subject.key]), deps.waitMs ?? SUBJECT_WAIT_MS)));
   const sections: string[] = [];
   const seen: Record<string, unknown> = {};
@@ -215,7 +219,7 @@ export async function attachmentUpdates(chatId: string, newGrants: readonly stri
     if (count > 0 || (read.note && read.items.length === 0)) sections.push(lines.length > 0 ? `${head}\n${lines.join("\n")}` : head);
     seen[subject.key] = read.seen(count);
   });
-  await deps.store.advance(chatId, seen, new Set(subjects.map((subject) => subject.key)));
+  await deps.store.advance(chatId, seen, new Set(all.map((subject) => subject.key)));
   if (left > 0) notes.push(`${plural(left, "more new item")} not shown yet: call ${ATTACHMENT_UPDATES_TOOL} again (no arguments needed).`);
   const body = sections.length > 0 ? sections.join("\n\n") : `Nothing new in this chat's ${plural(subjects.length, "attachment")} since you last asked.`;
   return [REFERENCE, ...notes, body].join("\n\n");

@@ -35,6 +35,7 @@ const READINGS_CACHE_MS = 30_000;
 // Long enough to cover one burst of keystrokes in the picker, short enough that a new agent or
 // label shows up almost at once.
 const DIRECTORY_CACHE_MS = 5_000;
+export const TAGS_OFF = "Tags are off. Turn them on in Settings > Contextualise.";
 
 export function contributeTags(server: PluginServerContext, resolveRoot: () => Promise<string>) {
   const store = new TagStore(resolveRoot);
@@ -45,7 +46,7 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
   let serverId: Promise<string> | null = null;
   const fetcher = new Fetcher({ store, resolveRoot, settings: () => currentSettings(), configuredServers: () => configuredServers() });
   const autoRefresh = new AutoRefresh((paseo) => fetcher.refreshStale(paseo));
-  const followSetting = (state: Awaited<ReturnType<typeof settings.read>>) => autoRefresh.apply(state.status === "ready" && state.values.autoRefreshItems);
+  const followSetting = (state: Awaited<ReturnType<typeof settings.read>>) => autoRefresh.apply(state.status === "ready" && state.values.tagsEnabled && state.values.autoRefreshItems);
   void settings
     .read()
     .then(followSetting)
@@ -62,6 +63,15 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
     return state.values;
   }
 
+  // The daemon owns whether tag work happens: while tags are off every tag call is refused, whichever
+  // client sent it (one opened before the switch still shows the commands until it restarts).
+  const tagsOnly =
+    <Input, Context, Output>(handler: (input: Input, context: Context) => Promise<Output>) =>
+    async (input: Input, context: Context): Promise<Output> => {
+      if (!(await currentSettings()).tagsEnabled) throw new Error(TAGS_OFF);
+      return handler(input, context);
+    };
+
   // Every list and search reads the directory, so this is where the timer gets its Paseo handle.
   const directory = (paseo: PaseoApi): Promise<Directory> => {
     autoRefresh.use(paseo);
@@ -73,17 +83,17 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
     return mergeTags(stored, current);
   }
 
-  server.handle(addTagRpc, async ({ tags, agentId, workspaceId }) => ({ results: await store.add(tags, { agentId, workspaceId }) }));
-  server.handle(removeTagRpc, async ({ tags, agentId }) => ({ results: await store.remove(tags, agentId) }));
+  server.handle(addTagRpc, tagsOnly(async ({ tags, agentId, workspaceId }) => ({ results: await store.add(tags, { agentId, workspaceId }) })));
+  server.handle(removeTagRpc, tagsOnly(async ({ tags, agentId }) => ({ results: await store.remove(tags, agentId) })));
 
-  server.handle(fetchItemRpc, ({ tag, ref, provider, notifyAgentId }, { paseo }) => fetcher.start(paseo, tag, parseItemRef(ref), provider, notifyAgentId));
-  server.handle(fetchRouteRpc, async ({ ref, provider }) => {
+  server.handle(fetchItemRpc, tagsOnly(({ tag, ref, provider, notifyAgentId }, { paseo }) => fetcher.start(paseo, tag, parseItemRef(ref), provider, notifyAgentId)));
+  server.handle(fetchRouteRpc, tagsOnly(async ({ ref, provider }) => {
     const item = parseItemRef(ref);
     const route = await fetcher.route(item, provider);
     return { vendor: item.vendor, provider: route.provider, server: route.server };
-  });
-  server.handle(refreshNoteRpc, ({ tag, noteId }, { paseo }) => fetcher.refresh(paseo, tag, noteId));
-  server.handle(removeNoteRpc, ({ tag, noteId }) => store.removeNote(tag, noteId));
+  }));
+  server.handle(refreshNoteRpc, tagsOnly(({ tag, noteId }, { paseo }) => fetcher.refresh(paseo, tag, noteId)));
+  server.handle(removeNoteRpc, tagsOnly(({ tag, noteId }) => store.removeNote(tag, noteId)));
 
   // Fetch workers may use only the named read tools of the vendor they fetch; everything else they
   // ask for is denied. Every decision is logged, so the plugin log shows what each worker touched. Requests from any other agent are left alone.
@@ -95,27 +105,27 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
     await paseo.agents.ref(agent.id).respondToPermission({ requestId: request.id, response });
   });
 
-  server.handle(addLinkRpc, ({ tag, url, title }) => store.addLink(tag, { url, title }));
-  server.handle(removeLinkRpc, ({ tag, url }) => store.removeLink(tag, url));
-  server.handle(listTagsRpc, async (_input, { paseo }) => {
+  server.handle(addLinkRpc, tagsOnly(({ tag, url, title }) => store.addLink(tag, { url, title })));
+  server.handle(removeLinkRpc, tagsOnly(({ tag, url }) => store.removeLink(tag, url)));
+  server.handle(listTagsRpc, tagsOnly(async (_input, { paseo }) => {
     const [tags, pins, current] = await Promise.all([listTags(paseo), store.pinnedAgents(), directory(paseo)]);
     return { tags, pinnedAgents: mergePins(pins, current) };
-  });
-  server.handle(describeAgentRpc, async ({ agentId }, { paseo }) => describeAgent(await directory(paseo), agentId));
+  }));
+  server.handle(describeAgentRpc, tagsOnly(async ({ agentId }, { paseo }) => describeAgent(await directory(paseo), agentId)));
   server.handle(pinAgentRpc, ({ agentId, pinned }) => store.pinAgent(agentId, pinned));
 
-  server.handle(previewTagRpc, async ({ tag }, { paseo }) => {
+  server.handle(previewTagRpc, tagsOnly(async ({ tag }, { paseo }) => {
     const options = await currentSettings();
     const found = (await listTags(paseo)).find((summary) => summary.key === tagKey(tag));
     if (!found) throw new Error(`No tag named "${tag}"`);
     const item = await tagAttachment(paseo, readings, found, options);
     return { subtitle: item.subtitle ?? "", text: item.text };
-  });
+  }));
 
-  server.handle(searchTagsRpc, async ({ query }, { paseo }) => {
+  server.handle(searchTagsRpc, tagsOnly(async ({ query }, { paseo }) => {
     const options = await currentSettings();
     return { items: await searchTags(paseo, readings, await listTags(paseo), query, options, knowledge.attachmentGrant) };
-  });
+  }));
 
   server.handle(searchAgentsRpc, async ({ query }, { paseo }) => {
     const options = await currentSettings();

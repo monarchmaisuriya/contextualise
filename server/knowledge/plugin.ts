@@ -720,16 +720,20 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     await ref.refresh().catch(() => undefined);
     const createdAt = (ref.current() as { createdAt?: string } | null)?.createdAt ?? new Date().toISOString();
     const earliest = (a: string, b: string) => (Date.parse(a) <= Date.parse(b) ? a : b);
-    const chats = new Map<string, { title: string; start: string; note?: string }>();
-    const addChat = (chatId: string, title: string, start: string, note?: string) => {
+    // A chat reached only through attached tags is paused while tags are off.
+    const chats = new Map<string, { title: string; start: string; note?: string; paused: boolean }>();
+    const addChat = (chatId: string, title: string, start: string, note?: string, paused = false) => {
       if (!followable(chatId)) return;
       const known = chats.get(chatId);
-      chats.set(chatId, known ? { ...known, start: earliest(known.start, start), note: Date.parse(start) < Date.parse(known.start) ? note : known.note } : { title, start, note });
+      chats.set(chatId, known ? { ...known, start: earliest(known.start, start), note: Date.parse(start) < Date.parse(known.start) ? note : known.note, paused: known.paused && paused } : { title, start, note, paused });
     };
     const terminals = new Map<string, { title: string; lines: number }>();
     const files = new Map<string, string>();
     const tagItems = new Map<string, { title: string; start: string; tag: () => Promise<TagSummary | null> }>();
-    const tags = grants.some((grant) => grant.kind === "tag") && deps.listTags ? await deps.listTags(paseo) : [];
+    const hasTags = grants.some((grant) => grant.kind === "tag");
+    const tags = hasTags && deps.listTags ? await deps.listTags(paseo) : [];
+    // While tags are off, attached tags are paused, not dropped: switching back on resumes them.
+    const tagsPaused = hasTags && !(await deps.settings()).tagsEnabled;
     const terminalNames = grants.some((grant) => grant.kind === "terminal") ? new Map((await paseo.terminals.list()).entries.map((terminal) => [terminal.id, terminal.name])) : new Map<string, string>();
     for (const grant of grants) {
       if (grant.kind === "chat-updates") addChat(grant.agentId, `Chat ${JSON.stringify(titleOf(grant.agentId))}`, grant.upTo);
@@ -745,7 +749,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
         for (const member of found?.agents ?? []) {
           if (member.state === "missing") continue;
           const late = Date.parse(member.taggedAt) > Date.parse(grant.upTo);
-          addChat(member.agentId, `Chat ${JSON.stringify(member.title ?? titleOf(member.agentId))} (tag ${JSON.stringify(name)})`, late ? member.taggedAt : grant.upTo, late ? "Newly tagged; its messages since then:" : undefined);
+          addChat(member.agentId, `Chat ${JSON.stringify(member.title ?? titleOf(member.agentId))} (tag ${JSON.stringify(name)})`, late ? member.taggedAt : grant.upTo, late ? "Newly tagged; its messages since then:" : undefined, tagsPaused);
         }
       }
     }
@@ -756,9 +760,9 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       for (const folder of foldersOf(live)) folders.push(folderSubject(`folder:${folder.path}`, `Attached project ${JSON.stringify(folder.label)} (${folder.path})`, folder.path, createdAt));
       for (const chat of await attachedChats(paseo, caller.workspaceId, caller.id)) addChat(chat.id, `Chat ${JSON.stringify(chat.title)} in attached workspace ${chat.workspace}`, createdAt);
     }
-    for (const [chatId, chat] of chats) subjects.push(chatSubject(`chat:${chatId}`, chat.title, { time: chat.start }, () => timelineOf(paseo, chatId), chat.note));
+    for (const [chatId, chat] of chats) subjects.push({ ...chatSubject(`chat:${chatId}`, chat.title, { time: chat.start }, () => timelineOf(paseo, chatId), chat.note), paused: chat.paused });
     for (const [terminalId, terminal] of terminals) subjects.push(terminalSubject(`terminal:${terminalId}`, terminal.title, terminalId, terminal.lines, { capture: (id, start) => paseo.terminals.ref(id).capture({ start, stripAnsi: true }) }));
-    for (const [key, item] of tagItems) subjects.push(tagNotesSubject(`tag:${key}:items`, item.title, item.tag, item.start));
+    for (const [key, item] of tagItems) subjects.push({ ...tagNotesSubject(`tag:${key}:items`, item.title, item.tag, item.start), paused: tagsPaused });
     for (const [path, upTo] of files) subjects.push(fileSubject(`file:${path}`, path, upTo));
     return [...subjects, ...folders];
   };

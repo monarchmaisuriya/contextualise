@@ -1,4 +1,4 @@
-import { openExternalUrl, type PluginScreenProps, useRpc } from "@getpaseo/plugin/client";
+import { openExternalUrl, type PluginScreenProps, useRpc, useSettings } from "@getpaseo/plugin/client";
 import { ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useState } from "react";
@@ -17,6 +17,7 @@ import {
   removeLinkRpc,
   removeNoteRpc,
   removeTagRpc,
+  snapshotSettings,
   tagKey,
   type TagSummary,
   VENDOR_LABELS,
@@ -27,7 +28,7 @@ import { errorText } from "./errors";
 import { FetchForm, FULL_WIDTH_FIELD } from "./fetch-form";
 import { ICONS, VENDOR_ICONS } from "./icons";
 import { ago, Button, IconButton, ListRow, Page, plural, ReaderSheet, SearchField, SectionHeader, Segmented, StateView, type Styles, summary, TAGS_QUERY, useStyles, useTagChange } from "./kit";
-import { onTagsChanged } from "./tag-events";
+import { onTagsChanged, tagsChanged } from "./tag-events";
 import { agentStatus, filterPlaceholder, filterTags, liveLine, selectedTag, SORT_LABELS, SORTS, type Sort, sortTags } from "./tag-list";
 
 type Navigation = PluginScreenProps["navigation"];
@@ -270,7 +271,30 @@ function TagDetail({ tag, styles, navigation, onBack, onRead }: { tag: TagSummar
   );
 }
 
-export function TagsScreen({ theme, layout, params, navigation }: PluginScreenProps) {
+// While tags are off the daemon refuses tag calls, so the screen says so and offers to turn them on.
+// Turning on here fires tagsChanged, so this client adds the tag commands back at once.
+export function TagsScreen(props: PluginScreenProps) {
+  const styles = useStyles(props.theme, props.layout.compact);
+  const settings = useSettings(snapshotSettings);
+  // Not the tag list yet: while tags are off the daemon would refuse it and flash an error.
+  if (settings.status === "loading")
+    return (
+      <Page styles={styles}>
+        <StateView state="loading" styles={styles} />
+      </Page>
+    );
+  if (settings.status === "ready" && !settings.values.tagsEnabled) {
+    const turnOn = () => void settings.save({ ...settings.values, tagsEnabled: true }, settings.revision).then((saved) => saved && tagsChanged());
+    return (
+      <Page styles={styles}>
+        <StateView state="empty" text="Tags are off: no Tags button, Attach > Tag, tag commands, or saved items. Your tags and items are kept." actions={[{ label: "Turn on", icon: ICONS.tags, onPress: turnOn }]} styles={styles} />
+      </Page>
+    );
+  }
+  return <TagsView {...props} />;
+}
+
+function TagsView({ theme, layout, params, navigation }: PluginScreenProps) {
   const styles = useStyles(theme, layout.compact);
   const list = useRpc(listTagsRpc);
   const queryClient = useQueryClient();

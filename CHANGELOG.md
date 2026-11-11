@@ -2,6 +2,16 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.32.0 - 2026-11-12
+
+### Added
+
+- **A "Tags" switch** (Settings > Contextualise > Tags and attachments, on by default). Off removes every tag surface from the app: the Tags button, the Tags screen and sidebar row, Attach > Tag, `/tag`, `/untag`, `/tag-link`, `/tag-fetch`, and "Tag this agent..." and "Open tags" in the Command Center. Items are no longer saved or kept up to date, attached tags are paused in `attachment_updates` (and resume where they stopped, without repeating anything), and the daemon refuses every tag call with "Tags are off. Turn them on in Settings > Contextualise." Nothing is deleted: tags, links, saved items, and pinned agents come back when the switch is turned on. In the window where it is switched, the commands come and go at once; another window or phone already open catches up when it restarts.
+
+### Changed
+
+- **Attach > Tag is listed last** in the Attach menu, because it is added once the settings say tags are on.
+
 ## 0.31.0 - 2026-11-11
 
 ### Fixed

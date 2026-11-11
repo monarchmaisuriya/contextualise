@@ -1,5 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { pinAgentRpc } from "../shared/contracts";
+import { tagsChanged } from "./tag-events";
 
 // The app (not the daemon) checks client registrations, so a bad name only shows up as a failed
 // plugin in Paseo. This runs the real index.client.tsx against a fake client that applies the
@@ -11,14 +12,18 @@ vi.mock("@tanstack/react-query", () => ({}));
 
 const PASEO_NAME = /^[a-z][a-z0-9-]*$/;
 
-test("every name the plugin registers in the app is one Paseo accepts", async () => {
+// The fake client keeps what is registered now: a remover takes its name out again.
+function fakeClient(settings: () => Record<string, unknown>) {
   const seen = new Map<string, Set<string>>();
+  const calls: string[] = [];
   const accept = (kind: string, name: string) => {
     expect(name, `${kind} "${name}"`).toMatch(PASEO_NAME);
     const names = seen.get(kind) ?? new Set();
     expect(names.has(name), `duplicate ${kind} "${name}"`).toBe(false);
     seen.set(kind, names.add(name));
-    return () => {};
+    return () => {
+      names.delete(name);
+    };
   };
   const pills: { agentId: string; id: string; label?: string }[] = [];
   const registered = new Map<string, unknown>();
@@ -32,14 +37,16 @@ test("every name the plugin registers in the app is one Paseo accepts", async ()
   const client = new Proxy(
     {
       paseo: { agents: { list: async () => ({ subscription }) } },
-      rpc: async (contract: { name: string }) =>
-        contract.name.startsWith("settings.")
-          ? { status: "ready", revision: "r", values: { showPill: true, pillLabel: "count" } }
+      rpc: async (contract: { name: string }) => {
+        calls.push(contract.name);
+        return contract.name.startsWith("settings.")
+          ? { status: "ready", revision: "r", values: settings() }
           : contract.name === "links.files-available"
             ? { available: true }
             : contract.name === "links.count"
               ? { count: 1 }
-              : { tags },
+              : { tags };
+      },
       addTimelineRenderer: (r: { kind: string; version: number }) => {
         expect(Number.isInteger(r.version) && r.version >= 1).toBe(true);
         return accept("timeline renderer kind", r.kind);
@@ -61,15 +68,26 @@ test("every name the plugin registers in the app is one Paseo accepts", async ()
         }),
     },
   );
+  const names = (kind: string) => [...(seen.get(kind) ?? [])];
+  return { client, names, pills, registered, calls };
+}
+const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test("every name the plugin registers in the app is one Paseo accepts", async () => {
+  const { client, names, pills, registered } = fakeClient(() => ({ showPill: true, pillLabel: "count" }));
   const { default: contribute } = await import("../index.client");
   const cleanup = contribute(client as never);
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  expect([...(seen.get("timeline renderer kind") ?? [])]).toEqual(["receipt", "history-note", "fetch-result"]);
-  // Attach > Project file is added once a workspace has an attached project.
-  expect([...(seen.get("addAttachmentSource") ?? [])]).toEqual(["tag", "agent", "knowledge", "terminal", "attached-file"]);
-  expect([...(seen.get("addCommandCenterItem") ?? [])]).toEqual(["tag-agent", "pin-agent", "unpin-agent", "open-knowledge", "open-workspace-knowledge", "open-tags"]);
-  expect([...(seen.get("slash command name") ?? [])]).toEqual(["history", "tag", "untag", "tag-link", "tag-fetch"]);
-  expect([...(seen.get("addWorkspacePanel") ?? [])]).toEqual(["knowledge"]);
+  await settled();
+  expect(names("timeline renderer kind")).toEqual(["receipt", "history-note", "fetch-result"]);
+  // Attach > Tag is added once the settings say tags are on; Attach > Project file once a workspace
+  // has an attached project.
+  expect(names("addAttachmentSource").sort()).toEqual(["agent", "attached-file", "knowledge", "tag", "terminal"]);
+  // Paseo lists sources in registration order: Project (knowledge) stays right after Chat, and Tag,
+  // added once the settings are read, comes after the sources registered at start.
+  expect(names("addAttachmentSource").filter((name) => name !== "attached-file")).toEqual(["agent", "knowledge", "terminal", "tag"]);
+  expect(names("addCommandCenterItem")).toEqual(["pin-agent", "unpin-agent", "open-knowledge", "open-workspace-knowledge", "tag-agent", "open-tags"]);
+  expect(names("slash command name")).toEqual(["history", "tag", "untag", "tag-link", "tag-fetch"]);
+  expect(names("addWorkspacePanel")).toEqual(["knowledge"]);
   expect(pills).toEqual([
     { agentId: "a1", id: "tags", label: "1 tag", visible: true },
     { agentId: "a1", id: "linked-projects", label: "Attached (1)" },
@@ -80,5 +98,30 @@ test("every name the plugin registers in the app is one Paseo accepts", async ()
     await (registered.get(id) as { onSelect(context: unknown): Promise<void> }).onSelect({ agent: { id: "a1", workspaceId: "w1" }, rpc });
     expect(rpc).toHaveBeenCalledWith(pinAgentRpc, { agentId: "a1", pinned });
   }
+  cleanup();
+});
+
+test("while tags are off nothing tag-only is registered, and switching them on in this client adds it all", async () => {
+  let values: Record<string, unknown> = { tagsEnabled: false };
+  const { client, names, pills, calls } = fakeClient(() => values);
+  const { default: contribute } = await import("../index.client");
+  const cleanup = contribute(client as never);
+  await settled();
+  expect(names("addAttachmentSource")).not.toContain("tag");
+  expect(names("slash command name")).toEqual(["history"]);
+  expect(names("addCommandCenterItem")).toEqual(["pin-agent", "unpin-agent", "open-knowledge", "open-workspace-knowledge"]);
+  expect(pills.find((pill) => pill.id === "tags")).toMatchObject({ visible: false });
+  expect(calls).not.toContain("tags.list");
+  values = { tagsEnabled: true };
+  tagsChanged();
+  await settled();
+  expect(names("addAttachmentSource")).toContain("tag");
+  expect(names("slash command name")).toEqual(["history", "tag", "untag", "tag-link", "tag-fetch"]);
+  expect(names("addCommandCenterItem")).toContain("open-tags");
+  expect(pills.find((pill) => pill.id === "tags")).toMatchObject({ visible: true });
+  values = { tagsEnabled: false };
+  tagsChanged();
+  await settled();
+  expect(names("slash command name")).toEqual(["history"]);
   cleanup();
 });

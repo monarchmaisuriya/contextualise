@@ -14,6 +14,8 @@ paseo plugin install git:monarchmaisuriya/contextualise --ref v0.16.0
 
 ## Tags
 
+Tags are on by default. Switching **Tags** off in Settings > Contextualise removes everything below from the app: the Tags button, the Tags screen and its sidebar row, Attach > Tag, the four tag commands, and "Tag this agent..." and "Open tags" in the Command Center. Saving and refreshing items stops, attached tags are paused in `attachment_updates` (they resume where they stopped), and the daemon refuses tag calls. Your tags, links, and items stay on disk for when you switch it back on. Pinning agents in the Command Center keeps working. Another Paseo window or phone that was already open keeps the commands until it restarts; using one says "Tags are off".
+
 Every agent's composer has a **Tags** pill next to Tasks and Subagents. Its label shows the agent's tags ("Tag" when it has none, "auth rewrite +2" when it has three). Press it to:
 
 - remove a tag (tap a filled chip),
@@ -273,7 +275,7 @@ Project knowledge is stored in `<PASEO_HOME>/plugin-data/contextualise/knowledge
 
 ## Settings
 
-Settings > Contextualise opens on eight switches and choices: knowledge on, include code, write summaries, search without asking, the Tags button and what it shows, which agent saves items, and whether the conversation is told. Everything else is under **More settings**, which stays open while a typed value waits to be saved. All of them:
+Settings > Contextualise opens on its main switches and choices: knowledge on, include code, write summaries, search without asking, tags on, the Tags button and what it shows, which agent saves items, and whether the conversation is told. Everything else is under **More settings**, which stays open while a typed value waits to be saved. All of them:
 
 | Section | Setting | Default |
 | --- | --- | --- |
@@ -295,6 +297,7 @@ Settings > Contextualise opens on eight switches and choices: knowledge on, incl
 | | Recent turns per agent | 6 (1 to 50) |
 | | Terminal lines to attach | 200 (10 to 5,000) |
 | | Include labeled workspaces, links, fetched items, agent conversations | all on |
+| Tags | Tags (off removes the Tags button, screen, and sidebar row, Attach > Tag, `/tag`, `/untag`, `/tag-link`, `/tag-fetch`, the tag Command Center items, saving items, and keeping them up to date; the daemon refuses tag calls; stored tags and items are kept) | on |
 | Tags button | Show the Tags button; show tag names or a count | on; names |
 | | Longest tag name on the pill | 24 (10 to 60) |
 | Attach lists | Label before each title: none, or a word (Claude, Tag, Terminal) | none |
