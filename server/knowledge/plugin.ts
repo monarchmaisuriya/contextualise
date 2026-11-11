@@ -40,7 +40,7 @@ import { ATTACHMENT_UPDATES_TOOL, attachmentUpdates, chatSubject, fileSubject, f
 import { type AttachedChat, attachedHistoryCache, attachedHistoryTools, workspaceHistoryCache, workspaceHistoryTools } from "../attached-history";
 import { SUMMARY_OUTPUT_SCHEMA, SummaryStore } from "../chat-summaries";
 import { isUserChat, isWorkerCwd } from "../workers";
-import { sharedFolderNote, unavailableNote, withWorkspaceChats, WorkspaceSummaries, workspaceChatsSection } from "../workspace-chats";
+import { sharedFolderNote, unavailableNote, withoutSectionMarkers, withWorkspaceChats, WorkspaceSummaries, workspaceChatsPage, workspaceChatsSection } from "../workspace-chats";
 import { DailyRuns, RunQueue } from "./background-runs";
 import { HISTORY_ROW_KIND, historyCommandRpc } from "../../shared/history";
 import { newestFirst, newestPerKey, workspaceTimes } from "../newest-first";
@@ -66,6 +66,9 @@ const ATTACH_RESULTS = 20;
 const ATTACH_WAIT_MS = 300;
 // How long a new chat waits for its workspace's other chats to be listed; Paseo fails creation at 30 s.
 const WORKSPACE_CHATS_WAIT_MS = 5_000;
+// One page of other chats' summaries in a tool answer (about 10,000 tokens), under what clients keep of
+// a tool's output.
+const WORKSPACE_CHATS_PAGE_BYTES = 40 * 1024;
 // A chat summary worker's time limit, as for the task summaries.
 const SUMMARY_WORKER_MS = 5 * 60_000;
 
@@ -762,9 +765,9 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   const attachmentUpdatesTool = {
     name: ATTACHMENT_UPDATES_TOOL,
     title: "What changed in this chat's attachments",
-    description: `Call at the start of every turn, before answering. Returns what changed since you last called it in everything attached to this chat: new messages and steps in attached chats, new terminal output, new chats and items in attached tags, changed files, and new commits and uncommitted changes in attached projects and workspaces. Pass \`grants\`: every "${UPDATE_GRANT_LINE}" value in M's latest message (earlier ones are remembered). Items come whole; when more are waiting, call it again.`,
-    input: z.object({ grants: z.array(z.string().min(1).max(4_000)).max(50).optional() }),
-    execute: async ({ grants }: { grants?: string[] }, { agent, paseo }: { agent: { id?: string | null; workspaceId?: string | null }; paseo: PaseoApi }) => {
+    description: `Call at the start of every turn, before answering. Returns what changed since you last called it in everything attached to this chat: new messages and steps in attached chats, new terminal output, new chats and items in attached tags, changed files, and new commits and uncommitted changes in attached projects and workspaces. Pass \`grants\`: every "${UPDATE_GRANT_LINE}" value in M's latest message (earlier ones are remembered). Items come whole; when more are waiting, call it again. Pass \`workspaceChats: true\` when your instructions say so, to also get a summary of each of this workspace's other chats.`,
+    input: z.object({ grants: z.array(z.string().min(1).max(4_000)).max(50).optional(), workspaceChats: z.boolean().optional() }),
+    execute: async ({ grants, workspaceChats }: { grants?: string[]; workspaceChats?: boolean }, { agent, paseo }: { agent: { id?: string | null; workspaceId?: string | null }; paseo: PaseoApi }) => {
       remember(paseo);
       if (!agent?.id) return { isError: true, text: "Paseo did not say which chat is asking." };
       if (!(await historyOn())) return { isError: true, text: "Chat history tools are off (Settings > Contextualise)." };
@@ -772,7 +775,13 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       try {
         const { tokens } = await runtime;
         const caller = { id: agent.id, workspaceId: agent.workspaceId ?? null };
-        return { text: await attachmentUpdates(agent.id, grants ?? [], { store: seenStore, verify: (grant) => verifyAnyGrant(tokens, grant), subjects: (found) => updateSubjects(paseo, caller, found) }) };
+        // The workspace's other chats, for a chat whose creation could not place it in its workspace
+        // (a folder several workspaces share): Paseo names the workspace here.
+        const [others, updates] = await Promise.all([
+          workspaceChats ? workspaceChatsGiven(paseo, caller) : null,
+          attachmentUpdates(agent.id, grants ?? [], { store: seenStore, verify: (grant) => verifyAnyGrant(tokens, grant), subjects: (found) => updateSubjects(paseo, caller, found) }),
+        ]);
+        return { text: others ? `${others}\n\n${updates}` : updates };
       } catch (error) {
         return { isError: true, text: error instanceof Error ? error.message : String(error) };
       }
@@ -810,35 +819,63 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   // The section for a new chat in workspace W: every other chat of W that is M's own and not archived,
   // newest first, with its stored summary. Never throws and never waits for a model: a failure, or a
   // chat list slower than the deadline, becomes one line. Chats without a current summary are queued.
+  // W's other chats that are M's own and not archived, newest first, with their stored summaries; "late"
+  // past the deadline. `excluding`: the chat asking, when the tool gives them to a chat that exists.
+  const listWorkspaceChats = async (paseo: PaseoApi, workspaceId: string, excluding?: string) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<"late">((resolve) => {
+      timer = setTimeout(() => resolve("late"), WORKSPACE_CHATS_WAIT_MS);
+    });
+    return Promise.race([
+      (async () => {
+        const [agents, background, off, entries, root] = await Promise.all([listAgents(paseo, false), backgroundWorkspaces(paseo), chatHistory.off.offChats(), summaryStore.all(), deps.resolveRoot()]);
+        const chats = newestFirst(
+          agents.filter((agent) => agent.id !== excluding && agent.workspaceId === workspaceId && !agent.archivedAt && isUserChat(root, agent, background) && !off.has(agent.id)),
+          (agent) => agent.updatedAt,
+        );
+        return { chats, entries };
+      })(),
+      late,
+    ]).finally(() => clearTimeout(timer));
+  };
+  const asSummarised = (agent: ListedAgent) => ({ id: agent.id, provider: agent.provider ?? "", cwd: agent.cwd ?? "", workspaceId: agent.workspaceId ?? null, updatedAt: agent.updatedAt });
+  const summariesOn = () => deps.settings().then((values) => values.workspaceSummaries, () => false);
+  const lateNote = `Paseo took longer than ${WORKSPACE_CHATS_WAIT_MS / 1000} seconds to list them.`;
   const workspaceChatsFor = async (paseo: PaseoApi, linked: { workspaceId: string | null; folderShared?: boolean; failed?: string }): Promise<string | null> => {
     // Settings that cannot be read count as off, as for every other feature.
-    if (!(await deps.settings().then((values) => values.workspaceSummaries, () => false))) return null;
+    if (!(await summariesOn())) return null;
     try {
       const toolsOn = await historyOn();
       const workspaceId = linked.workspaceId;
       if (linked.failed) return unavailableNote(linked.failed);
       if (!workspaceId) return linked.folderShared ? sharedFolderNote(toolsOn) : null;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const late = new Promise<"late">((resolve) => {
-        timer = setTimeout(() => resolve("late"), WORKSPACE_CHATS_WAIT_MS);
-      });
-      const listed = await Promise.race([
-        (async () => {
-          const [agents, background, off, entries, root] = await Promise.all([listAgents(paseo, false), backgroundWorkspaces(paseo), chatHistory.off.offChats(), summaryStore.all(), deps.resolveRoot()]);
-          const chats = newestFirst(
-            agents.filter((agent) => agent.workspaceId === workspaceId && !agent.archivedAt && isUserChat(root, agent, background) && !off.has(agent.id)),
-            (agent) => agent.updatedAt,
-          );
-          return { chats, entries };
-        })(),
-        late,
-      ]).finally(() => clearTimeout(timer));
-      if (listed === "late") return unavailableNote(`Paseo took longer than ${WORKSPACE_CHATS_WAIT_MS / 1000} seconds to list them.`);
-      summaries.backfill(paseo, listed.chats.map((agent) => ({ id: agent.id, provider: agent.provider ?? "", cwd: agent.cwd ?? "", workspaceId: agent.workspaceId ?? null, updatedAt: agent.updatedAt })), listed.entries);
+      const listed = await listWorkspaceChats(paseo, workspaceId);
+      if (listed === "late") return unavailableNote(lateNote);
+      summaries.backfill(paseo, listed.chats.map(asSummarised), listed.entries);
       return workspaceChatsSection(listed.chats, listed.entries, toolsOn);
     } catch (error) {
       console.error(`[contextualise] could not list the other chats of workspace ${linked.workspaceId}: ${String(error)}`);
       return unavailableNote(error instanceof Error ? error.message : String(error));
+    }
+  };
+  // The same summaries for a chat that asks with attachment_updates (a chat created in a folder several
+  // workspaces share): a page of chats not given to it before, so asking again never repeats them.
+  const workspaceChatsGiven = async (paseo: PaseoApi, caller: { id: string; workspaceId: string | null }): Promise<string> => {
+    if (!caller.workspaceId) return "Paseo has no workspace for this chat, so there are no other chats to summarise.";
+    if (!(await summariesOn())) return "Summaries of the workspace's other chats are off (Settings > Contextualise).";
+    try {
+      const listed = await listWorkspaceChats(paseo, caller.workspaceId, caller.id);
+      if (listed === "late") return withoutSectionMarkers(unavailableNote(lateNote));
+      if (listed.chats.length === 0) return "This workspace has no other chats.";
+      const page = workspaceChatsPage(listed.chats, listed.entries, new Set((await seenStore.get(caller.id)).workspaceChats), WORKSPACE_CHATS_PAGE_BYTES);
+      if (page.given.length === 0) return "The summaries of this workspace's other chats were already given to this chat. `workspace_history_search` reads those chats word for word.";
+      await seenStore.markChatsGiven(caller.id, page.given);
+      const given = new Set(page.given);
+      summaries.backfill(paseo, listed.chats.filter((agent) => given.has(agent.id)).map(asSummarised), listed.entries);
+      return page.text;
+    } catch (error) {
+      console.error(`[contextualise] could not give chat ${caller.id} the other chats of its workspace: ${String(error)}`);
+      return withoutSectionMarkers(unavailableNote(error instanceof Error ? error.message : String(error)));
     }
   };
   const workspaceActivity = workspaceTimes;

@@ -2,6 +2,12 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## Unreleased
+
+### Fixed
+
+- **Chats in a folder several workspaces share now get the summaries of their workspace's other chats.** Paseo does not tell Contextualise which workspace a chat started from Paseo's own button is in, so such a chat got only a note. Its instructions now tell it to call `attachment_updates` with `workspaceChats: true` before answering the first message; Paseo tells that tool the chat's workspace, and it returns the summaries (leaving the chat itself out) in pages of whole entries of about 40 KB, each chat once, and queues the chats it gave that are not summarised yet. Without the tool, the note points to New Chat in the Attached button.
+
 ## 0.30.0 - 2026-11-11
 
 ### Added

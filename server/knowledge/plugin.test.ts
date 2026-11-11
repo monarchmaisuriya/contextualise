@@ -504,6 +504,42 @@ describe("contributeKnowledge", () => {
       }
     });
 
+    it("gives a chat in a shared folder the summaries on its first attachment_updates call, for its own workspace only", async () => {
+      type Tool = { name: string; execute(input: unknown, context: unknown): Promise<{ text: string; isError?: boolean }> };
+      values = { ...values, historyTools: true };
+      workspaceEntries.push({ id: "w-twin", workspaceDirectory: top });
+      const note = (await createWith({})).config.systemPrompt!;
+      expect(note).toContain("If `attachment_updates` is available, call it with `workspaceChats: true`");
+      expect(note).not.toContain('"New work"');
+      const agents = paseo.agents as Record<string, unknown>;
+      const original = agents.ref;
+      agents.ref = () => ({ respondToPermission, refresh: async () => {}, current: () => ({ createdAt: "2026-11-11T11:50:00.000Z" }), timeline: { refetch: async () => ({ epoch: "e1", reset: false, entries: [], hasOlder: false, hasNewer: false, startCursor: null, endCursor: null, error: null }) } });
+      try {
+        const opened = await (before.get("agent.session_open") as (input: unknown, context: unknown) => Promise<{ tools: Tool[] }>)({ request: { agentId: "a-new", workspaceId: "w-top", provider: "claude", cwd: top, reason: "create", purpose: "interactive", env: {}, tools: [], mcpServers: {} } }, { paseo });
+        const updates = opened.tools.find((entry) => entry.name === "attachment_updates")!;
+        // The caller is a-new: it is left out; the other chat of its workspace is given with its summary.
+        const given = (await updates.execute({ workspaceChats: true }, { agent: { id: "a-new", workspaceId: "w-top" }, paseo })).text;
+        expect(given).toContain("## Other chats in this workspace (Contextualise)");
+        expect(given).toContain('"Old work"');
+        expect(given).toContain("Goal: Ship the import");
+        expect(given).not.toContain('"New work"');
+        for (const left of ["Archived", "Helper", "summarise chat", "Background", "Other workspace"]) expect(given).not.toContain(left);
+        expect(given).not.toContain("<!-- contextualise:workspace-chats -->");
+        expect(given).toContain("Nothing new in this chat's 0 attachments");
+        // Asked again: each chat is given once.
+        expect((await updates.execute({ workspaceChats: true }, { agent: { id: "a-new", workspaceId: "w-top" }, paseo })).text).toContain("were already given to this chat");
+        // No workspace in Paseo's context: nothing to give.
+        expect((await updates.execute({ workspaceChats: true }, { agent: { id: "a-new", workspaceId: null }, paseo })).text).toContain("Paseo has no workspace for this chat");
+        // Without the flag, only the updates.
+        expect((await updates.execute({}, { agent: { id: "a-new", workspaceId: "w-top" }, paseo })).text).not.toContain("Other chats in this workspace");
+        // With the summaries off, it says so.
+        values = { ...values, workspaceSummaries: false };
+        expect((await updates.execute({ workspaceChats: true }, { agent: { id: "a-new", workspaceId: "w-top" }, paseo })).text).toContain("Summaries of the workspace's other chats are off");
+      } finally {
+        agents.ref = original;
+      }
+    });
+
     it("says why in a folder several workspaces share, and gives the summaries to a chat started with New Chat there", async () => {
       workspaceEntries.push({ id: "w-twin", workspaceDirectory: top });
       const shared = (await createWith({})).config.systemPrompt!;

@@ -45,7 +45,8 @@ export interface Subject {
   read: (seen: unknown) => Promise<SubjectRead>;
 }
 
-const receiverSchema = z.object({ grants: z.array(z.string()).default([]), seen: z.record(z.string(), z.unknown()).default({}) });
+// `workspaceChats`: the chats of its workspace whose summaries this chat was given by the tool.
+const receiverSchema = z.object({ grants: z.array(z.string()).default([]), seen: z.record(z.string(), z.unknown()).default({}), workspaceChats: z.array(z.string()).default([]) });
 // `redeemed`: each updates grant's id and the chat that redeemed it first, the only one that may use it.
 const fileSchema = z.object({ version: z.literal(1), chats: z.record(z.string(), receiverSchema), redeemed: z.record(z.string(), z.string()).default({}) });
 type Receiver = z.infer<typeof receiverSchema>;
@@ -89,7 +90,15 @@ export class SeenStore {
 
   async get(chatId: string): Promise<Receiver & { redeemed: Record<string, string> }> {
     const file = await this.read();
-    return { ...(file.chats[chatId] ?? { grants: [], seen: {} }), redeemed: file.redeemed };
+    return { ...(file.chats[chatId] ?? { grants: [], seen: {}, workspaceChats: [] }), redeemed: file.redeemed };
+  }
+
+  // Records the chats of its workspace whose summaries a chat was just given.
+  markChatsGiven(chatId: string, ids: readonly string[]): Promise<void> {
+    return this.change((file) => {
+      const receiver = file.chats[chatId] ?? { grants: [], seen: {}, workspaceChats: [] };
+      file.chats[chatId] = { ...receiver, workspaceChats: [...new Set([...receiver.workspaceChats, ...ids])] };
+    });
   }
 
   // Redeems new grants for a chat and keeps them, before anything is read, so a failure later in the
@@ -106,7 +115,7 @@ export class SeenStore {
           accepted.push(grant.raw);
         } else refused.push(owner === undefined ? "it expired before it was first used" : "it belongs to another chat");
       }
-      const receiver = file.chats[chatId] ?? { grants: [], seen: {} };
+      const receiver = file.chats[chatId] ?? { grants: [], seen: {}, workspaceChats: [] };
       file.chats[chatId] = { ...receiver, grants: [...new Set([...receiver.grants, ...accepted])] };
       return { accepted, refused };
     });
