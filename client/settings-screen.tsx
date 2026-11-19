@@ -271,8 +271,8 @@ export function SnapshotSettingsScreen({ theme }: PluginSurfaceProps) {
             onValueChange={(value) => persist({ ...values, historyTools: value })}
           />
           <SettingsSwitch
-            label="Give new chats a summary of this workspace's other chats"
-            hint="Off by default. When on, a helper agent keeps a summary of each of your chats, sending it to Claude or Codex with passwords and keys removed, and every new chat starts with the summaries of the other chats in its workspace. Uses some of your plan."
+            label="Keep searchable summaries of workspace chats"
+            hint="Off by default. A helper sends chat text to Claude or Codex with passwords and keys removed to keep short summaries. Chats find and read them when needed instead of loading them all at startup. With history recovery off, new chats still get the summaries. Uses some of your plan."
             value={values.workspaceSummaries}
             disabled={settings.saving}
             onValueChange={(value) => persist({ ...values, workspaceSummaries: value })}

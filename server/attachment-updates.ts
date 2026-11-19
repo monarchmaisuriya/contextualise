@@ -14,9 +14,8 @@ import { redactSecrets } from "./secrets";
 // What changed in a chat's attachments since it last asked. Each attachment M sends carries a signed
 // grant; the chat passes the new ones, and they are remembered with how far this chat has seen each
 // attachment, so later calls need no arguments and survive compaction. Projects and workspaces
-// attached with the Attached button are read from the chat's workspace on each call. Items are whole:
-// an answer holds as many as fit, the rest come with the next call, and nothing is seen until it was
-// delivered.
+// attached with the Attached button are read from the chat's workspace on each call. Ordinary items
+// arrive whole; oversized items use persisted parts. Nothing is seen until completely delivered.
 
 export const ATTACHMENT_UPDATES_TOOL = "attachment_updates";
 export const GRANT_LINE = "Contextualise attachment grant:";
@@ -49,7 +48,8 @@ export interface Subject {
 }
 
 // `workspaceChats`: the chats of its workspace whose summaries this chat was given by the tool.
-const receiverSchema = z.object({ grants: z.array(z.string()).default([]), seen: z.record(z.string(), z.unknown()).default({}), workspaceChats: z.array(z.string()).default([]) });
+const partialSchema = z.object({ hash: z.string(), offset: z.number().int().min(0) });
+const receiverSchema = z.object({ grants: z.array(z.string()).default([]), seen: z.record(z.string(), z.unknown()).default({}), workspaceChats: z.array(z.string()).default([]), partial: z.record(z.string(), partialSchema).optional() });
 // `redeemed`: each updates grant's id and the chat that redeemed it first, the only one that may use it.
 const fileSchema = z.object({ version: z.literal(1), chats: z.record(z.string(), receiverSchema), redeemed: z.record(z.string(), z.string()).default({}) });
 type Receiver = z.infer<typeof receiverSchema>;
@@ -60,8 +60,16 @@ type SeenFile = z.infer<typeof fileSchema>;
 // other. A file that cannot be read is never written over.
 export class SeenStore {
   private queue: Promise<unknown> = Promise.resolve();
+  private readonly deliveries = new Map<string, Promise<unknown>>();
 
   constructor(private readonly file: () => Promise<string>) {}
+
+  deliver<T>(chatId: string, work: () => Promise<T>): Promise<T> {
+    const next = (this.deliveries.get(chatId) ?? Promise.resolve()).then(work, work);
+    this.deliveries.set(chatId, next);
+    void next.finally(() => { if (this.deliveries.get(chatId) === next) this.deliveries.delete(chatId); }).catch(() => undefined);
+    return next;
+  }
 
   private async read(): Promise<SeenFile> {
     const path = await this.file();
@@ -125,11 +133,11 @@ export class SeenStore {
   }
 
   // Records how far the chat has seen the attachments just read; drops attachments it no longer has.
-  advance(chatId: string, seen: Readonly<Record<string, unknown>>, current: ReadonlySet<string>): Promise<void> {
+  advance(chatId: string, seen: Readonly<Record<string, unknown>>, current: ReadonlySet<string>, partial?: Receiver["partial"]): Promise<void> {
     return this.change((file) => {
       const receiver = file.chats[chatId];
       if (!receiver) return;
-      file.chats[chatId] = { ...receiver, seen: Object.fromEntries(Object.entries({ ...receiver.seen, ...seen }).filter(([key]) => current.has(key))) };
+      file.chats[chatId] = { ...receiver, ...(partial ? { partial } : {}), seen: Object.fromEntries(Object.entries({ ...receiver.seen, ...seen }).filter(([key]) => current.has(key))) };
     });
   }
 
@@ -160,6 +168,8 @@ export interface UpdatesDeps {
   budget?: number;
   waitMs?: number;
   now?: () => Date;
+  // Legacy summary-only requests still redeem new grants, but do not read or advance sources.
+  registerOnly?: boolean;
 }
 
 function within<T>(work: Promise<T>, ms: number): Promise<T> {
@@ -173,7 +183,12 @@ function within<T>(work: Promise<T>, ms: number): Promise<T> {
 // The answer to one call: new grants redeemed and kept, every attachment read, whole items within the
 // budget, and how far each was seen moved past exactly what was delivered.
 export async function attachmentUpdates(chatId: string, newGrants: readonly string[], deps: UpdatesDeps): Promise<string> {
+  return deps.store.deliver(chatId, () => deliverUpdates(chatId, newGrants, deps));
+}
+
+async function deliverUpdates(chatId: string, newGrants: readonly string[], deps: UpdatesDeps): Promise<string> {
   const budget = deps.budget ?? ANSWER_MAX_BYTES;
+  if (budget < 1024 || budget > ANSWER_MAX_BYTES) throw new Error("Expected attachment update budget between 1024 and 16384 bytes.");
   const now = deps.now ?? (() => new Date());
   const notes: string[] = [];
   const signed = newGrants.map((raw) => ({ raw, grant: deps.verify(raw) }));
@@ -181,6 +196,7 @@ export async function attachmentUpdates(chatId: string, newGrants: readonly stri
   if (unsigned > 0) notes.push(`${plural(unsigned, "grant")} refused: not written by Contextualise, or changed.`);
   const { refused } = await deps.store.redeem(chatId, signed.filter((entry) => entry.grant !== null).map((entry) => ({ raw: entry.raw, id: entry.grant!.id, expires: entry.grant!.expires })), now());
   for (const reason of new Set(refused)) notes.push(`${plural(refused.filter((entry) => entry === reason).length, "grant")} refused: ${reason}.`);
+  if (deps.registerOnly) return [...notes, "Attachment grants remembered; attachment content has not been advanced."].join("\n");
   const receiver = await deps.store.get(chatId);
   const grants = receiver.grants.map((raw) => deps.verify(raw)).filter((grant): grant is UpdatesGrant => grant !== null && receiver.redeemed[grant.id] === chatId);
   const all = await deps.subjects(grants);
@@ -188,41 +204,76 @@ export async function attachmentUpdates(chatId: string, newGrants: readonly stri
   const reads = await Promise.allSettled(subjects.map((subject) => within(subject.read(receiver.seen[subject.key]), deps.waitMs ?? SUBJECT_WAIT_MS)));
   const sections: string[] = [];
   const seen: Record<string, unknown> = {};
-  let used = bytes(REFERENCE) + 200;
-  const empty = used;
+  const partial = Object.fromEntries(Object.entries(receiver.partial ?? {}).filter(([key]) => all.some((subject) => subject.key === key)));
+  // Reserve all warnings and the continuation before delivering any content.
+  reads.forEach((result, index) => {
+    if (result.status === "rejected") notes.push(`Could not read ${redactSecrets(subjects[index].key).slice(0, 120)}: ${redactSecrets(result.reason instanceof Error ? result.reason.message : String(result.reason)).slice(0, 200)}`);
+  });
+  const noteText = notes.join("\n\n");
+  if (bytes(noteText) > budget / 2) throw new Error("Attachment warnings exceed the response budget; no update progress was advanced.");
+  let used = bytes(REFERENCE) + bytes(noteText) + 240;
   let left = 0;
   let full = false;
   reads.forEach((result, index) => {
     const subject = subjects[index];
     if (result.status === "rejected") {
-      notes.push(`Could not read ${redactSecrets(subject.key)}: ${redactSecrets(result.reason instanceof Error ? result.reason.message : String(result.reason)).slice(0, 200)}`);
       return;
     }
     const read = result.value;
     let count = 0;
     const lines: string[] = [];
-    const head = redactSecrets(`## ${read.title}${read.note ? `\n${read.note}` : ""}`);
+    const fullTitle = redactSecrets(read.title);
+    const displayTitle = fullTitle.length > 120 ? `${[...fullTitle].slice(0, 120).join("")}…` : fullTitle;
+    const note = read.note ? redactSecrets(read.note) : "";
+    if (bytes(note) > budget / 4) throw new Error("Attachment status note exceeds the response budget; no update progress was advanced.");
+    const head = `## ${displayTitle}${note ? `\n${note}` : ""}`;
     for (const item of read.items) {
       const text = redactSecrets(item.text);
       const size = bytes(text) + 1 + (count === 0 ? bytes(head) + 2 : 0);
-      // Whole items only; one larger than the whole budget is sent alone rather than cut.
-      if (full || (used + size > budget && used > empty)) {
+      const pending = count === 0 ? partial[subject.key] : undefined;
+      if (full) break;
+      if (pending || used + size > budget) {
+        // Keep ordinary items whole when they fit a fresh response.
+        if (!pending && size + bytes(REFERENCE) + 240 <= budget) { full = true; break; }
+        const hash = createHash("sha256").update(text).digest("hex");
+        const offset = pending?.hash === hash ? pending.offset : 0;
+        const changed = pending && pending.hash !== hash ? "Source changed; restarting this item's parts.\n" : "";
+        const open = `<update_part offset="${offset}" total="${text.length}">\n`;
+        const close = "\n</update_part>";
+        const room = budget - used - bytes(head) - bytes(changed) - bytes(open) - bytes(close) - 8;
+        let end = offset;
+        let taken = 0;
+        for (const character of text.slice(offset)) {
+          const length = bytes(character);
+          if (taken + length > room) break;
+          taken += length;
+          end += character.length;
+        }
+        if (end === offset) { full = true; break; }
+        const part = `${changed}${open}${text.slice(offset, end)}${close}`;
+        lines.push(part);
+        used += bytes(head) + bytes(part) + 4;
+        if (end < text.length) partial[subject.key] = { hash, offset: end };
+        else { delete partial[subject.key]; count += 1; }
         full = true;
         break;
       }
       lines.push(text);
       used += size;
       count += 1;
+      delete partial[subject.key];
     }
     left += read.items.length - count;
     // A note is said even when no item came with it (lines lost from scrollback, a rebuilt chat).
-    if (count > 0 || (read.note && read.items.length === 0)) sections.push(lines.length > 0 ? `${head}\n${lines.join("\n")}` : head);
+    if (lines.length > 0 || (read.note && read.items.length === 0)) sections.push(lines.length > 0 ? `${head}\n${lines.join("\n")}` : head);
     seen[subject.key] = read.seen(count);
   });
-  await deps.store.advance(chatId, seen, new Set(all.map((subject) => subject.key)));
   if (left > 0) notes.push(`${plural(left, "more new item")} not shown yet: call ${ATTACHMENT_UPDATES_TOOL} again (no arguments needed).`);
   const body = sections.length > 0 ? sections.join("\n\n") : `Nothing new in this chat's ${plural(subjects.length, "attachment")} since you last asked.`;
-  return [REFERENCE, ...notes, body].join("\n\n");
+  const answer = sections.length === 0 && notes.length === 0 ? body : [REFERENCE, ...notes, body].join("\n\n");
+  if (bytes(answer) > budget) throw new Error("Attachment update headers exceed the response budget; no update progress was advanced.");
+  await deps.store.advance(chatId, seen, new Set(all.map((subject) => subject.key)), partial);
+  return answer;
 }
 
 // A chat (attached, tagged, or in an attached workspace): its new requests, replies, commands and files.

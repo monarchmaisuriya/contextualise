@@ -38,7 +38,7 @@ describe("project section", () => {
         "Top-level folders: client, server",
         "Recent tasks:",
         '- 2026-10-28 "Fix item refs" (completed; shared/contracts.ts)',
-        "At the start of a task, search with knowledge_search (MCP server paseo-contextualise) for docs, decisions, and earlier work on the same area. Do this before reading docs or changing code. Open hits with knowledge_read; knowledge_outline and knowledge_history show a file's parts and past changes. Before changing code, knowledge_impact lists what uses those files and the tests to run. Use grep for exact code.",
+        "At the start of a task, search with knowledge_search (MCP server paseo-contextualise) before reading docs or changing code. Open hits with knowledge_read; knowledge_outline lists structure, knowledge_history past changes. Before edits, knowledge_impact lists users and tests. Use grep for exact code.",
         ATTACH_RULE,
         SECTION_END,
       ].join("\n"),

@@ -26,6 +26,8 @@ Pin the agents you attach often, from the Tags pill or the Command Center. Pinne
 
 Every chat gets tools to search and reload its own earlier history word for word, including what its context dropped when it was compacted, a note pointing it at them, a row in the chat after each compaction, and `/history` for status, size, and on or off per chat.
 
+Workspace context is loaded on demand: chats can find other chats in the same workspace by title or optional stored summary, search their recorded messages and tool outputs, and read exact redacted text in pages, archived chats included. There is no total history-age or chat-count retrieval cap. Each reply and scan is bounded, with continuation for more. Cross-chat reads require approval; other workspaces, helper chats and chats with `/history off` are excluded. New chats get short retrieval guidance instead of every summary; with history recovery off, explicitly enabled summaries retain the eager fallback. Long attachment updates arrive in lossless resumable parts within 16 KiB, rather than oversized replies.
+
 ## Attaching context
 
 The composer's Attach menu gets five sources:
