@@ -224,3 +224,11 @@ Independent check completed: three blocking draft findings accepted and fixed at
 ## Open questions
 
 - No product decisions waiting on M; judgement delegated. Live provider validation and actual token savings remain unverified and will not be presented as completed.
+
+## Release and live verification extension
+
+- M requested merge, release, reinstall and live testing, then explicitly said "do it for me" after the everyday-installation and production-write exception was explained (chat, 2026-11-19). This authorises this scoped install/test exception only, not unrelated settings or existing-chat writes.
+- Release 0.34.0: package.json and lockfile root identity updated without dependency changes; changelog dated from clock; README install ref and OVERVIEW updated. GitHub release, not npm publication or registry submission. Prior release is v0.33.0; prior running installed revision is 9ab5dbc169558dca55fa571381fd9067e2ae6291 (paseo plugin ls).
+- Sequence: verify release metadata -> commit on feature branch -> switch main and merge feature -> push main -> annotated v0.34.0 tag and GitHub release -> install exact tag -> require running/no error -> synthetic same-workspace retrieval and outsider refusal checks. Preserve all existing chats/data. Disposable test chats use synthetic facts only; no private history is needed.
+- Rollback: reinstall exact prior revision if new plugin cannot run. Never rewrite/delete release history automatically; any discovered product defect receives a new patch release. Stop on unexpected installation failure.
+- Verification before publication: npm test -- --reporter=dot --silent=passed-only: 659 passed/60 files; npm run typecheck exit 0 (2026-11-19 12:09). CLI Paseo 0.16.1 and gh 2.104.0; installed CLI help and official publishing/SDK docs checked. Git fetch: origin/main is ancestor, one feature commit ahead, no divergence. Existing untracked docs are untouched.
