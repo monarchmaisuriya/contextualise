@@ -115,6 +115,10 @@ export class WorkspaceSummaries {
 const START = "<!-- contextualise:workspace-chats -->";
 const END = "<!-- /contextualise:workspace-chats -->";
 
+export function workspaceHistoryNote(): string {
+  return [START, "## Workspace chat context (Contextualise)", "Other chats are not included automatically. If workspace_history_chats is available, use it to find chats by title or summary. Before answering a question about another chat, use workspace_history_search, then workspace_history_load or workspace_history_read for exact text. These cover every eligible other chat in this workspace, archived included. Follow search cursors and read offsets only as needed; there is no total retrieval cap. M approves cross-chat reads. Secrets and chats with /history off are excluded. If these tools are unavailable, say so rather than guess.", END].join("\n");
+}
+
 export interface ListedChat {
   id: string;
   title?: string | null;
@@ -143,7 +147,7 @@ function chatBlock(chat: ListedChat, entry: SummaryEntry | undefined, now: numbe
   const state = chat.status === "running" ? "running" : chat.requiresAttention ? "needs M" : "idle";
   const age = chat.updatedAt ? shortTimeAgo(chat.updatedAt, now) : "";
   const body = entry?.summary ? `\n${summaryText(entry.summary)}` : "";
-  return `### ${JSON.stringify(redactSecrets(chat.title?.trim() || chat.id))} (${[age && `${age} ago`, state].filter(Boolean).join(", ")})\n${coverage(chat, entry)}${body}`;
+  return `### ${JSON.stringify(redactSecrets(chat.title?.trim() || chat.id).slice(0, 120))} (${[age && `${age} ago`, state].filter(Boolean).join(", ")})\n${coverage(chat, entry)}${body}`;
 }
 
 const HEADING = "## Other chats in this workspace (Contextualise)";
@@ -158,7 +162,7 @@ export function workspaceChatsSection(chats: readonly ListedChat[], entries: Rea
 }
 
 // The same entries as a tool gives them, a page at a time: whole entries of chats not given before,
-// newest first, within `budget` bytes (one entry larger than that is given alone), and how many are
+// newest first, within `budget` bytes (an impossible entry fails before progress advances), and how many are
 // left for the next call. A tool's answer may be cut by the client past a size, so it is paged.
 export function workspaceChatsPage(chats: readonly ListedChat[], entries: Readonly<Record<string, SummaryEntry>>, given: ReadonlySet<string>, budget: number, now = Date.now()): { text: string; given: string[]; left: number } {
   const waiting = chats.filter((chat) => !given.has(chat.id));
@@ -168,7 +172,10 @@ export function workspaceChatsPage(chats: readonly ListedChat[], entries: Readon
   for (const chat of waiting) {
     const block = chatBlock(chat, entries[chat.id], now);
     const size = Buffer.byteLength(block, "utf8") + 2;
-    if (used + size > budget && blocks.length > 0) break;
+    if (used + size > budget) {
+      if (blocks.length === 0) throw new Error("A workspace summary does not fit this page; use workspace_history_search for its exact history.");
+      break;
+    }
     blocks.push(block);
     ids.push(chat.id);
     used += size;

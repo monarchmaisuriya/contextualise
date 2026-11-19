@@ -21,7 +21,7 @@ const EXCERPT_CHARS = 160;
 // The history tools' own calls are never searched or loaded, the attached_history_* ones included
 // (Claude names them through Paseo's MCP server, as mcp__paseo__history_search; Codex as
 // paseo.history_search).
-const OWN_TOOL = /(^|[_.])history_(search|browse|load|read)$/;
+const OWN_TOOL = /(^|[_.])history_(search|browse|load|read|chats)$/;
 
 export type HistoryKind = "you" | "assistant" | "tool" | "compaction" | "error";
 export interface HistoryRow {

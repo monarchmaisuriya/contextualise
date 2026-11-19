@@ -69,6 +69,12 @@ describe("attachmentUpdates", () => {
     expect(answer).toContain("Nothing new in this chat's 0 attachments");
   });
 
+  it("remembers grants for a summary-only call without advancing attachment progress", async () => {
+    const first = await call(["good.c1"], { registerOnly: true });
+    expect(first).toContain("remembered");
+    expect(await call([])).toContain("user: second, after the attachment");
+  });
+
   it("sends whole items within the budget, and the rest on the next call, none repeated or skipped", async () => {
     items = [user("old"), ...Array.from({ length: 12 }, (_, index) => agent(`reply ${index} ${"r".repeat(900)}`))];
     const seen: string[] = [];
@@ -82,12 +88,51 @@ describe("attachmentUpdates", () => {
     expect(seen).toEqual(Array.from({ length: 11 }, (_, index) => `reply ${index + 1}`));
   });
 
-  it("sends an item larger than the whole budget alone rather than cut it", async () => {
+  it("pages an oversized item losslessly within the answer budget", async () => {
     items = [user("old"), agent("x"), agent(`huge ${"h".repeat(6_000)}`), agent("after")];
     const first = await call(["good.c1"], { budget: 2_048 });
-    expect(first).toContain(`huge ${"h".repeat(6_000)}`);
-    expect(first).toContain("1 more new item not shown yet");
-    expect(await call([], { budget: 2_048 })).toContain("agent: after");
+    expect(Buffer.byteLength(first)).toBeLessThanOrEqual(2_048);
+    expect(first).toContain("part");
+    const chunks = [first];
+    // Exercise the repeated public delivery protocol, including its final acknowledgement.
+    for (let page = 0; page < 12 && chunks.at(-1)!.includes("not shown yet"); page += 1) chunks.push(await call([], { budget: 2_048 }));
+    const delivered = chunks.flatMap((chunk) => [...chunk.matchAll(/<update_part[^>]*>\n([\s\S]*?)\n<\/update_part>/g)].map((match) => match[1])).join("");
+    expect(delivered).toBe(`agent: huge ${"h".repeat(6_000)}`);
+    expect(chunks.join("\n")).toContain("agent: after");
+    expect(await call([])).toContain("Nothing new");
+  });
+
+  it("keeps partial delivery across restart and serializes concurrent receiver calls", async () => {
+    const file = join(mkdtempSync(join(tmpdir(), "contextualise-parts-")), "seen.json");
+    store = new SeenStore(async () => file);
+    items = [user("old"), agent("x"), agent("界🙂".repeat(2_000))];
+    const first = await call(["good.c1"], { budget: 2_048 });
+    store = new SeenStore(async () => file);
+    const [second, third] = await Promise.all([call([], { budget: 2_048 }), call([], { budget: 2_048 })]);
+    expect(first).toContain('offset="0"');
+    expect(second).not.toContain('offset="0"');
+    expect(third).not.toBe(second);
+    expect(Buffer.byteLength(second)).toBeLessThanOrEqual(2_048);
+    expect(Buffer.byteLength(third)).toBeLessThanOrEqual(2_048);
+    expect(second).not.toContain("�");
+  });
+
+  it("restarts an unfinished item explicitly when its redacted source changes", async () => {
+    items = [user("old"), agent("x"), agent("first " + "a".repeat(6_000))];
+    expect(await call(["good.c1"], { budget: 2_048 })).toContain('offset="0"');
+    items[2] = agent("changed " + "b".repeat(6_000));
+    const changed = await call([], { budget: 2_048 });
+    expect(changed).toContain("Source changed; restarting");
+    expect(changed).toContain('offset="0"');
+    expect(changed).toContain("agent: changed");
+    expect(Buffer.byteLength(changed)).toBeLessThanOrEqual(2_048);
+  });
+
+  it("delivers content even when an attachment has an oversized display heading", async () => {
+    const answer = await call([], { subjects: async () => [{ key: "long-title", read: async () => ({ title: "界".repeat(20_000), items: [{ text: "important update" }], seen: () => null }) }] });
+    expect(answer).toContain("important update");
+    expect(Buffer.byteLength(answer)).toBeLessThanOrEqual(16 * 1024);
+    expect(answer).not.toContain("more new item not shown yet");
   });
 
   it("refuses a grant past its deadline, and one another chat redeemed first", async () => {

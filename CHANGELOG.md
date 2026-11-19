@@ -2,6 +2,14 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## Unreleased
+
+### Changed
+
+- Workspace context is retrieved on demand while history recovery is on, instead of adding every chat summary at startup. `workspace_history_chats` discovers chats by title or optional summary; existing search/load/read tools can traverse any age of recorded same-workspace history with bounded replies and continuation. Cross-chat approval and privacy exclusions remain unchanged. History-off users who enabled summaries keep the eager fallback.
+- Oversized attachment updates arrive in resumable, lossless parts within 16 KiB. Partial progress survives restart; concurrent calls for one receiving chat are serialized. Legacy summary requests use separate pages so attachment progress is not advanced for text left out of a combined answer.
+- This plugin's own helper agents no longer receive unrelated history tools or startup guidance. Repeated guidance and no-change update replies are shorter. Summary setting copy now describes on-demand discovery.
+
 ## 0.33.0 - 2026-11-12
 
 ### Changed

@@ -478,7 +478,7 @@ describe("contributeKnowledge", () => {
       });
       try {
         const opened = await (before.get("agent.session_open") as (input: unknown, context: unknown) => Promise<{ tools: Tool[] }>)({ request: { agentId: "a-new", workspaceId: "w-top", provider: "claude", cwd: top, reason: "create", purpose: "interactive", env: {}, tools: [], mcpServers: {} } }, { paseo });
-        expect(opened.tools.map((entry) => entry.name).filter((name) => name.startsWith("workspace_history_"))).toEqual(["workspace_history_search", "workspace_history_load", "workspace_history_read"]);
+        expect(opened.tools.map((entry) => entry.name).filter((name) => name.startsWith("workspace_history_"))).toEqual(["workspace_history_chats", "workspace_history_search", "workspace_history_load", "workspace_history_read"]);
         const found = (await opened.tools.find((entry) => entry.name === "workspace_history_search")!.execute({ query: "list import" }, { agent: { id: "a-new", workspaceId: "w-top" }, paseo })).text;
         expect(found).toContain("Quoted from M's other chats in this workspace.");
         // Archived chats are searched; the caller, workers, helpers and other workspaces are not.
@@ -524,7 +524,7 @@ describe("contributeKnowledge", () => {
       values = { ...values, historyTools: true };
       workspaceEntries.push({ id: "w-twin", workspaceDirectory: top });
       const note = (await createWith({})).config.systemPrompt!;
-      expect(note).toContain("If `attachment_updates` is available, call it with `workspaceChats: true`");
+      expect(note).toContain("workspace_history_chats");
       expect(note).not.toContain('"New work"');
       const agents = paseo.agents as Record<string, unknown>;
       const original = agents.ref;
@@ -533,14 +533,18 @@ describe("contributeKnowledge", () => {
         const opened = await (before.get("agent.session_open") as (input: unknown, context: unknown) => Promise<{ tools: Tool[] }>)({ request: { agentId: "a-new", workspaceId: "w-top", provider: "claude", cwd: top, reason: "create", purpose: "interactive", env: {}, tools: [], mcpServers: {} } }, { paseo });
         const updates = opened.tools.find((entry) => entry.name === "attachment_updates")!;
         // The caller is a-new: it is left out; the other chat of its workspace is given with its summary.
-        const given = (await updates.execute({ workspaceChats: true }, { agent: { id: "a-new", workspaceId: "w-top" }, paseo })).text;
+        const grant = (await contribution.attachmentGrant({ kind: "tag", key: "auth", upTo: "2026-11-11T11:00:00.000Z" }))!.split(" ").at(-1)!;
+        const given = (await updates.execute({ workspaceChats: true, grants: [grant] }, { agent: { id: "a-new", workspaceId: "w-top" }, paseo })).text;
+        const delivery = JSON.parse(readFileSync(join(home, "plugin-data", "contextualise", "knowledge", "attachment-seen.json"), "utf8")).chats["a-new"];
+        expect(delivery.grants).toEqual([grant]);
+        expect(delivery.seen).toEqual({});
         expect(given).toContain("## Other chats in this workspace (Contextualise)");
         expect(given).toContain('"Old work"');
         expect(given).toContain("Goal: Ship the import");
         expect(given).not.toContain('"New work"');
         for (const left of ["Archived", "Helper", "summarise chat", "Background", "Other workspace"]) expect(given).not.toContain(left);
         expect(given).not.toContain("<!-- contextualise:workspace-chats -->");
-        expect(given).toContain("Nothing new in this chat's 0 attachments");
+        expect(given).toContain("attachment_updates");
         // Asked again: each chat is given once.
         expect((await updates.execute({ workspaceChats: true }, { agent: { id: "a-new", workspaceId: "w-top" }, paseo })).text).toContain("were already given to this chat");
         // No workspace in Paseo's context: nothing to give.
@@ -628,6 +632,25 @@ describe("contributeKnowledge", () => {
       expect((await (await tool("history_search")).execute({}, { agent: { id: null }, paseo })).isError).toBe(true);
       values = { ...values, historyTools: false };
       expect((await toolsOf()).some((entry) => entry.name.startsWith("history_"))).toBe(false);
+    });
+
+    it("gives fixed workspace retrieval guidance without eager summaries or inventory reads", async () => {
+      values = { ...values, workspaceSummaries: true };
+      agentsDown = true;
+      const made = await create(top);
+      agentsDown = false;
+      expect(made.config.systemPrompt).toContain("workspace_history_chats");
+      expect(made.config.systemPrompt).not.toContain("could not list this workspace's other chats");
+      expect(made.config.systemPrompt).not.toContain("No summary yet");
+    });
+
+    it("leaves this plugin's worker tools and instructions untouched", async () => {
+      const cwd = join(home, "plugin-data", "contextualise", "workers");
+      const made = await create(cwd, { systemPrompt: "Worker task only" });
+      expect(made.config.systemPrompt).toBe("Worker task only");
+      const inherited = { name: "vendor_read" };
+      const opened = await (before.get("agent.session_open") as (input: unknown, context: unknown) => Promise<{ tools: unknown[] }>)({ request: { agentId: "worker", cwd, tools: [inherited] } }, { paseo });
+      expect(opened.tools).toEqual([inherited]);
     });
 
     it("tells a new chat about the tools, and leaves its tool policy alone (Paseo refuses preapproving its own server)", async () => {

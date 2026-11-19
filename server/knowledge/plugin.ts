@@ -37,10 +37,11 @@ import { runWorker } from "../workers";
 import { ChatHistory } from "../chat-history";
 import { addCompactionRows, HISTORY_TOOL_SERVER, HistoryOff, historyStatus, historyTools, isHistoryTool, NotedCompactions, timelineOf, withHistoryRule } from "../history-tools";
 import { ATTACHMENT_UPDATES_TOOL, attachmentUpdates, chatSubject, fileSubject, folderSubject, GRANT_LINE as UPDATE_GRANT_LINE, SeenStore, type Subject, tagNotesSubject, terminalSubject } from "../attachment-updates";
-import { type AttachedChat, attachedHistoryCache, attachedHistoryTools, workspaceHistoryCache, workspaceHistoryTools } from "../attached-history";
-import { SUMMARY_OUTPUT_SCHEMA, SummaryStore } from "../chat-summaries";
+import { type AttachedChat, attachedHistoryCache, attachedHistoryTools } from "../attached-history";
+import { workspaceHistoryTools } from "../workspace-history";
+import { SUMMARY_OUTPUT_SCHEMA, SummaryStore, summaryText } from "../chat-summaries";
 import { isUserChat, isWorkerCwd } from "../workers";
-import { sharedFolderNote, unavailableNote, withoutSectionMarkers, withWorkspaceChats, WorkspaceSummaries, workspaceChatsPage, workspaceChatsSection } from "../workspace-chats";
+import { sharedFolderNote, unavailableNote, withoutSectionMarkers, withWorkspaceChats, WorkspaceSummaries, workspaceChatsPage, workspaceChatsSection, workspaceHistoryNote } from "../workspace-chats";
 import { DailyRuns, RunQueue } from "./background-runs";
 import { HISTORY_ROW_KIND, historyCommandRpc } from "../../shared/history";
 import { newestFirst, newestPerKey, workspaceTimes } from "../newest-first";
@@ -68,7 +69,7 @@ const ATTACH_WAIT_MS = 300;
 const WORKSPACE_CHATS_WAIT_MS = 5_000;
 // One page of other chats' summaries in a tool answer (about 10,000 tokens), under what clients keep of
 // a tool's output.
-const WORKSPACE_CHATS_PAGE_BYTES = 40 * 1024;
+const WORKSPACE_CHATS_PAGE_BYTES = 14 * 1024;
 // A chat summary worker's time limit, as for the task summaries.
 const SUMMARY_WORKER_MS = 5 * 60_000;
 
@@ -510,6 +511,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   // The SDK this plugin builds against (0.13) does not declare session_open's tools; Paseo 0.14 runs them.
   server.before("agent.session_open", async ({ request }, { paseo }) => {
     remember(paseo);
+    if (isWorkerCwd(await deps.resolveRoot(), request.cwd)) return request;
     const opened = request as typeof request & { tools?: unknown[] };
     const history = (await historyOn()) ? [...historyTools(chatHistory), ...attachedHistoryTools(attachedHistory), ...workspaceHistoryTools(workspaceHistory), attachmentUpdatesTool] : [];
     return { ...opened, tools: [...(opened.tools ?? []), projectAttachTool, ...history] } as typeof request;
@@ -519,6 +521,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   // an agent; it must never stop one being created, so every failure becomes one line in the section.
   server.before("agent.create", async ({ request }, { paseo }) => {
     remember(paseo);
+    if (isWorkerCwd(await deps.resolveRoot(), request.config.cwd)) return { ...request, config: { ...request.config, mcpServers: request.config.mcpServers ?? {} } };
     await Promise.all(attaching);
     const linked = await linkedFor(paseo, request);
     const [prepared, others] = await Promise.all([prepareKnowledge(paseo, request, linked.workspaceId), workspaceChatsFor(paseo, linked)]);
@@ -687,7 +690,10 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     const chats = agents.filter((agent) => agent.id !== callerId && agent.workspaceId === workspaceId && isUserChat(root, agent, background));
     return newestFirst(chats, (agent) => agent.updatedAt).map((agent) => ({ id: agent.id, title: agent.title?.trim() || agent.id, workspace: "this workspace" }));
   };
-  const workspaceHistory = { history: workspaceHistoryCache(), off: chatHistory.off, enabled: historyOn, chats: workspaceChats };
+  const workspaceHistory = { off: chatHistory.off, enabled: historyOn, chats: workspaceChats, summaries: async () => {
+    if (!(await summariesOn())) return new Map<string, string>();
+    return new Map(Object.entries(await summaryStore.all()).filter(([, entry]) => entry.summary).map(([id, entry]) => [id, `${summaryText(entry.summary!)}\nCoverage: ${entry.messages} messages through ${entry.coveredTo || "unknown time"}${entry.complete ? "" : "; incomplete"}. Stored summary may omit newer activity; verify exact details with workspace_history_search.`]));
+  } };
 
   // attachment_updates: what changed in a chat's attachments since it last asked. Attachments carry a
   // signed grant line; grants and how far each was seen are kept per receiving chat.
@@ -769,7 +775,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   const attachmentUpdatesTool = {
     name: ATTACHMENT_UPDATES_TOOL,
     title: "What changed in this chat's attachments",
-    description: `Call at the start of every turn, before answering. Returns what changed since you last called it in everything attached to this chat: new messages and steps in attached chats, new terminal output, new chats and items in attached tags, changed files, and new commits and uncommitted changes in attached projects and workspaces. Pass \`grants\`: every "${UPDATE_GRANT_LINE}" value in M's latest message (earlier ones are remembered). Items come whole; when more are waiting, call it again. Pass \`workspaceChats: true\` when your instructions say so, to also get a summary of each of this workspace's other chats.`,
+    description: `Call at the start of every turn, before answering, for changes to attached chats, terminals, tags, files and projects. Pass grants from "${UPDATE_GRANT_LINE}" in M's latest message; earlier ones are remembered. Long items arrive in resumable parts; call again for pending updates. Legacy workspaceChats:true returns summary pages separately; prefer workspace_history_chats and workspace_history_search for relevant context.`,
     input: z.object({ grants: z.array(z.string().min(1).max(4_000)).max(50).optional(), workspaceChats: z.boolean().optional() }),
     execute: async ({ grants, workspaceChats }: { grants?: string[]; workspaceChats?: boolean }, { agent, paseo }: { agent: { id?: string | null; workspaceId?: string | null }; paseo: PaseoApi }) => {
       remember(paseo);
@@ -781,11 +787,12 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
         const caller = { id: agent.id, workspaceId: agent.workspaceId ?? null };
         // The workspace's other chats, for a chat whose creation could not place it in its workspace
         // (a folder several workspaces share): Paseo names the workspace here.
-        const [others, updates] = await Promise.all([
-          workspaceChats ? workspaceChatsGiven(paseo, caller) : null,
-          attachmentUpdates(agent.id, grants ?? [], { store: seenStore, verify: (grant) => verifyAnyGrant(tokens, grant), subjects: (found) => updateSubjects(paseo, caller, found) }),
-        ]);
-        return { text: others ? `${others}\n\n${updates}` : updates };
+        // Legacy summary requests occupy their own page; never advance updates that did not fit.
+        if (workspaceChats) {
+          const registered = await attachmentUpdates(agent.id, grants ?? [], { store: seenStore, verify: (grant) => verifyAnyGrant(tokens, grant), subjects: async () => [], registerOnly: true });
+          return { text: `${await workspaceChatsGiven(paseo, caller)}\n\n${registered}\nCall attachment_updates without workspaceChats to check attachment changes.` };
+        }
+        return { text: await attachmentUpdates(agent.id, grants ?? [], { store: seenStore, verify: (grant) => verifyAnyGrant(tokens, grant), subjects: (found) => updateSubjects(paseo, caller, found) }) };
       } catch (error) {
         return { isError: true, text: error instanceof Error ? error.message : String(error) };
       }
@@ -846,6 +853,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   const summariesOn = () => deps.settings().then((values) => values.workspaceSummaries, () => false);
   const lateNote = `Paseo took longer than ${WORKSPACE_CHATS_WAIT_MS / 1000} seconds to list them.`;
   const workspaceChatsFor = async (paseo: PaseoApi, linked: { workspaceId: string | null; folderShared?: boolean; failed?: string }): Promise<string | null> => {
+    if (await historyOn()) return workspaceHistoryNote();
     // Settings that cannot be read count as off, as for every other feature.
     if (!(await summariesOn())) return null;
     try {

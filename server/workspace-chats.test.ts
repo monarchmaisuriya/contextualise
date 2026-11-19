@@ -8,9 +8,20 @@ import { type SummaryEntry, SummaryStore } from "./chat-summaries";
 import { DailyRuns, RunQueue } from "./knowledge/background-runs";
 import type { PaseoApi } from "./paseo-types";
 import { isUserChat } from "./workers";
-import { sharedFolderNote, withWorkspaceChats, WorkspaceSummaries, workspaceChatsPage, workspaceChatsSection } from "./workspace-chats";
+import { sharedFolderNote, withWorkspaceChats, WorkspaceSummaries, workspaceChatsPage, workspaceChatsSection, workspaceHistoryNote } from "./workspace-chats";
 
 const paseo = {} as PaseoApi;
+
+it("keeps on-demand startup guidance under one KiB and replaces an eager section on forks", () => {
+  const note = workspaceHistoryNote();
+  expect(Buffer.byteLength(note)).toBeLessThanOrEqual(1024);
+  expect(note).toContain("workspace_history_chats");
+  expect(note).toContain("workspace_history_search");
+  const eager = workspaceChatsSection([{ id: "c1", title: "Old summary" }], {}, true)!;
+  const fork = withWorkspaceChats(eager, note)!;
+  expect(fork).not.toContain("Old summary");
+  expect(fork.split("<!-- contextualise:workspace-chats -->")).toHaveLength(2);
+});
 const reply = JSON.stringify({ goal: "Import the list", done: ["Imported 120 contacts"], decisions: [], open: [], facts: ["list 42"] });
 // One chat with one message, whatever is asked.
 const oneMessage: TimelineFetch = async () => ({ epoch: "e1", reset: false, entries: [{ item: { type: "user_message", text: "Import list 42" }, timestamp: "2026-11-11T10:00:00.000Z", seqStart: 1 }], hasOlder: false, hasNewer: false, startCursor: { epoch: "e1", seq: 1 }, endCursor: { epoch: "e1", seq: 1 }, error: null });

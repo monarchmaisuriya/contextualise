@@ -25,7 +25,7 @@ export { KNOWLEDGE_TOOLS };
 // them. Kept short: Claude Code cuts server instructions at 4,096 characters.
 // When to use the tools, said the same way in the project map and in the server's instructions.
 export function whenToUseKnowledge(server: string): string {
-  return `At the start of a task, search with knowledge_search (MCP server ${server}) for docs, decisions, and earlier work on the same area. Do this before reading docs or changing code. Open hits with knowledge_read; knowledge_outline and knowledge_history show a file's parts and past changes. Before changing code, knowledge_impact lists what uses those files and the tests to run. Use grep for exact code.`;
+  return `At the start of a task, search with knowledge_search (MCP server ${server}) before reading docs or changing code. Open hits with knowledge_read; knowledge_outline lists structure, knowledge_history past changes. Before edits, knowledge_impact lists users and tests. Use grep for exact code.`;
 }
 const INSTRUCTIONS = `This server holds this repository's own knowledge: architecture docs, conventions, ADRs (decisions, with status), other docs, code symbols, and what agents did here before (request, files, outcome). ${whenToUseKnowledge(KNOWLEDGE_SERVER)}`;
 const tool = (name: KnowledgeTool) => name;
