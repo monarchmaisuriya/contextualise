@@ -11,8 +11,8 @@ import { ANSWER_MAX_BYTES, browseHistory, ChatHistory, type HistoryRow, loadHist
 export const HISTORY_TOOL_SERVER = "paseo";
 export const HISTORY_TOOLS = ["history_search", "history_browse", "history_load", "history_read"] as const;
 
-const HISTORY_START = "<!-- contextualise:history -->";
-const HISTORY_END = "<!-- /contextualise:history -->";
+export const HISTORY_START = "<!-- contextualise:history -->";
+export const HISTORY_END = "<!-- /contextualise:history -->";
 // Written when a chat starts, so it cannot know whether Paseo will offer the tools (a provider's
 // Paseo tools can be off): it is worded for both.
 const HISTORY_RULE = [
@@ -25,7 +25,7 @@ const HISTORY_RULE = [
 ].join("\n");
 
 // The prompt with the history note, replacing one already there (a fork carries its parent's prompt).
-export function withHistoryRule(prompt: string | undefined): string {
+export function withHistoryRule(prompt: string | undefined, delivered?: ReadonlySet<string>): string {
   let base = prompt ?? "";
   for (let start = base.indexOf(HISTORY_START); start !== -1; start = base.indexOf(HISTORY_START)) {
     const end = base.indexOf(HISTORY_END, start);
@@ -33,7 +33,16 @@ export function withHistoryRule(prompt: string | undefined): string {
     base = `${base.slice(0, start).trimEnd()}${base.slice(end + HISTORY_END.length)}`;
   }
   base = base.trim();
-  return base ? `${base}\n\n${HISTORY_RULE}` : HISTORY_RULE;
+  const rule = delivered ? [
+    HISTORY_START,
+    "## Chat history (Contextualise)",
+    ...(HISTORY_TOOLS.every((name) => delivered.has(name)) ? ["If the `history_search` tool is available: recover exact earlier messages and tool outputs, including text dropped by compaction, with history_search then history_load or history_read. Do not guess or ask M to repeat recorded facts."] : []),
+    ...(delivered.has("attached_history_search") ? ["For work in an attached workspace, use attached_history_search if available; M approves cross-chat reads."] : []),
+    ...(delivered.has("attachment_updates") ? ["If `attachment_updates` is available: at the start of every turn, before answering, call it with every `Contextualise attachment grant:` value in M's latest message. Earlier grants are remembered. It returns changes to attached chats, terminals, tags, files and projects. Follow continuation only when needed; do not work from stale attachments."] : []),
+    HISTORY_END,
+  ] : null;
+  const text = rule ? (rule.length > 3 ? rule.join("\n") : "") : HISTORY_RULE;
+  return base && text ? `${base}\n\n${text}` : base || text;
 }
 
 // Whether a permission request is for one of the history tools: Claude names them

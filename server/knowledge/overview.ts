@@ -13,6 +13,8 @@ export interface OverviewInputs {
   // The project's index; the agent hook refreshes it here first, the preview only opens it.
   open: () => Promise<{ store: KnowledgeStore; updating: boolean }>;
   memoriseAvailable: () => Promise<boolean>;
+  knowledgeTools?: boolean;
+  projectAttach?: boolean;
 }
 
 // The overview a new agent in this project gets, with the section markers. The agent hook and the
@@ -34,6 +36,8 @@ export async function overviewFor(inputs: OverviewInputs): Promise<KnowledgeOver
       parts: settings.knowledgeMapParts,
       recentTasks: settings.knowledgeRecentTasks,
       pins: prefs.pins,
+      knowledgeTools: inputs.knowledgeTools,
+      projectAttach: inputs.projectAttach,
     }),
   );
 }

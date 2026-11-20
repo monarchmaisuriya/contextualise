@@ -15,6 +15,8 @@ export const agentScopeSchema = z.object({
   // The Paseo workspace the agent was created in, when it had linked projects: their knowledge is
   // reachable only while they are still linked there.
   workspace: z.string().min(1).max(200).optional(),
+  // Only adaptive tokens carry a live launch binding. Legacy saved tokens stay stateless.
+  launch: z.string().min(1).max(200).optional(),
 });
 export type AgentScope = z.infer<typeof agentScopeSchema>;
 
@@ -47,11 +49,10 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 export const PROJECT_GRANT_MS = 60 * 60 * 1000;
 const grantPrefix = (kind: Grant["kind"]) => `${kind}-grant.`;
 
-// Same scheme as Memorise (memorise/server/mcp-auth.ts). Paseo stores injected MCP entries with the
-// agent and reuses them on resume, so a token must stay valid across plugin reloads and restarts.
-// It is stateless: the scope travels inside the token, and an HMAC with a secret kept on disk proves
-// the plugin issued it.
+// Legacy saved tokens remain valid across plugin reloads. Adaptive tokens additionally require a
+// live launch in this plugin instance; disposing one launch never invalidates another or a legacy token.
 export class TokenAuthority {
+  private readonly launches = new Set<string>();
   constructor(private readonly secret: Buffer) {
     if (secret.length !== SECRET_BYTES) throw new Error(`Expected a ${SECRET_BYTES}-byte token secret, got ${secret.length} bytes`);
   }
@@ -63,6 +64,16 @@ export class TokenAuthority {
   mint(scope: AgentScope): string {
     const payload = Buffer.from(JSON.stringify(agentScopeSchema.parse({ ...scope, agent: scope.agent ?? randomBytes(12).toString("base64url") }))).toString("base64url");
     return `${payload}.${this.sign(payload).toString("base64url")}`;
+  }
+
+  mintForLaunch(scope: AgentScope, launchId: string): string {
+    const token = this.mint({ ...scope, launch: launchId });
+    this.launches.add(launchId);
+    return token;
+  }
+
+  revokeLaunch(launchId: string): void {
+    this.launches.delete(launchId);
   }
 
   mintGrant(grant: Grant): string {
@@ -101,7 +112,7 @@ export class TokenAuthority {
     const given = Buffer.from(match[2], "base64url");
     if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
     const parsed = agentScopeSchema.safeParse(JSON.parse(Buffer.from(match[1], "base64url").toString("utf8")));
-    return parsed.success ? parsed.data : null;
+    return parsed.success && (!parsed.data.launch || this.launches.has(parsed.data.launch)) ? parsed.data : null;
   }
 }
 

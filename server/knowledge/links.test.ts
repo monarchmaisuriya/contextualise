@@ -162,4 +162,9 @@ describe("linkedProviderOptions", () => {
   it("gives any other provider nothing, so Paseo's strict check cannot fail the chat", () => {
     expect(linkedProviderOptions("pi", {}, ["/a"])).toEqual({ options: null, granted: false });
   });
+
+  it("does not claim Codex edit access under an explicit read-only sandbox or plan mode", () => {
+    expect(linkedProviderOptions("codex", { sandbox_mode: "read-only" }, ["/a"]).granted).toBe(false);
+    expect(linkedProviderOptions("codex", undefined, ["/a"], "plan").granted).toBe(false);
+  });
 });

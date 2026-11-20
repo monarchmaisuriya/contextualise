@@ -103,6 +103,20 @@ describe("knowledge tools", () => {
     expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([...KNOWLEDGE_TOOLS]);
   });
 
+  it("revokes only a disposed launch and rejects adaptive tokens after plugin restart", async () => {
+    const owner = tokens.mintForLaunch({ repoKey: "local/abc", top, agent: "owner", workspace: "w1" }, "owner-launch");
+    const outsider = tokens.mintForLaunch({ repoKey: "local/other", top, agent: "outsider", workspace: "w2" }, "outsider-launch");
+    const legacy = tokens.mint({ repoKey: "local/abc", top });
+    expect(tokens.verify(`Bearer ${owner}`)).toMatchObject({ agent: "owner", workspace: "w1" });
+    tokens.revokeLaunch("owner-launch");
+    expect(tokens.verify(`Bearer ${owner}`)).toBeNull();
+    expect(tokens.verify(`Bearer ${outsider}`)).toMatchObject({ agent: "outsider", workspace: "w2" });
+    expect(tokens.verify(`Bearer ${legacy}`)).not.toBeNull();
+    const restarted = new TokenAuthority(await loadTokenSecret(root));
+    expect(restarted.verify(`Bearer ${outsider}`)).toBeNull();
+    expect(restarted.verify(`Bearer ${legacy}`)).not.toBeNull();
+  });
+
   it("answers every tool with knowledge off while it is off, reading and counting nothing", async () => {
     const client = await connect(tokens.mint({ repoKey: "local/abc", top }));
     knowledgeOn = false;

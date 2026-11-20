@@ -112,8 +112,10 @@ export class WorkspaceSummaries {
   }
 }
 
-const START = "<!-- contextualise:workspace-chats -->";
-const END = "<!-- /contextualise:workspace-chats -->";
+export const WORKSPACE_CHATS_START = "<!-- contextualise:workspace-chats -->";
+export const WORKSPACE_CHATS_END = "<!-- /contextualise:workspace-chats -->";
+const START = WORKSPACE_CHATS_START;
+const END = WORKSPACE_CHATS_END;
 
 export function workspaceHistoryNote(): string {
   return [START, "## Workspace chat context (Contextualise)", "Other chats are not included automatically. If workspace_history_chats is available, use it to find chats by title or summary. Before answering a question about another chat, use workspace_history_search, then workspace_history_load or workspace_history_read for exact text. These cover every eligible other chat in this workspace, archived included. Follow search cursors and read offsets only as needed; there is no total retrieval cap. M approves cross-chat reads. Secrets and chats with /history off are excluded. If these tools are unavailable, say so rather than guess.", END].join("\n");

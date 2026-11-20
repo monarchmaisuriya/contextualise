@@ -38,6 +38,7 @@ const DIRECTORY_CACHE_MS = 5_000;
 export const TAGS_OFF = "Tags are off. Turn them on in Settings > Contextualise.";
 
 export function contributeTags(server: PluginServerContext, resolveRoot: () => Promise<string>) {
+  if (!server.features?.adaptiveAgentFeatures) throw new Error("Contextualise requires adaptive agent features. Update the Paseo host and plugin SDK before loading this source build.");
   const store = new TagStore(resolveRoot);
   const settings = server.registerSettings(snapshotSettings);
   const readings = new Memo(READINGS_CACHE_MS);

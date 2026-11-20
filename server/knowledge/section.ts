@@ -63,6 +63,8 @@ export interface SectionInput {
   recentTasks?: number;
   // Entries the user pinned to this project's map, by id.
   pins?: readonly string[];
+  knowledgeTools?: boolean;
+  projectAttach?: boolean;
 }
 
 const BRIEF_LINES = 6;
@@ -88,8 +90,8 @@ export function buildSection(input: SectionInput): string | null {
   const footer = [
     // Names the server, as Memorise's section does: the tools are deferred behind tool search, and
     // an agent can only load them by a name it can see.
-    whenToUseKnowledge(KNOWLEDGE_SERVER),
-    ATTACH_RULE,
+    ...(input.knowledgeTools !== false ? [whenToUseKnowledge(KNOWLEDGE_SERVER)] : ["Knowledge retrieval tools are unavailable for this opening. This read-only map is reference only; verify in the project's files."]),
+    ...(input.projectAttach !== false ? [ATTACH_RULE] : []),
     ...(input.memoriseAvailable ? ["Decisions made while working and known pitfalls are kept in Memorise: use its memory tools for those, not these notes."] : []),
     SECTION_END,
   ];
@@ -112,7 +114,7 @@ export function buildSection(input: SectionInput): string | null {
     adrs: () => ({ title: "Decisions (ADRs)", lines: store.adrs().map((adr) => `- ${plain(basename(adr.path))} ${quoted(adr.title)} (${plain(adr.status ?? "no status")}${adr.supersededBy ? `, superseded by ${plain(basename(adr.supersededBy))}` : ""})`) }),
     folders: () =>
       areas.length > 0
-        ? { title: `Main areas (folders of code, biggest first; knowledge_outline on a folder shows one)${(facts?.areas.length ?? 0) > MAX_AREAS ? `, ${facts?.areas.length} in all` : ""}`, lines: areas }
+        ? { title: `Main areas (folders of code, biggest first${input.knowledgeTools !== false ? "; knowledge_outline on a folder shows one" : ""})${(facts?.areas.length ?? 0) > MAX_AREAS ? `, ${facts?.areas.length} in all` : ""}`, lines: areas }
         : { title: null, lines: folders.length > 0 ? [`Top-level folders: ${folders.slice(0, MAX_FOLDERS).join(", ")}${folders.length > MAX_FOLDERS ? ", …" : ""}`] : [] },
     tasks: () => ({ title: "Recent tasks", lines: store.tasks(input.recentTasks ?? 3).map(taskLine) }),
   };
@@ -127,7 +129,7 @@ export function buildSection(input: SectionInput): string | null {
     const room = budget - heading;
     const shown = group.lines.length <= room ? group.lines : group.lines.slice(0, Math.max(room - 1, 0));
     const more = group.lines.length - shown.length;
-    body.push(...(group.title ? [`${group.title}:`] : []), ...shown, ...(more > 0 ? [`- … ${more} more (knowledge_search)`] : []));
+    body.push(...(group.title ? [`${group.title}:`] : []), ...shown, ...(more > 0 ? [`- … ${more} more${input.knowledgeTools !== false ? " (knowledge_search)" : " (not included in this map)"}`] : []));
     budget -= heading + shown.length + (more > 0 ? 1 : 0);
   }
   let lines = [...header, ...body, ...footer];

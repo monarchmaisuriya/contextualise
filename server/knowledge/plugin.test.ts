@@ -4,14 +4,35 @@ import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { PluginOpenSupport, PluginPriorContribution, PluginServerContext, PluginSessionOpenRequest } from "@getpaseo/plugin/server";
 import { snapshotSettingsSchema, type SnapshotSettings } from "../../shared/contracts";
 import { KnowledgeBase } from "./base";
+import { TokenAuthority } from "./auth";
 import { KNOWLEDGE_SERVER } from "./mcp";
 import { contributeKnowledge, type KnowledgeContribution } from "./plugin";
 import { SECTION_END, SECTION_START } from "./section";
 import { KnowledgeStore } from "./store";
 
 type Handler = (...args: never[]) => unknown;
+interface TestLaunch {
+  id: string;
+  dispose: ((outcome: { installed: boolean }) => void | Promise<void>)[];
+  installedCallbacks: (() => void | Promise<void>)[];
+  installed: boolean;
+  released: boolean;
+  refs: number;
+  previous?: TestLaunch;
+  snapshot?: PluginPriorContribution;
+  controller: AbortController;
+}
+
+function knowledgeAuthorization(opened: Pick<PluginSessionOpenRequest, "mcpServers">): string {
+  const binding = opened.mcpServers[KNOWLEDGE_SERVER];
+  if (binding?.type !== "http") throw new Error("Expected the knowledge binding to use HTTP");
+  const authorization = binding.headers?.Authorization;
+  if (!authorization) throw new Error("Expected the knowledge HTTP binding to include Authorization");
+  return authorization;
+}
 
 describe("contributeKnowledge", () => {
   let home: string;
@@ -19,7 +40,22 @@ describe("contributeKnowledge", () => {
   let values: SnapshotSettings;
   let settingsProblem: Error | null;
   let contribution: KnowledgeContribution;
+  let authority: TokenAuthority;
   let plugins: Record<string, unknown>;
+  let recipe: Parameters<PluginServerContext["registerLegacyAgentConfig"]>[0];
+  const launches: TestLaunch[] = [];
+  const release = async (launch: TestLaunch): Promise<void> => {
+    launch.refs -= 1;
+    if (launch.refs > 0) return;
+    launch.controller.abort();
+    for (const cleanup of launch.dispose) await cleanup({ installed: launch.installed });
+    if (launch.previous) await release(launch.previous);
+  };
+  const closeLaunch = async (launch: TestLaunch) => {
+    if (launch.released) return;
+    launch.released = true;
+    await release(launch);
+  };
   const before = new Map<string, Handler>();
   const rpcs = new Map<string, Handler>();
   const on = new Map<string, Handler[]>();
@@ -46,8 +82,43 @@ describe("contributeKnowledge", () => {
       ref: () => ({ respondToPermission, timeline: { refetch: async () => ({ entries: timeline, hasOlder: false, startCursor: null }) } }),
     },
   };
-  const create = (cwd: string, config: Record<string, unknown> = {}) =>
-    (before.get("agent.create") as (input: unknown, context: unknown) => Promise<{ config: { systemPrompt?: string; mcpServers: Record<string, unknown> } }>)({ request: { config: { provider: "claude", cwd, ...config } } }, { paseo });
+  const supportFor = (provider = "claude"): PluginOpenSupport => ({
+    adapter: { kind: "builtin", id: provider }, instructions: "supported", mcpHttp: "supported", exactMcpPreapproval: "supported",
+    attachedTools: { delivery: "mcp", enabled: true, disabledTools: [] },
+    restrictions: { mcpConfiguration: "mutable", processEnvironment: "mutable" },
+    providerOptions: ["additionalDirectories", "sandbox_workspace_write", "permission"],
+  });
+  const open = async (cwd: string, config: Record<string, unknown> = {}, env: Record<string, string> = {}, overrides: Partial<PluginSessionOpenRequest> = {}, install = true) => {
+    const provider = typeof config.provider === "string" ? config.provider : "claude";
+    const controller = new AbortController();
+    const state: TestLaunch = { id: `launch-${launches.length + 1}`, controller, dispose: [], installedCallbacks: [], installed: false, released: false, refs: 1 };
+    launches.push(state);
+    const prompt = typeof config.systemPrompt === "string" ? config.systemPrompt : "";
+    const selectors = Object.fromEntries(recipe.selectors.map((selector) => [selector.id, selector.kind === "prompt-section" && (prompt.includes(selector.start) || prompt.includes(selector.end)) ? "present" : "absent"]));
+    const request = { agentId: "a1", workspaceId: null, provider, cwd, reason: "create", purpose: "interactive", title: null, background: false, labels: {}, metadata: {}, env, tools: [], mcpServers: {}, openSupport: supportFor(provider), baseConfig: { provider, cwd, ...config }, legacyConfigState: { selectors }, ...overrides } as PluginSessionOpenRequest;
+    const result = await (before.get("agent.open.before") as (input: unknown, context: unknown) => Promise<PluginSessionOpenRequest>)({ request }, { paseo, signal: controller.signal, launch: {
+      id: state.id, signal: controller.signal,
+      onDispose: (cleanup: TestLaunch["dispose"][number]) => state.dispose.push(cleanup),
+      onInstalled: (callback: TestLaunch["installedCallbacks"][number]) => state.installedCallbacks.push(callback),
+      retainPrevious: () => {
+        const previous = launches.find((entry) => entry.id === request.previousContribution?.launchId);
+        if (!previous?.installed || previous.controller.signal.aborted || !previous.snapshot) throw new Error("No live installed previous launch");
+        if (!state.previous) { previous.refs += 1; state.previous = previous; }
+        return previous.snapshot;
+      },
+    } });
+    state.snapshot = { launchId: state.id, mcpServers: result.mcpServers, env: result.env, appendSystemPrompt: result.appendSystemPrompt, toolPolicy: result.toolPolicy, providerOptions: result.providerOptions };
+    if (install) {
+      state.installed = true;
+      for (const installed of state.installedCallbacks) await installed();
+    }
+    return result;
+  };
+  const create = async (cwd: string, config: Record<string, unknown> = {}, env?: Record<string, string>): Promise<{ config: { systemPrompt?: string; mcpServers: PluginSessionOpenRequest["mcpServers"]; providerOptions?: Record<string, unknown>; toolPolicy?: PluginSessionOpenRequest["toolPolicy"] }; env?: Record<string, string> }> => {
+    const opened = await open(cwd, config, env);
+    const prompt = [config.systemPrompt, ...(opened.appendSystemPrompt ?? [])].filter(Boolean).join("\n\n");
+    return { config: { systemPrompt: prompt || undefined, mcpServers: { ...(config.mcpServers as PluginSessionOpenRequest["mcpServers"] ?? {}), ...opened.mcpServers }, providerOptions: (config.providerOptions as Record<string, unknown> | undefined) ?? opened.providerOptions, toolPolicy: (config.toolPolicy as PluginSessionOpenRequest["toolPolicy"]) ?? opened.toolPolicy }, env: Object.keys(opened.env).length ? opened.env : undefined };
+  };
   const attach = (query: string) => (rpcs.get("knowledge.attach-search") as (input: unknown, context: unknown) => Promise<{ items: { identifier: string; title: string; subtitle: string; text: string }[] } | undefined>)({ query }, { paseo });
   const call = (name: string, input: unknown) => (rpcs.get(name) as (input: unknown, context: unknown) => Promise<unknown>)(input, { paseo });
   const emit = async (name: string, event: unknown) => {
@@ -80,6 +151,8 @@ describe("contributeKnowledge", () => {
     projectEntries.length = 0;
     projectEntries.push({ projectId: "p-top", projectDisplayName: basename(top), projectRootPath: top });
     const server = {
+      registerLegacyAgentConfig: (value: typeof recipe) => { recipe = value; },
+      addHook: (name: string, handler: Handler) => before.set(name, handler),
       before: (name: string, handler: Handler) => before.set(name, handler),
       on: (name: string, handler: Handler) => on.set(name, [...(on.get(name) ?? []), handler]),
       handle: (contract: { name: string }, handler: Handler) => rpcs.set(contract.name, handler),
@@ -87,6 +160,7 @@ describe("contributeKnowledge", () => {
     tagSummaries = [];
     contribution = contributeKnowledge(server as never, {
       resolveRoot: async () => join(home, "plugin-data", "contextualise"),
+      createTokenAuthority: (secret) => (authority = new TokenAuthority(secret)),
       settings: async () => {
         if (settingsProblem) throw settingsProblem;
         return values;
@@ -95,9 +169,252 @@ describe("contributeKnowledge", () => {
     });
   });
   afterEach(async () => {
+    for (const launch of launches) await closeLaunch(launch);
+    launches.splice(0);
     await contribution.stop();
     rmSync(home, { recursive: true, force: true });
     rmSync(top, { recursive: true, force: true });
+  });
+
+  it("derives independent contributions again after a limited opening without saving a create hook", async () => {
+    values = { ...values, historyTools: true };
+    const original = JSON.stringify(values);
+    const supported = await open(top);
+    const limited = await open(top, {}, {}, { provider: "alias", openSupport: { ...supportFor(), mcpHttp: "unsupported", exactMcpPreapproval: "unknown", attachedTools: { delivery: "native", enabled: true, disabledTools: [] } } });
+    const restored = await open(top);
+    expect(before.has("agent.create")).toBe(false);
+    expect(supported.mcpServers[KNOWLEDGE_SERVER]).toBeDefined();
+    expect(limited.mcpServers).toEqual({});
+    expect(limited.appendSystemPrompt?.join("\n")).toContain('- ARCHITECTURE.md "Overview"');
+    expect(limited.appendSystemPrompt?.join("\n")).not.toContain("knowledge_search");
+    expect(limited.tools.map((tool) => tool.name)).toContain("history_search");
+    expect(limited.toolPolicy).toBeUndefined();
+    expect(restored.mcpServers[KNOWLEDGE_SERVER]).toBeDefined();
+    expect(JSON.stringify(values)).toBe(original);
+  });
+
+  it("does not read eager workspace summaries when attached delivery is unavailable", async () => {
+    values = { ...values, historyTools: true, workspaceSummaries: true };
+    agentsDown = true;
+    try {
+      const opened = await open(top, {}, {}, { openSupport: { ...supportFor(), attachedTools: { delivery: "unknown", enabled: true, disabledTools: [] } } });
+      expect(opened.tools).toEqual([]);
+      expect(opened.appendSystemPrompt?.join("\n")).not.toMatch(/workspace_history_|history_search|could not list this workspace/);
+    } finally {
+      agentsDown = false;
+    }
+  });
+
+  it("suppresses an occupied knowledge group before minting while retaining independent attached tools", async () => {
+    values = { ...values, historyTools: true };
+    const mint = vi.spyOn(TokenAuthority.prototype, "mint");
+    try {
+      const saved = { type: "http", url: "http://caller.invalid" };
+      const baseConfig = { provider: "claude", cwd: top, systemPrompt: "Caller text", mcpServers: { [KNOWLEDGE_SERVER]: saved } };
+      const opened = await open(top, baseConfig);
+      expect(opened.mcpServers).toEqual({});
+      expect(opened.toolPolicy).toBeUndefined();
+      expect(opened.appendSystemPrompt?.join("\n")).not.toContain("knowledge_search");
+      expect(opened.tools.map((tool) => tool.name)).toContain("history_search");
+      expect(baseConfig.mcpServers[KNOWLEDGE_SERVER]).toBe(saved);
+      expect(baseConfig.systemPrompt).toBe("Caller text");
+      expect(mint).not.toHaveBeenCalled();
+    } finally {
+      mint.mockRestore();
+    }
+  });
+
+  it("preserves an empty knowledge binding when Off stays Off on a fixed opening", async () => {
+    values = { ...values, knowledgeEnabled: false, historyTools: true };
+    const mint = vi.spyOn(TokenAuthority.prototype, "mint");
+    try {
+      const first = await open(top);
+      const previous = launches[0].snapshot!;
+      const saved = JSON.stringify(previous);
+      const fixed = await open(top, {}, {}, { reason: "refresh", previousContribution: previous, openSupport: { ...supportFor(), restrictions: { mcpConfiguration: "fixed", processEnvironment: "fixed" } } });
+      expect(first.mcpServers).toEqual({});
+      expect(fixed.mcpServers).toEqual({});
+      expect(fixed.toolPolicy).toBeUndefined();
+      expect(fixed.appendSystemPrompt?.join("\n")).not.toContain("Project knowledge");
+      expect(fixed.appendSystemPrompt?.join("\n")).toContain("## Chat history");
+      expect(fixed.tools.map((tool) => tool.name)).toContain("history_search");
+      expect(JSON.stringify(previous)).toBe(saved);
+      expect(mint).not.toHaveBeenCalled();
+    } finally {
+      mint.mockRestore();
+    }
+  });
+
+  it("preserves an empty knowledge binding after unsupported HTTP on a fixed opening", async () => {
+    values = { ...values, historyTools: true };
+    const mint = vi.spyOn(TokenAuthority.prototype, "mint");
+    try {
+      const first = await open(top, {}, {}, { openSupport: { ...supportFor(), mcpHttp: "unsupported" } });
+      const previous = launches[0].snapshot!;
+      const saved = JSON.stringify(previous);
+      const fixed = await open(top, {}, {}, { reason: "refresh", previousContribution: previous, openSupport: { ...supportFor(), mcpHttp: "unsupported", restrictions: { mcpConfiguration: "fixed", processEnvironment: "fixed" } } });
+      expect(first.mcpServers).toEqual({});
+      expect(fixed.mcpServers).toEqual({});
+      expect(fixed.toolPolicy).toBeUndefined();
+      expect(fixed.appendSystemPrompt?.join("\n")).toContain('- ARCHITECTURE.md "Overview"');
+      expect(fixed.appendSystemPrompt?.join("\n")).not.toContain("knowledge_search");
+      expect(fixed.tools.map((tool) => tool.name)).toContain("history_search");
+      expect(JSON.stringify(previous)).toBe(saved);
+      expect(mint).not.toHaveBeenCalled();
+    } finally {
+      mint.mockRestore();
+    }
+  });
+
+  it("suppresses a caller-owned saved knowledge binding before allocation on a fixed opening", async () => {
+    values = { ...values, historyTools: true };
+    const mint = vi.spyOn(TokenAuthority.prototype, "mint");
+    try {
+      const baseConfig = { provider: "claude", cwd: top, systemPrompt: "Caller text", mcpServers: { [KNOWLEDGE_SERVER]: { type: "http", url: "http://caller.invalid" } }, toolPolicy: { preapproved: [{ kind: "mcp", server: KNOWLEDGE_SERVER, tool: "conversation_read" }] } };
+      const saved = JSON.stringify(baseConfig);
+      await open(top, baseConfig);
+      const previous = launches[0].snapshot!;
+      const fixed = await open(top, baseConfig, {}, { reason: "refresh", previousContribution: previous, openSupport: { ...supportFor(), restrictions: { mcpConfiguration: "fixed", processEnvironment: "fixed" } } });
+      expect(fixed.mcpServers).toEqual({});
+      expect(fixed.toolPolicy).toBeUndefined();
+      expect(fixed.providerOptions).toBeUndefined();
+      expect(fixed.env).toEqual({});
+      expect(fixed.appendSystemPrompt?.join("\n")).not.toContain("knowledge_search");
+      expect(fixed.appendSystemPrompt?.join("\n")).not.toContain("Project knowledge");
+      expect(fixed.tools.map((tool) => tool.name)).toContain("history_search");
+      expect(JSON.stringify(baseConfig)).toBe(saved);
+      expect(mint).not.toHaveBeenCalled();
+    } finally {
+      mint.mockRestore();
+    }
+  });
+
+  it("derives instruction-only context without a prior knowledge contribution on a fixed opening", async () => {
+    values = { ...values, historyTools: true };
+    const mint = vi.spyOn(TokenAuthority.prototype, "mint");
+    try {
+      const fixed = await open(top, {}, {}, { reason: "refresh", openSupport: { ...supportFor(), restrictions: { mcpConfiguration: "fixed", processEnvironment: "fixed" } } });
+      expect(fixed.mcpServers).toEqual({});
+      expect(fixed.toolPolicy).toBeUndefined();
+      expect(fixed.appendSystemPrompt?.join("\n")).toContain('- ARCHITECTURE.md "Overview"');
+      expect(fixed.appendSystemPrompt?.join("\n")).not.toContain("knowledge_search");
+      expect(fixed.tools.map((tool) => tool.name)).toContain("history_search");
+      expect(mint).not.toHaveBeenCalled();
+    } finally {
+      mint.mockRestore();
+    }
+  });
+
+  it("reuses the exact knowledge binding and holds its original lifetime through replacement", async () => {
+    values = { ...values, historyTools: true };
+    const mint = vi.spyOn(TokenAuthority.prototype, "mintForLaunch");
+    try {
+      const first = await open(top, {}, { CALLER_ONLY: "not-a-plugin-secret" }, { workspaceId: "w-top" });
+      const original = launches[0];
+      const previous = original.snapshot!;
+      writeFileSync(join(top, "ARCHITECTURE.md"), "# Overview\nUpdated daemon.\n");
+      const second = await open(top, {}, {}, { workspaceId: "w-top", reason: "refresh", previousContribution: previous, openSupport: { ...supportFor(), restrictions: { mcpConfiguration: "fixed", processEnvironment: "fixed" } } });
+      const replacement = launches[1];
+      const authorization = knowledgeAuthorization(first);
+      expect(second.mcpServers).toEqual(first.mcpServers);
+      expect(second.toolPolicy).toEqual(first.toolPolicy);
+      expect(second.env).toEqual({});
+      expect(second.appendSystemPrompt?.join("\n").split("## Project knowledge")).toHaveLength(2);
+      expect(second.appendSystemPrompt?.join("\n").split("## Chat history")).toHaveLength(2);
+      expect(second.tools.map((tool) => tool.name)).toContain("history_search");
+      expect(mint).toHaveBeenCalledTimes(1);
+      await closeLaunch(original);
+      expect(original.controller.signal.aborted).toBe(false);
+      expect(authority.verify(authorization)).not.toBeNull();
+      await closeLaunch(replacement);
+      expect(original.controller.signal.aborted).toBe(true);
+      expect(authority.verify(authorization)).toBeNull();
+    } finally {
+      mint.mockRestore();
+    }
+  });
+
+  it("rejects fixed knowledge reuse after settings change without allocating another credential", async () => {
+    const mint = vi.spyOn(TokenAuthority.prototype, "mintForLaunch");
+    try {
+      await open(top);
+      const previous = launches[0].snapshot!;
+      values = { ...values, knowledgeAutoApproveTools: false };
+      await expect(open(top, {}, {}, { previousContribution: previous, reason: "refresh", openSupport: { ...supportFor(), restrictions: { mcpConfiguration: "fixed", processEnvironment: "fixed" } } })).rejects.toThrow(/Full close and reopen/);
+      expect(mint).toHaveBeenCalledTimes(1);
+      expect(launches[0].controller.signal.aborted).toBe(false);
+    } finally {
+      mint.mockRestore();
+    }
+  });
+
+  it("keeps the installed credential when a retained provisional replacement fails", async () => {
+    const mint = vi.spyOn(TokenAuthority.prototype, "mintForLaunch");
+    try {
+      const first = await open(top);
+      const original = launches[0];
+      await open(top, {}, {}, { previousContribution: original.snapshot!, reason: "refresh", openSupport: { ...supportFor(), restrictions: { mcpConfiguration: "fixed", processEnvironment: "fixed" } } }, false);
+      await closeLaunch(launches[1]);
+      const authorization = knowledgeAuthorization(first);
+      expect(original.controller.signal.aborted).toBe(false);
+      expect(authority.verify(authorization)).not.toBeNull();
+      expect(mint).toHaveBeenCalledTimes(1);
+    } finally {
+      mint.mockRestore();
+    }
+  });
+
+  it("does not retain a credential from a launch that never installed", async () => {
+    await open(top, {}, {}, {}, false);
+    await expect(open(top, {}, {}, { previousContribution: launches[0].snapshot!, openSupport: { ...supportFor(), restrictions: { mcpConfiguration: "fixed", processEnvironment: "fixed" } } })).rejects.toThrow(/retained snapshot/);
+  });
+
+  it("rejects fixed knowledge reuse while Off instead of silently omitting its binding", async () => {
+    const first = await open(top);
+    const previous = launches[0].snapshot!;
+    const saved = JSON.stringify(previous);
+    values = { ...values, knowledgeEnabled: false };
+    const mint = vi.spyOn(TokenAuthority.prototype, "mint");
+    try {
+      await expect(open(top, {}, {}, { previousContribution: previous, openSupport: { ...supportFor(), restrictions: { mcpConfiguration: "fixed", processEnvironment: "fixed" } } })).rejects.toThrow(/Full close and reopen/);
+      expect(JSON.stringify(previous)).toBe(saved);
+      expect(launches[0].controller.signal.aborted).toBe(false);
+      expect(authority.verify(knowledgeAuthorization(first))).not.toBeNull();
+      expect(mint).not.toHaveBeenCalled();
+    } finally {
+      mint.mockRestore();
+    }
+  });
+
+  it("rejects fixed knowledge reuse for another workspace without widening its token scope", async () => {
+    await open(top, {}, {}, { workspaceId: "w-top" });
+    const previous = launches[0].snapshot!;
+    await expect(open(top, {}, {}, { workspaceId: "w-other", previousContribution: previous, openSupport: { ...supportFor(), restrictions: { mcpConfiguration: "fixed", processEnvironment: "fixed" } } })).rejects.toThrow(/workspace scope.*incompatible/);
+  });
+
+  it("rejects an unknown prior launch even when its endpoint name matches", async () => {
+    await open(top);
+    const previous = { ...launches[0].snapshot!, launchId: "another-plugin-instance" };
+    await expect(open(top, {}, {}, { previousContribution: previous, openSupport: { ...supportFor(), restrictions: { mcpConfiguration: "fixed", processEnvironment: "fixed" } } })).rejects.toThrow(/retained snapshot/);
+  });
+
+  it("rejects changed prior grants instead of adopting a foreign exact approval", async () => {
+    await open(top);
+    const previous = { ...launches[0].snapshot!, toolPolicy: { preapproved: [{ kind: "mcp" as const, server: KNOWLEDGE_SERVER, tool: "conversation_read" }] } };
+    await expect(open(top, {}, {}, { previousContribution: previous, openSupport: { ...supportFor(), restrictions: { mcpConfiguration: "fixed", processEnvironment: "fixed" } } })).rejects.toThrow(/Full close and reopen/);
+  });
+
+  it("rejects fixed reuse after the prior credential lifetime has been disposed", async () => {
+    await open(top);
+    const previous = launches[0].snapshot!;
+    await closeLaunch(launches[0]);
+    await expect(open(top, {}, {}, { previousContribution: previous, openSupport: { ...supportFor(), restrictions: { mcpConfiguration: "fixed", processEnvironment: "fixed" } } })).rejects.toThrow(/retained snapshot/);
+  });
+
+  it("rejects fixed reuse when chat visibility changes", async () => {
+    await open(top);
+    const previous = launches[0].snapshot!;
+    await expect(open(top, {}, {}, { background: true, previousContribution: previous, openSupport: { ...supportFor(), restrictions: { mcpConfiguration: "fixed", processEnvironment: "fixed" } } })).rejects.toThrow(/Full close and reopen/);
   });
 
   it("gives an agent in a git repository the project map and the knowledge tools, keeping everything else", async () => {
@@ -105,6 +422,103 @@ describe("contributeKnowledge", () => {
     expect(config.systemPrompt).toMatch(/^Be brief\.\n\n<!-- contextualise:knowledge -->/);
     expect(config.systemPrompt).toContain('- ARCHITECTURE.md "Overview"');
     expect(Object.keys(config.mcpServers).sort()).toEqual([KNOWLEDGE_SERVER, "paseo-memorise"]);
+  });
+
+  it("keeps exact approvals optional when HTTP works but approval support is unknown", async () => {
+    const opened = await open(top, {}, {}, { openSupport: { ...supportFor(), exactMcpPreapproval: "unknown" } });
+    expect(opened.mcpServers[KNOWLEDGE_SERVER]).toBeDefined();
+    expect(opened.toolPolicy).toBeUndefined();
+    await emit("agent.permission_requested", { agent: { id: "a1", cwd: top }, request: { id: "p1", name: `mcp__${KNOWLEDGE_SERVER}__knowledge_search` } });
+    expect(respondToPermission).not.toHaveBeenCalled();
+  });
+
+  it("uses host workspace and actual agent scope across resume and refresh", async () => {
+    const first = await open(top, {}, {}, { agentId: "owner", workspaceId: "w-top" });
+    const again = await open(top, {}, {}, { agentId: "owner", workspaceId: "w-top", reason: "resume" });
+    const outsider = await open(top, {}, {}, { agentId: "outsider", workspaceId: "w-other", reason: "refresh" });
+    const scope = (opened: PluginSessionOpenRequest) => {
+      return JSON.parse(Buffer.from(knowledgeAuthorization(opened).split(" ")[1].split(".")[0], "base64url").toString("utf8"));
+    };
+    expect(scope(first)).toMatchObject({ agent: "owner", workspace: "w-top" });
+    expect(scope(again)).toMatchObject({ agent: "owner", workspace: "w-top" });
+    expect(scope(again).launch).not.toBe(scope(first).launch);
+    expect(scope(outsider)).toMatchObject({ agent: "outsider", workspace: "w-other" });
+  });
+
+  it("preserves saved knowledge text while deriving a free endpoint", async () => {
+    const text = `Caller prefix\n${SECTION_START}\nSaved guidance\n${SECTION_END}\nCaller suffix`;
+    const opened = await open(top, { systemPrompt: text });
+    expect(opened.baseConfig?.systemPrompt).toBe(text);
+    expect(opened.appendSystemPrompt).toBeUndefined();
+    expect(opened.mcpServers[KNOWLEDGE_SERVER]).toBeDefined();
+  });
+
+  it("limits absent support without admitting tools by actual provider name", async () => {
+    values = { ...values, historyTools: true };
+    const opened = await open(top, {}, {}, { openSupport: undefined });
+    expect(opened.mcpServers).toEqual({});
+    expect(opened.tools).toEqual([]);
+    expect(opened.providerOptions).toBeUndefined();
+    expect(opened.appendSystemPrompt).toBeUndefined();
+  });
+
+  it("keeps HTTP and native attached tools when instruction delivery is unavailable", async () => {
+    values = { ...values, historyTools: true };
+    const opened = await open(top, {}, {}, { reason: "import", openSupport: { ...supportFor(), instructions: "unsupported", attachedTools: { delivery: "native", enabled: true, disabledTools: [] } } });
+    expect(opened.mcpServers[KNOWLEDGE_SERVER]).toBeDefined();
+    expect(opened.tools.map((tool) => tool.name)).toContain("history_search");
+    expect(opened.appendSystemPrompt).toBeUndefined();
+  });
+
+  it("keeps independent knowledge when saved history guidance is ambiguous", async () => {
+    values = { ...values, historyTools: true };
+    const opened = await open(top, {}, {}, { legacyConfigState: { selectors: { "knowledge-prompt": "absent", "history-prompt": "ambiguous", "workspace-prompt": "present" } } });
+    expect(opened.mcpServers[KNOWLEDGE_SERVER]).toBeDefined();
+    expect(opened.tools.map((tool) => tool.name)).toContain("history_search");
+    expect(opened.appendSystemPrompt?.join("\n")).toContain("Project knowledge");
+    expect(opened.appendSystemPrompt?.join("\n")).not.toContain("## Chat history");
+    expect(opened.appendSystemPrompt?.join("\n")).not.toContain("Workspace chat context");
+  });
+
+  it("preserves an occupied binding and required policy while knowledge is Off", async () => {
+    values = { ...values, knowledgeEnabled: false };
+    const required = { provider: "claude", cwd: top, mcpServers: { [KNOWLEDGE_SERVER]: { type: "http", url: "http://caller.invalid" } }, toolPolicy: { preapproved: [{ kind: "mcp", server: KNOWLEDGE_SERVER, tool: "conversation_read" }] } };
+    const original = JSON.stringify(required);
+    const opened = await open(top, required);
+    expect(opened.mcpServers).toEqual({});
+    expect(opened.toolPolicy).toBeUndefined();
+    expect(opened.appendSystemPrompt).toBeUndefined();
+    expect(JSON.stringify(required)).toBe(original);
+  });
+
+  it("revokes a failed launch credential without revoking a concurrent opening", async () => {
+    const mint = vi.spyOn(TokenAuthority.prototype, "mintForLaunch");
+    try {
+      const first = await open(top);
+      const second = await open(top, {}, {}, { agentId: "outsider" });
+      expect(authority.verify(knowledgeAuthorization(first))).not.toBeNull();
+      await closeLaunch(launches[0]);
+      expect(authority.verify(knowledgeAuthorization(first))).toBeNull();
+      expect(authority.verify(knowledgeAuthorization(second))).toMatchObject({ agent: "outsider" });
+    } finally {
+      mint.mockRestore();
+    }
+  });
+
+  it("allocates no per-open credentials for history inspection or cancellation", async () => {
+    const mint = vi.spyOn(TokenAuthority.prototype, "mint");
+    try {
+      const inspected = await open(top, {}, {}, { purpose: "history" });
+      expect(inspected.mcpServers).toEqual({});
+      expect(inspected.tools).toEqual([]);
+      const controller = new AbortController();
+      controller.abort();
+      const handler = before.get("agent.open.before") as (input: unknown, context: unknown) => Promise<unknown>;
+      await expect(handler({ request: { agentId: "cancelled", provider: "claude", cwd: top, purpose: "interactive" } }, { paseo, launch: { id: "cancelled", signal: controller.signal, onDispose: () => {} } })).rejects.toThrow();
+      expect(mint).not.toHaveBeenCalled();
+    } finally {
+      mint.mockRestore();
+    }
   });
 
   it("counts each agent given the knowledge tools, and answers the project's use over the last 7 days", async () => {
@@ -171,7 +585,7 @@ describe("contributeKnowledge", () => {
     expect(config.mcpServers[KNOWLEDGE_SERVER]).toMatchObject({ type: "http", alwaysLoad: true });
   });
 
-  it("replaces what a parent agent passed down instead of adding a second copy", async () => {
+  it("preserves unadopted parent configuration without adding a second copy", async () => {
     const first = await create(top);
     const child = await create(top, first.config);
     expect(child.config.systemPrompt?.split(SECTION_START)).toHaveLength(2);
@@ -232,14 +646,16 @@ describe("contributeKnowledge", () => {
     expect(respondToPermission).not.toHaveBeenCalled();
   });
 
-  it("approves the knowledge tools and nothing else", async () => {
+  it("never answers external knowledge permission events and supplies exact optional grants instead", async () => {
+    const opened = await open(top);
     await emit("agent.permission_requested", { agent: { id: "a1", cwd: top }, request: { id: "p1", name: `mcp__${KNOWLEDGE_SERVER}__knowledge_search` } });
     await emit("agent.permission_requested", { agent: { id: "a1", cwd: top }, request: { id: "p2", name: "Bash" } });
-    expect(respondToPermission).toHaveBeenCalledTimes(1);
-    expect(respondToPermission).toHaveBeenCalledWith({ requestId: "p1", response: { behavior: "allow" } });
+    expect(respondToPermission).not.toHaveBeenCalled();
+    expect(opened.toolPolicy?.preapproved).toContainEqual({ kind: "mcp", server: KNOWLEDGE_SERVER, tool: "knowledge_search" });
+    expect(opened.toolPolicy?.preapproved.some((grant) => grant.server === "paseo" || grant.tool === "conversation_read" || grant.tool === "project_attach")).toBe(false);
   });
 
-  it("approves only the knowledge tools by exact name, not other tools on a server with a similar name", async () => {
+  it("never answers knowledge or conversation events by server or tool name", async () => {
     const ask = (id: string, request: Record<string, unknown>) => emit("agent.permission_requested", { agent: { id: "a1", cwd: top }, request: { id, ...request } });
     await ask("p1", { name: `mcp__${KNOWLEDGE_SERVER}__x__write_file` });
     await ask("p2", { name: `mcp__${KNOWLEDGE_SERVER}__delete_everything` });
@@ -249,7 +665,7 @@ describe("contributeKnowledge", () => {
     await ask("p6", { name: `mcp__${KNOWLEDGE_SERVER}__knowledge_impact` });
     // Reading another agent's conversation is left to M every time.
     await ask("p7", { name: `mcp__${KNOWLEDGE_SERVER}__conversation_read` });
-    expect(respondToPermission.mock.calls.map((call) => (call as unknown as [{ requestId: string }])[0].requestId)).toEqual(["p4", "p5", "p6"]);
+    expect(respondToPermission).not.toHaveBeenCalled();
   });
 
   it("offers matching entries to Attach, with the snippet that matched and the full text", async () => {
@@ -409,8 +825,7 @@ describe("contributeKnowledge", () => {
   });
 
   describe("summaries of the workspace's other chats", () => {
-    const createWith = (config: Record<string, unknown>, env?: Record<string, string>) =>
-      (before.get("agent.create") as (input: unknown, context: unknown) => Promise<{ config: { systemPrompt?: string } }>)({ request: { config: { provider: "claude", cwd: top, ...config }, ...(env ? { env } : {}) } }, { paseo });
+    const createWith = (config: Record<string, unknown>, env?: Record<string, string>) => create(top, config, env);
     const summary = (goal: string, updatedAt: string) => ({ summary: { goal, done: [], decisions: [], open: [], facts: [] }, anchor: { units: 2, tail: "x" }, messages: 2, coveredTo: "2026-11-11T09:00:00.000Z", updatedAt, complete: true });
     beforeEach(() => {
       values = { ...values, workspaceSummaries: true };
@@ -477,7 +892,7 @@ describe("contributeKnowledge", () => {
         timeline: { refetch: async () => ({ epoch: "e1", reset: false, entries: [{ item: { type: "user_message", text: `the list import in ${agentId}` }, timestamp: "2026-11-11T09:00:00.000Z", seqStart: 1 }], hasOlder: false, hasNewer: false, startCursor: null, endCursor: null, error: null }) },
       });
       try {
-        const opened = await (before.get("agent.session_open") as (input: unknown, context: unknown) => Promise<{ tools: Tool[] }>)({ request: { agentId: "a-new", workspaceId: "w-top", provider: "claude", cwd: top, reason: "create", purpose: "interactive", env: {}, tools: [], mcpServers: {} } }, { paseo });
+        const opened = await open(top, {}, {}, { agentId: "a-new", workspaceId: "w-top" }) as unknown as { tools: Tool[] };
         expect(opened.tools.map((entry) => entry.name).filter((name) => name.startsWith("workspace_history_"))).toEqual(["workspace_history_chats", "workspace_history_search", "workspace_history_load", "workspace_history_read"]);
         const found = (await opened.tools.find((entry) => entry.name === "workspace_history_search")!.execute({ query: "list import" }, { agent: { id: "a-new", workspaceId: "w-top" }, paseo })).text;
         expect(found).toContain("Quoted from M's other chats in this workspace.");
@@ -530,7 +945,7 @@ describe("contributeKnowledge", () => {
       const original = agents.ref;
       agents.ref = () => ({ respondToPermission, refresh: async () => {}, current: () => ({ createdAt: "2026-11-11T11:50:00.000Z" }), timeline: { refetch: async () => ({ epoch: "e1", reset: false, entries: [], hasOlder: false, hasNewer: false, startCursor: null, endCursor: null, error: null }) } });
       try {
-        const opened = await (before.get("agent.session_open") as (input: unknown, context: unknown) => Promise<{ tools: Tool[] }>)({ request: { agentId: "a-new", workspaceId: "w-top", provider: "claude", cwd: top, reason: "create", purpose: "interactive", env: {}, tools: [], mcpServers: {} } }, { paseo });
+        const opened = await open(top, {}, {}, { agentId: "a-new", workspaceId: "w-top" }) as unknown as { tools: Tool[] };
         const updates = opened.tools.find((entry) => entry.name === "attachment_updates")!;
         // The caller is a-new: it is left out; the other chat of its workspace is given with its summary.
         const grant = (await contribution.attachmentGrant({ kind: "tag", key: "auth", upTo: "2026-11-11T11:00:00.000Z" }))!.split(" ").at(-1)!;
@@ -567,7 +982,7 @@ describe("contributeKnowledge", () => {
       const original = agents.ref;
       agents.ref = () => ({ respondToPermission, refresh: async () => {}, current: () => ({ createdAt: "2026-11-11T11:50:00.000Z" }) });
       try {
-        const opened = await (before.get("agent.session_open") as (input: unknown, context: unknown) => Promise<{ tools: Tool[] }>)({ request: { agentId: "a-new", workspaceId: "w-top", provider: "claude", cwd: top, reason: "create", purpose: "interactive", env: {}, tools: [], mcpServers: {} } }, { paseo });
+        const opened = await open(top, {}, {}, { agentId: "a-new", workspaceId: "w-top" }) as unknown as { tools: Tool[] };
         const updates = opened.tools.find((entry) => entry.name === "attachment_updates")!;
         // A grant is redeemed once, so each ask gets its own.
         const ask = async (agentId: string) => {
@@ -619,7 +1034,7 @@ describe("contributeKnowledge", () => {
     afterEach(() => {
       (paseo.agents as Record<string, unknown>).ref = originalRef;
     });
-    const toolsOf = async () => (await (before.get("agent.session_open") as (input: unknown, context: unknown) => Promise<{ tools: Tool[] }>)({ request: { agentId: "a1", workspaceId: "w1", provider: "claude", cwd: top, reason: "create", purpose: "interactive", env: {}, tools: [], mcpServers: {} } }, { paseo })).tools;
+    const toolsOf = async () => (await open(top, {}, {}, { workspaceId: "w-top" })).tools as unknown as Tool[];
     const tool = async (name: string) => (await toolsOf()).find((entry) => entry.name === name)!;
     const asChat = { agent: { id: "a1", workspaceId: "w1" }, paseo };
 
@@ -649,26 +1064,25 @@ describe("contributeKnowledge", () => {
       const made = await create(cwd, { systemPrompt: "Worker task only" });
       expect(made.config.systemPrompt).toBe("Worker task only");
       const inherited = { name: "vendor_read" };
-      const opened = await (before.get("agent.session_open") as (input: unknown, context: unknown) => Promise<{ tools: unknown[] }>)({ request: { agentId: "worker", cwd, tools: [inherited] } }, { paseo });
+      const opened = await open(cwd, {}, {}, { agentId: "worker", tools: [inherited] as never });
       expect(opened.tools).toEqual([inherited]);
     });
 
-    it("tells a new chat about the tools, and leaves its tool policy alone (Paseo refuses preapproving its own server)", async () => {
-      const made = (await (before.get("agent.create") as (input: unknown, context: unknown) => Promise<{ config: { systemPrompt?: string; toolPolicy?: { preapproved: { server: string; tool: string }[] } } }>)({ request: { config: { provider: "claude", cwd: top, systemPrompt: "Be brief." } } }, { paseo })).config;
+    it("tells a chat about delivered history without adding internal-server policy grants", async () => {
+      const made = (await create(top, { systemPrompt: "Be brief." })).config;
       expect(made.systemPrompt).toContain("Be brief.");
       expect(made.systemPrompt).toContain("If the `history_search` tool is available");
-      expect(made.toolPolicy).toBeUndefined();
-      // A fork carries its parent's prompt: the note is replaced, not repeated.
-      const again = (await (before.get("agent.create") as (input: unknown, context: unknown) => Promise<{ config: { systemPrompt?: string } }>)({ request: { config: { provider: "claude", cwd: top, systemPrompt: made.systemPrompt } } }, { paseo })).config;
+      expect(made.toolPolicy?.preapproved.every((grant) => grant.server === KNOWLEDGE_SERVER)).toBe(true);
+      // Unadopted saved guidance is preserved, not replaced or repeated.
+      const again = (await create(top, { systemPrompt: made.systemPrompt })).config;
       expect(again.systemPrompt?.split("## Chat history (Contextualise)").length).toBe(2);
     });
 
-    it("allows a history tool asked for through Paseo's tool server", async () => {
+    it("leaves attached history permission events to ordinary provider prompts", async () => {
       respondToPermission.mockClear();
       await emit("agent.permission_requested", { agent: { id: "a1", cwd: top }, request: { id: "h1", name: "mcp__paseo__history_search" } });
       await emit("agent.permission_requested", { agent: { id: "a1", cwd: top }, request: { id: "h2", name: "mcp__paseo__spawn_agent" } });
-      expect(respondToPermission).toHaveBeenCalledTimes(1);
-      expect(respondToPermission).toHaveBeenCalledWith({ requestId: "h1", response: { behavior: "allow" } });
+      expect(respondToPermission).not.toHaveBeenCalled();
     });
 
     it("adds one row for each compaction, however many turns end", async () => {
@@ -715,12 +1129,12 @@ describe("contributeKnowledge", () => {
       const readLine = (await contribution.conversationGrant("a2"))!.split("\n").find((line) => line.includes("with grant: "));
       expect(readLine).toBeDefined();
       expect((await updates.execute({ grants: [readLine!.split("with grant: ")[1].trim()] }, asChat)).text).toContain("1 grant refused: not written by Contextualise, or changed.");
-      // Approved without M, like the history tools.
+      // Attached tools keep ordinary prompts; no server-name event responder bypasses them.
       respondToPermission.mockClear();
       await emit("agent.permission_requested", { agent: { id: "a1", cwd: top }, request: { id: "u1", name: "mcp__paseo__attachment_updates" } });
-      expect(respondToPermission).toHaveBeenCalledWith({ requestId: "u1", response: { behavior: "allow" } });
+      expect(respondToPermission).not.toHaveBeenCalled();
       // New chats are told to call it every turn.
-      const made = (await (before.get("agent.create") as (input: unknown, context: unknown) => Promise<{ config: { systemPrompt?: string } }>)({ request: { config: { provider: "claude", cwd: top } } }, { paseo })).config;
+      const made = (await create(top)).config;
       expect(made.systemPrompt).toContain("at the start of every turn, before answering, call it");
     });
 
@@ -731,8 +1145,10 @@ describe("contributeKnowledge", () => {
       expect(status.kind).toBe("history-note");
       expect(status.data.lines.join("\n")).toContain("Compactions: 1");
       expect(status.data.lines.join("\n")).toContain("Context now: 50,000 of 200,000 tokens (25%)");
+      const previouslyDelivered = await tool("history_search");
       await call("history.command", { agentId: "a1", action: "off" });
-      expect((await (await tool("history_search")).execute({ query: "tests" }, asChat)).text).toContain("off for this chat");
+      expect((await toolsOf()).some((entry) => entry.name === "history_search")).toBe(false);
+      expect((await previouslyDelivered.execute({ query: "tests" }, asChat)).text).toContain("off for this chat");
       await call("history.command", { agentId: "a1", action: "on" });
       expect((await (await tool("history_search")).execute({ query: "tests" }, asChat)).text).toContain("You: Run the tests");
     });
@@ -741,9 +1157,8 @@ describe("contributeKnowledge", () => {
   describe("linked projects", () => {
     let api: string;
     let web2: string;
-    type Created = { config: { systemPrompt?: string; providerOptions?: Record<string, unknown> }; env?: Record<string, string> };
-    const createIn = (cwd: string, config: Record<string, unknown> = {}, env?: Record<string, string>) =>
-      (before.get("agent.create") as (input: unknown, context: unknown) => Promise<Created>)({ request: { config: { provider: "claude", cwd, ...config }, ...(env ? { env } : {}) } }, { paseo });
+    type Created = Awaited<ReturnType<typeof create>>;
+    const createIn = (cwd: string, config: Record<string, unknown> = {}, env?: Record<string, string>): Promise<Created> => create(cwd, config, env);
     beforeEach(() => {
       api = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-linked-api-")));
       web2 = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-linked-web2-")));
@@ -774,7 +1189,7 @@ describe("contributeKnowledge", () => {
     };
     const linkedPaths = async (workspaceId: string) => ((await call("links.list", { workspaceId })) as { links: { path: string }[] }).links.map((link) => link.path);
     type Tool = { name: string; execute(input: { grant: string }, context: unknown): Promise<{ text: string; isError?: boolean }> };
-    const attachTool = async () => (await (before.get("agent.session_open") as (input: unknown, context: unknown) => Promise<{ tools: Tool[] }>)({ request: { agentId: "a1", workspaceId: "w1", provider: "claude", cwd: top, reason: "create", purpose: "interactive", env: {}, tools: [], mcpServers: {} } }, { paseo })).tools.find((entry) => entry.name === "project_attach")!;
+    const attachTool = async () => (await open(top, {}, {}, { workspaceId: "w1" })).tools.find((entry) => entry.name === "project_attach")! as unknown as Tool;
 
     it("attaches a project picked in a new worktree workspace's first message before its first chat starts, without the agent", async () => {
       const row = await apiRow();
@@ -849,7 +1264,7 @@ describe("contributeKnowledge", () => {
       await call("links.add", { workspaceId: "w1", path: api });
       const created = await createIn(top, { provider: "pi" });
       expect(created.config.providerOptions).toBeUndefined();
-      expect(created.config.systemPrompt).toContain("only to Claude, Codex, and OpenCode chats, not pi");
+      expect(created.config.systemPrompt).toContain("has not granted this opening extra edit access");
     });
 
     it("lets a new OpenCode chat edit the attached folder, and tells a plan-mode one it may not", async () => {
@@ -891,9 +1306,46 @@ describe("contributeKnowledge", () => {
       await expect(call("links.add", { workspaceId: "w1", path: join(home, "plugin-data") })).rejects.toThrow("Paseo's own data folder");
     });
 
-    it("keeps an existing folder option and adds the link once", async () => {
+    it("keeps an existing folder option without claiming newly granted access", async () => {
       await call("links.add", { workspaceId: "w1", path: api });
       expect((await createIn(top, { providerOptions: { additionalDirectories: ["/elsewhere", api] } })).config.providerOptions).toEqual({ additionalDirectories: ["/elsewhere", api] });
+      const opened = await open(top, { providerOptions: { additionalDirectories: ["/elsewhere"] } });
+      expect(opened.providerOptions).toBeUndefined();
+      expect(opened.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD).toBeUndefined();
+      expect(opened.appendSystemPrompt?.join("\n")).toContain("has not granted this opening extra edit access");
+      expect(opened.appendSystemPrompt?.join("\n")).not.toContain("You can read and edit");
+    });
+
+    it("uses adapter folder options without changing actual provider identity", async () => {
+      await call("links.add", { workspaceId: "w1", path: api });
+      const opened = await open(top, { provider: "my-claude" }, {}, { openSupport: supportFor("claude") });
+      expect(opened.provider).toBe("my-claude");
+      expect(opened.providerOptions).toEqual({ additionalDirectories: [api] });
+      const unknown = await open(top, { provider: "claude" }, {}, { openSupport: { ...supportFor(), adapter: { kind: "plugin", id: "other" }, providerOptions: [] } });
+      expect(unknown.providerOptions).toBeUndefined();
+    });
+
+    it("preserves caller environment flags and omits unsupported folder option keys", async () => {
+      await call("links.add", { workspaceId: "w1", path: api });
+      const callerEnv = await open(top, {}, { CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "0" });
+      expect(callerEnv.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD).toBe("0");
+      const unsupported = await open(top, {}, {}, { openSupport: { ...supportFor(), providerOptions: [], restrictions: { mcpConfiguration: "mutable", processEnvironment: "fixed" } } });
+      expect(unsupported.providerOptions).toBeUndefined();
+      expect(unsupported.env).toEqual({});
+      expect(unsupported.appendSystemPrompt?.join("\n")).not.toContain("You can read and edit");
+    });
+
+    it("preserves caller outside-folder restrictions and disabled attached tools", async () => {
+      values = { ...values, historyTools: true };
+      await call("links.add", { workspaceId: "w1", path: api });
+      const opened = await open(top, { provider: "opencode", providerOptions: { permission: { external_directory: "deny", edit: "ask" } } }, {}, { openSupport: { ...supportFor("opencode"), attachedTools: { delivery: "native", enabled: true, disabledTools: ["project_attach", "history_search", "workspace_history_search"] } } });
+      expect(opened.providerOptions).toBeUndefined();
+      expect(opened.tools.map((tool) => tool.name)).not.toContain("project_attach");
+      expect(opened.tools.map((tool) => tool.name)).not.toContain("history_search");
+      expect(opened.tools.map((tool) => tool.name)).not.toContain("workspace_history_search");
+      expect(opened.appendSystemPrompt?.join("\n")).not.toContain("call project_attach");
+      expect(opened.appendSystemPrompt?.join("\n")).not.toContain("If the `history_search`");
+      expect(opened.appendSystemPrompt?.join("\n")).not.toContain("Workspace chat context");
     });
 
     it("attaches a project sent with Attach > Project to the calling chat's workspace, once per grant, and not after it lapses", async () => {
@@ -921,8 +1373,8 @@ describe("contributeKnowledge", () => {
     });
 
     it("gives every new chat in a workspace Paseo can tell its workspace, attached projects or not", async () => {
-      const token = (await createIn(top)).config as unknown as { mcpServers: Record<string, { headers: { Authorization: string } }> };
-      const payload = JSON.parse(Buffer.from(token.mcpServers[KNOWLEDGE_SERVER].headers.Authorization.split(" ")[1].split(".")[0], "base64url").toString("utf8"));
+      const token = (await createIn(top)).config;
+      const payload = JSON.parse(Buffer.from(knowledgeAuthorization(token).split(" ")[1].split(".")[0], "base64url").toString("utf8"));
       expect(payload.workspace).toBe("w1");
     });
 
@@ -1146,7 +1598,7 @@ describe("contributeKnowledge", () => {
           timeline: { refetch: async () => ({ epoch: "e1", reset: false, entries: said[agentId] ? [{ item: { type: "user_message", text: said[agentId].text }, timestamp: said[agentId].at, seqStart: 1 }] : [], hasOlder: false, hasNewer: false, startCursor: null, endCursor: null, error: null }) },
         });
         try {
-          const opened = await (before.get("agent.session_open") as (input: unknown, context: unknown) => Promise<{ tools: Tool[] }>)({ request: { agentId: "a-own", workspaceId: "w1", provider: "claude", cwd: top, reason: "create", purpose: "interactive", env: {}, tools: [], mcpServers: {} } }, { paseo });
+          const opened = await open(top, {}, {}, { agentId: "a-own", workspaceId: "w1" }) as unknown as { tools: Tool[] };
           expect(opened.tools.map((entry) => entry.name).filter((name) => name.startsWith("attached_history_"))).toEqual(["attached_history_search", "attached_history_load", "attached_history_read"]);
           const search = opened.tools.find((entry) => entry.name === "attached_history_search")!;
           const asChat = { agent: { id: "a-own", workspaceId: "w1" }, paseo };

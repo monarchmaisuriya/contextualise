@@ -47,6 +47,13 @@ describe("overviewFor", () => {
     expect(await inputs({ settings: { ...settings, knowledgeMapLines: 0 } })).toEqual({ state: "given", text: null, lines: 0 });
   });
 
+  it("keeps project context without unavailable tool guidance", async () => {
+    const overview = await inputs({ knowledgeTools: false, projectAttach: false });
+    expect(overview.state).toBe("given");
+    expect(overview.text).toContain('- ARCHITECTURE.md "Overview"');
+    expect(overview.text).not.toMatch(/knowledge_search|knowledge_outline|project_attach/);
+  });
+
   it("removes only the marker lines", () => {
     expect(withoutMarkers([SECTION_START, "a", "b", SECTION_END].join("\n"))).toBe("a\nb");
   });

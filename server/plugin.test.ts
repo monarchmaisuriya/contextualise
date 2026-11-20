@@ -29,6 +29,9 @@ beforeEach(() => {
   listeners = [];
   rpcs = new Map();
   const server = {
+    features: { adaptiveAgentFeatures: true },
+    registerLegacyAgentConfig: () => {},
+    addHook: () => {},
     registerSettings: () => ({
       read: async () => ({ status: "ready", revision: "r", values }),
       subscribe: (listener: (state: unknown) => void) => {
@@ -86,4 +89,10 @@ it("runs the refresh timer only while both tags and keeping items up to date are
   expect(vi.getTimerCount()).toBe(0);
   save({ tagsEnabled: true });
   expect(vi.getTimerCount()).toBe(1);
+});
+
+it("requires the adaptive host feature before registering settings or starting work", () => {
+  const registerSettings = vi.fn();
+  expect(() => contributeTags({ registerSettings } as never, async () => home)).toThrow(/Update the Paseo host and plugin SDK/);
+  expect(registerSettings).not.toHaveBeenCalled();
 });

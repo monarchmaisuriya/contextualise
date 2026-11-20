@@ -217,7 +217,7 @@ export function linkedProviderOptions(provider: string, existing: Record<string,
   if (provider === "claude") return { options: { ...base, additionalDirectories: merge(base.additionalDirectories) }, granted: true };
   if (provider === "codex") {
     const sandbox = (base.sandbox_workspace_write ?? {}) as Record<string, unknown>;
-    return { options: { ...base, sandbox_workspace_write: { ...sandbox, writable_roots: merge(sandbox.writable_roots) } }, granted: true };
+    return { options: { ...base, sandbox_workspace_write: { ...sandbox, writable_roots: merge(sandbox.writable_roots) } }, granted: base.sandbox_mode !== "read-only" && modeId !== "plan" };
   }
   if (provider === "opencode") return openCodeOptions(base, paths, modeId);
   return { options: null, granted: false };
@@ -285,7 +285,7 @@ export function linksSection(linked: LinkedForChat, start: string, end: string):
       ]
     : linked.provider === "opencode"
       ? ["## Attached projects (Contextualise)", "M attached these projects to this workspace. You can read them, but this chat's OpenCode permissions (plan mode, or edits or outside folders set to ask or deny) may ask M before or stop edits there:", ...list, ...searched]
-      : ["## Attached projects (Contextualise)", `M attached these projects to this workspace, but Contextualise can give extra folders only to Claude, Codex, and OpenCode chats, not ${plainPath(linked.provider)}. They are listed for reference; you may not be able to edit them:`, ...list, ...searched];
+      : ["## Attached projects (Contextualise)", `M attached these projects to this workspace. Contextualise has not granted this opening extra edit access. Current provider settings and permission prompts still apply (${plainPath(linked.provider)}). They are listed for reference:`, ...list, ...searched];
   const notes = [
     ...(linked.leftOut?.length ? [`Not added, because a chat gets at most ${MAX_CHAT_FOLDERS} attached folders: ${linked.leftOut.map(plainPath).join(", ")}.`] : []),
     ...(linked.notFollowed ? ["Project knowledge is off, so repositories the attached workspaces' chats start working in are not being added; the folders above are the ones recorded before."] : []),
