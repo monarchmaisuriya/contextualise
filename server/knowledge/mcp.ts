@@ -14,6 +14,8 @@ export type ConversationReader = (agentId: string, upTo: string, before: string 
 import { type ProjectRoot, projectRoot } from "./git";
 import type { Impact, KnowledgeService } from "./service";
 import type { UsageLog } from "./usage";
+import type { ContextActivity } from "../context-activity";
+import type { ContextTool } from "../../shared/context";
 
 // A distinctive name: permission requests are recognised by it, so a user's own server must not share it.
 export const KNOWLEDGE_SERVER = "paseo-contextualise";
@@ -117,6 +119,7 @@ export class KnowledgeMcp {
     // The projects attached to a workspace now, read on every call, so detaching stops their knowledge.
     private readonly attachedProjects: (workspaceId: string) => Promise<ProjectRoot[]> = async () => [],
     private readonly readConversation: ConversationReader | null = null,
+    private readonly activity?: ContextActivity,
   ) {}
 
   private build(scope: AgentScope, agent: string): McpServer {
@@ -133,8 +136,15 @@ export class KnowledgeMcp {
     const count = (name: KnowledgeTool) =>
       this.usage.recordCall(scope.repoKey, name, agent).catch((error: unknown) => console.error(`[contextualise] could not count a ${name} call for ${scope.repoKey}: ${String(error)}`));
     const mcp = new McpServer({ name: KNOWLEDGE_SERVER, version: "1.0.0" }, { instructions: INSTRUCTIONS });
-    const text = (value: string) => ({ content: [{ type: "text" as const, text: value }] });
+    const emptyResults = new WeakSet<object>();
+    const text = (value: string, empty = false) => {
+      const result = { content: [{ type: "text" as const, text: value }] };
+      if (empty) emptyResults.add(result);
+      return result;
+    };
     const failure = (error: unknown) => ({ content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }], isError: true });
+    const observed = <T extends { content: { type: "text"; text: string }[]; isError?: boolean }>(name: ContextTool, input: unknown, work: () => Promise<T>) =>
+      this.activity ? this.activity.observe("knowledge", name, agent, input, work, (value) => ({ text: value.content.map((part) => part.text).join("\n"), error: value.isError, empty: emptyResults.has(value) }), scope.repoKey) : work();
     mcp.registerTool(
       tool("knowledge_search"),
       {
@@ -148,7 +158,7 @@ export class KnowledgeMcp {
           limit: z.number().int().min(1).max(20).optional(),
         },
       },
-      async ({ query, kinds, paths, limit, project }) => {
+      async ({ query, kinds, paths, limit, project }) => observed("knowledge_search", { query, kinds, paths, limit, project }, async () => {
         if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
         void count("knowledge_search");
         try {
@@ -161,11 +171,11 @@ export class KnowledgeMcp {
           for (let rank = 0; lines.length < max && found.some(({ hits }) => rank < hits.length); rank += 1) {
             for (const { repo, hits } of found) if (rank < hits.length && lines.length < max) lines.push(describeHit(hits[rank], repo.key === scope.repoKey ? undefined : repo.key));
           }
-          return text(lines.length > 0 ? lines.join("\n") : `Nothing in ${repos.map((repo) => repo.key).join(", ")} matches "${query}". Try other words, or fewer.`);
+          return text(lines.length > 0 ? lines.join("\n") : `Nothing in ${repos.map((repo) => repo.key).join(", ")} matches "${query}". Try other words, or fewer.`, lines.length === 0);
         } catch (error) {
           return failure(error);
         }
-      },
+      }),
     );
     mcp.registerTool(
       tool("knowledge_read"),
@@ -173,7 +183,7 @@ export class KnowledgeMcp {
         description: "Read one entry found by knowledge_search: a document section, a code symbol's signature, or a finished task's request, files, commands, and outcome.",
         inputSchema: { id: z.string().min(1).max(600), project: z.string().min(1).max(600).optional().describe("An attached project's key (listed under Attached projects); this agent's own project when left out"), },
       },
-      async ({ id, project }) => {
+      async ({ id, project }) => observed("knowledge_read", { id, project }, async () => {
         if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
         void count("knowledge_read");
         try {
@@ -184,7 +194,7 @@ export class KnowledgeMcp {
         } catch (error) {
           return failure(error);
         }
-      },
+      }),
     );
     mcp.registerTool(
       tool("knowledge_outline"),
@@ -192,7 +202,7 @@ export class KnowledgeMcp {
         description: "List one file's sections (documents) or functions, classes, methods, and types (code), with line numbers, to see what it holds before reading it. Given a main area's folder (from the project map), describe that area instead: what it uses, what uses it, its key names, and its main files.",
         inputSchema: { path: z.string().min(1).max(300).describe("A file path, or a main area's folder, relative to the project root"), project: z.string().min(1).max(600).optional().describe("An attached project's key (listed under Attached projects); this agent's own project when left out"), },
       },
-      async ({ path, project }) => {
+      async ({ path, project }) => observed("knowledge_outline", { path, project }, async () => {
         if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
         void count("knowledge_outline");
         try {
@@ -201,13 +211,13 @@ export class KnowledgeMcp {
           const facts = await this.service.structure(repo);
           if (facts.areas.some((area) => area.path === folder && folder !== "")) return text(describeArea(await this.service.area(repo, folder)));
           const outline = await this.service.outline(repo, path);
-          if (outline.length === 0) return text(`Nothing indexed for ${path}. It may be outside the index, too large, or not a document or code file.`);
+          if (outline.length === 0) return text(`Nothing indexed for ${path}. It may be outside the index, too large, or not a document or code file.`, true);
           const parts = outline.map((entry) => `${entry.line}: ${entry.kind === "code" ? "" : "§ "}${entry.title}  [${entry.id}]`);
           return text([...parts, ...(outline.some((entry) => entry.kind === "code") ? ["", ...describeConnections(await this.service.connections(repo, path))] : [])].join("\n"));
         } catch (error) {
           return failure(error);
         }
-      },
+      }),
     );
     mcp.registerTool(
       tool("knowledge_history"),
@@ -215,7 +225,7 @@ export class KnowledgeMcp {
         description: "List the finished tasks that changed a file or any file in a folder, newest first: what was asked, the outcome, and when.",
         inputSchema: { path: z.string().min(1).max(300).describe("A file or folder relative to the project root"), limit: z.number().int().min(1).max(20).optional(), project: z.string().min(1).max(600).optional().describe("An attached project's key (listed under Attached projects); this agent's own project when left out"), },
       },
-      async ({ path, limit, project }) => {
+      async ({ path, limit, project }) => observed("knowledge_history", { path, limit, project }, async () => {
         if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
         void count("knowledge_history");
         try {
@@ -223,12 +233,12 @@ export class KnowledgeMcp {
           return text(
             tasks.length > 0
               ? tasks.map((task) => `[${task.id}] ${task.endedAt.slice(0, 10)} ${task.generatedTitle ?? task.title} (${task.outcome})${task.needsCheck ? " [needs check: its files changed since]" : ""}${task.summary ? `\n  ${task.summary}` : ""}`).join("\n")
-              : `No finished task changed ${path}.`,
+               : `No finished task changed ${path}.`, tasks.length === 0,
           );
         } catch (error) {
           return failure(error);
         }
-      },
+      }),
     );
     mcp.registerTool(
       tool("knowledge_impact"),
@@ -236,7 +246,7 @@ export class KnowledgeMcp {
         description: "Before or after changing code: given files or folders, list the files that use them directly, how many more depend on those, the areas touched, and the test files to run.",
         inputSchema: { paths: z.array(z.string().min(1).max(300)).min(1).max(50).describe("Files or folders relative to the project root"), project: z.string().min(1).max(600).optional().describe("An attached project's key (listed under Attached projects); this agent's own project when left out"), },
       },
-      async ({ paths, project }) => {
+      async ({ paths, project }) => observed("knowledge_impact", { paths, project }, async () => {
         if (!(await this.knowledgeOn())) return failure(KNOWLEDGE_OFF);
         void count("knowledge_impact");
         try {
@@ -244,7 +254,7 @@ export class KnowledgeMcp {
         } catch (error) {
           return failure(error);
         }
-      },
+      }),
     );
     const reader = this.readConversation;
     if (reader) {

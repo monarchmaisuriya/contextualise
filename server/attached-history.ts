@@ -1,10 +1,11 @@
 import { z } from "zod";
-import { ANSWER_MAX_BYTES, ChatHistory, type HistoryNames, type HistoryRow, loadHistory, MAX_HISTORY_ROWS, readHistory, type SearchInput, searchHistory } from "./chat-history";
+import { ANSWER_MAX_BYTES, ChatHistory, historyMatches, type HistoryNames, type HistoryRow, loadHistory, MAX_HISTORY_ROWS, readHistory, type SearchInput, searchHistory } from "./chat-history";
 import { type HistoryOff, timelineOf } from "./history-tools";
 import { timeOf } from "./newest-first";
 const bytes = (value: string) => Buffer.byteLength(value, "utf8");
 import type { PaseoApi } from "./paseo-types";
 import { redactSecrets } from "./secrets";
+import { emptyResult } from "./retrieval-outcome";
 
 // Search, load, and read other chats: those of the workspaces attached to the calling chat's
 // workspace, or the other chats of its own workspace. They read other chats' work, so, like
@@ -137,7 +138,7 @@ export function chatHistoryTools(deps: AttachedHistoryDeps, scope: ChatScope) {
     return { rows: rows.map(({ row }) => row), read, failed };
   };
   // The caller's scope, checked before anything is read; the answer leads with the reference line.
-  const withScope = async (context: ToolContext, answer: (paseo: PaseoApi, chats: AttachedChat[], off: Set<string>) => Promise<{ notes: string[]; body: (budget: number) => string }>): Promise<ToolAnswer> => {
+  const withScope = async (context: ToolContext, answer: (paseo: PaseoApi, chats: AttachedChat[], off: Set<string>) => Promise<{ notes: string[]; body: (budget: number) => string; empty?: boolean }>): Promise<ToolAnswer> => {
     const agentId = context.agent?.id;
     const workspaceId = context.agent?.workspaceId;
     if (!agentId) return { isError: true, text: "Paseo did not say which chat is asking, so there is no workspace to look in." };
@@ -150,9 +151,9 @@ export function chatHistoryTools(deps: AttachedHistoryDeps, scope: ChatScope) {
       const chats = (await deps.chats(context.paseo, workspaceId, agentId)).map((chat) => ({ ...chat, title: shown(chat.title, NAME_MAX_CHARS), workspace: shown(chat.workspace, NAME_MAX_CHARS) }));
       if (chats.length === 0) return { isError: true, text: scope.none };
       const off = new Set(chats.filter((chat) => turnedOff.has(chat.id)).map((chat) => chat.id));
-      const { notes, body } = await answer(context.paseo, chats, off);
+      const { notes, body, empty } = await answer(context.paseo, chats, off);
       const head = headOf(scope.reference, notes);
-      return { text: `${head}\n${body(ANSWER_MAX_BYTES - bytes(head) - 1)}` };
+      return emptyResult({ text: `${head}\n${body(ANSWER_MAX_BYTES - bytes(head) - 1)}` }, empty ?? false);
     } catch (error) {
       return { isError: true, text: error instanceof Error ? error.message : String(error) };
     }
@@ -203,7 +204,8 @@ export function chatHistoryTools(deps: AttachedHistoryDeps, scope: ChatScope) {
             ...(off.size > 0 ? [`${plural(off.size, "chat")} left out: M turned their chat history tools off.`] : []),
             ...readNotes(read, failed),
           ];
-          return { notes, body: (budget) => searchHistory(rows, input, budget, names).text };
+          const empty = !rows.some((row) => historyMatches(row, input));
+          return { notes, body: (budget) => searchHistory(rows, input, budget, names).text, empty: empty && failed.length === 0 };
         }),
     },
     {
@@ -215,7 +217,7 @@ export function chatHistoryTools(deps: AttachedHistoryDeps, scope: ChatScope) {
         withScope(context, async (paseo, chats, off) => {
           const { holding, notes, known } = chatsFor(chats, off, ids);
           const { rows, read, failed } = await readAll(paseo, holding);
-          return { notes: [...notes, ...readNotes(read, failed)], body: (budget) => (known.length > 0 ? loadHistory(rows, known, budget, names).text : "Nothing to load.") };
+          return { notes: [...notes, ...readNotes(read, failed)], empty: known.length === 0, body: (budget) => (known.length > 0 ? loadHistory(rows, known, budget, names).text : "Nothing to load.") };
         }),
     },
     {
@@ -227,7 +229,7 @@ export function chatHistoryTools(deps: AttachedHistoryDeps, scope: ChatScope) {
         withScope(context, async (paseo, chats, off) => {
           const { holding, notes, known } = chatsFor(chats, off, [input.id]);
           const { rows, read, failed } = await readAll(paseo, holding);
-          return { notes: [...notes, ...readNotes(read, failed)], body: (budget) => (known.length > 0 ? readHistory(rows, input, budget, names).text : "Nothing to read.") };
+          return { notes: [...notes, ...readNotes(read, failed)], empty: known.length === 0, body: (budget) => (known.length > 0 ? readHistory(rows, input, budget, names).text : "Nothing to read.") };
         }),
     },
   ];

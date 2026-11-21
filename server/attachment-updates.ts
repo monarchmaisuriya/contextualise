@@ -160,6 +160,7 @@ const plural = (count: number, word: string) => `${count} ${word}${count === 1 ?
 export const SUBJECT_WAIT_MS = 10_000;
 
 export interface UpdatesDeps {
+  onOutcome?: (empty: boolean) => void;
   store: SeenStore;
   // A signed updates grant, or null.
   verify: (grant: string) => UpdatesGrant | null;
@@ -271,6 +272,7 @@ async function deliverUpdates(chatId: string, newGrants: readonly string[], deps
   if (left > 0) notes.push(`${plural(left, "more new item")} not shown yet: call ${ATTACHMENT_UPDATES_TOOL} again (no arguments needed).`);
   const body = sections.length > 0 ? sections.join("\n\n") : `Nothing new in this chat's ${plural(subjects.length, "attachment")} since you last asked.`;
   const answer = sections.length === 0 && notes.length === 0 ? body : [REFERENCE, ...notes, body].join("\n\n");
+  deps.onOutcome?.(sections.length === 0 && notes.length === 0);
   if (bytes(answer) > budget) throw new Error("Attachment update headers exceed the response budget; no update progress was advanced.");
   await deps.store.advance(chatId, seen, new Set(all.map((subject) => subject.key)), partial);
   return answer;

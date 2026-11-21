@@ -66,6 +66,15 @@ describe("KnowledgeBase", () => {
     expect(onChanges).toHaveBeenCalledTimes(2);
   });
 
+  it("persists completed lineage and identities when an older snapshot finishes last", async () => {
+    const repo = (await base.repoFor(top))!;
+    await base.recordTask(repo, { ...task, subtasks: [{ callId: "child", description: "Review", status: "completed", observedAt: "2026-11-21T11:00:00Z" }] });
+    await base.recordTask(repo, { ...task, subtasks: [{ callId: "child", description: "Review", status: "running", observedAt: "2026-11-21T10:00:00Z", nativeSessionRef: "known-native" }] });
+    expect((await base.open(repo)).task(task.id)?.subtasks?.[0]).toMatchObject({ status: "completed", nativeSessionRef: "known-native" });
+    const log = readFileSync(join(root, "knowledge", `${KnowledgeBase.fileName(repo.key)}.tasks.jsonl`), "utf8");
+    expect(JSON.parse(log.trim().split("\n").at(-1)!).subtasks[0]).toMatchObject({ status: "completed", nativeSessionRef: "known-native" });
+  });
+
   it("answers 'updating' when the caller cannot wait, and runs one index at a time", async () => {
     const repo = (await base.repoFor(top))!;
     const [first, second] = await Promise.all([base.refresh(repo, 0), base.refresh(repo, 10_000)]);

@@ -16,12 +16,13 @@ export interface TimelineEntry {
 }
 
 export interface TaskInput {
-  agent: { id: string; provider: string; cwd: string; title: string | null };
+  agent: { id: string; provider: string; cwd: string; title: string | null; parentAgentId?: string | null };
   outcome: TaskRecord["outcome"];
   entries: readonly TimelineEntry[];
   // The repository root: changed files are recorded relative to it, and files outside it are left out.
   top: string;
   now: string;
+  observedAt?: string;
 }
 
 function oneLine(text: string, max: number): string {
@@ -43,9 +44,14 @@ export function buildTask(input: TaskInput): Omit<TaskRecord, "citations"> | nul
   if (!firstUser || firstUser.item.type !== "user_message") return null;
   const files = new Set<string>();
   const commands: TaskRecord["commands"] = [];
+  const subtasks = new Map<string, NonNullable<TaskRecord["subtasks"]>[number]>();
   for (const { item } of entries) {
     if (item.type !== "tool_call") continue;
     const detail = item.detail as { type?: string; command?: string; exitCode?: number | null; filePath?: string } | undefined;
+    if (detail?.type === "sub_agent" && item.callId) {
+      const child = item.detail as { description?: string; childSessionId?: string };
+      subtasks.set(item.callId, { callId: item.callId, description: oneLine(child.description ?? item.name, 180), status: item.status, observedAt: input.observedAt ?? input.now, ...(child.childSessionId ? { nativeSessionRef: oneLine(child.childSessionId, 200) } : {}) });
+    }
     if ((detail?.type === "edit" || detail?.type === "write") && detail.filePath) {
       const path = repoPath(detail.filePath, agent.cwd, top);
       if (path) files.add(path);
@@ -66,6 +72,8 @@ export function buildTask(input: TaskInput): Omit<TaskRecord, "citations"> | nul
     commands: commands.slice(-MAX_COMMANDS),
     startedAt: firstUser.timestamp,
     endedAt: input.now,
+    ...(agent.parentAgentId !== undefined && agent.parentAgentId !== agent.id ? { parentAgentId: agent.parentAgentId, lineageObservedAt: input.observedAt ?? input.now } : {}),
+    ...(subtasks.size ? { subtasks: [...subtasks.values()].slice(-100), subtasksTruncated: subtasks.size > 100 } : {}),
   };
 }
 

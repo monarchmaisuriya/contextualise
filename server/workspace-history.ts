@@ -32,8 +32,10 @@ function matches(row: HistoryRow, input: SearchInput): boolean {
 }
 
 // This path reads timeline pages directly: memory-cache eviction never makes old rows unreachable.
+import { emptyResult } from "./retrieval-outcome";
+
 export function workspaceHistoryTools(deps: Deps) {
-  const scoped = async (context: Context, work: (chats: AttachedChat[], caller: string) => Promise<string>): Promise<Answer> => {
+  const scoped = async (context: Context, work: (chats: AttachedChat[], caller: string) => Promise<string | { text: string; empty: boolean }>): Promise<Answer> => {
     try {
       const caller = context.agent?.id;
       const workspace = context.agent?.workspaceId;
@@ -41,10 +43,11 @@ export function workspaceHistoryTools(deps: Deps) {
       if (!(await deps.enabled()) || await deps.off.isOff(caller)) throw new Error("Chat history tools are off for this chat or in Settings > Contextualise.");
       const off = await deps.off.offChats();
       const chats = (await deps.chats(context.paseo, workspace, caller)).filter((chat) => chat.id !== caller && !off.has(chat.id)).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-      const body = await work(chats, caller);
+      const result = await work(chats, caller);
+      const body = typeof result === "string" ? result : result.text;
       const text = `${REFERENCE}\n${body}`;
       if (bytes(text) > ANSWER_MAX_BYTES) throw new Error("Workspace history reply exceeded 16 KiB; narrow the query or request fewer items.");
-      return { text };
+      return emptyResult({ text }, typeof result !== "string" && result.empty);
     } catch (error) {
       return { isError: true, text: redactSecrets(error instanceof Error ? error.message : String(error)).slice(0, 500) };
     }
@@ -86,7 +89,7 @@ export function workspaceHistoryTools(deps: Deps) {
           blocks.push(block);
         }
         if (more && blocks.length === 0) throw new Error("A stored chat summary exceeds the discovery page budget; search its history directly.");
-        return `${blocks.join("\n\n") || "No eligible chats match; try other words or workspace_history_search."}\n${more ? `Next offset: ${offset + blocks.length}.` : "End of live chat listing."}`;
+        return { text: `${blocks.join("\n\n") || "No eligible chats match; try other words or workspace_history_search."}\n${more ? `Next offset: ${offset + blocks.length}.` : "End of live chat listing."}`, empty: blocks.length === 0 };
       }),
     },
     {
@@ -155,7 +158,7 @@ export function workspaceHistoryTools(deps: Deps) {
           if (next) break;
         }
         const body = found.length ? searchHistory([...found].reverse(), { ...input, limit: found.length }, BODY_BYTES, names).text : "No matches in this scanned portion.";
-        return `${body}${problem ? `\n${problem}` : ""}\nScanned ${scanned} timeline items. ${next ? `Partial scan. Continue with the same filters and cursor: ${encode(next)}` : "Scan complete for the current eligible chat listing."}`;
+        return { text: `${body}${problem ? `\n${problem}` : ""}\nScanned ${scanned} timeline items. ${next ? `Partial scan. Continue with the same filters and cursor: ${encode(next)}` : "Scan complete for the current eligible chat listing."}`, empty: found.length === 0 && !problem };
       }),
     },
     {

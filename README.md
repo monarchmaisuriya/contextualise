@@ -9,7 +9,7 @@ Requires Paseo 0.13.
 ## Install
 
 ```bash
-paseo plugin install git:monarchmaisuriya/contextualise --ref v0.34.0
+paseo plugin install git:monarchmaisuriya/contextualise --ref v0.35.0
 ```
 
 ## Tags
@@ -54,6 +54,20 @@ A fetch started from an agent (`/tag-fetch`, or the Fetch box in its Tags pill) 
 Fetched items can be refreshed automatically (Advanced, off by default): every 15 minutes, ready items older than the set number of hours (default 24) are fetched again, through the same queue and limit. Automatic refreshes never add rows to agents. The timer starts after the app first talks to the plugin.
 
 ## Project knowledge
+
+### Context workspace
+
+Open **Project knowledge > Context** to prepare an **Overview**, **Selected entries** (up to 20), or **Full project**. The preview reports exact JavaScript character units and UTF-8 bytes, approximate tokens (characters divided by four), freshness, and omitted entries. Grants and framing count toward the final 60,000-character project attachment limit. A document that does not fit is omitted whole; bounded descriptions and area lines may be explicitly shortened. Full-project document eligibility and ordering are unchanged. Attach > Project also offers the shorter Overview beside the existing full-project choice.
+
+**Copy prepared context** copies exactly the previewed text. It does not prove a model received it or attach a folder by itself. **Prepared**, **Configured**, and **Returned** describe plugin-side operations, not provider acknowledgements or bills.
+
+**Start recording** explicitly enables temporary diagnostics on the selected host, shared by connected clients. Recording defaults off after restart. The Context view shows retained retrieval calls, estimated sizes, errors, empty results, repeated equivalent results and handler durations. Repeated reads can be necessary after compaction. Invalid calls rejected before a handler may not appear. Use **All host activity** for attachments and history results without a project association.
+
+Diagnostics keep at most 200 metadata events for 30 minutes, in memory only. No transcript, query, result body, file path or grant is stored in events. Repetition uses keyed, process-local fingerprints. Stop retains unexpired events; Clear stops recording and clears events/fingerprints. Cleanup is scheduled at expiry but physical cleanup can be delayed while the host is suspended or its event loop is blocked. Expired events are never returned. Existing daily knowledge-use counters are unchanged.
+
+**Past work** supports outcome filtering over loaded pages and shows recorded parent tasks and delegated subtasks. Native session references that cannot be resolved to a recorded Paseo task remain non-navigable. No relationship is inferred from a title. Older task logs remain readable; older plugin writers can drop newly added optional lineage fields when rewriting a record.
+
+See [credits and third-party notices](CREDITS.md) for inspiration and retained grammar licenses.
 
 Every new agent started in a project, a git repository or a folder outside git, gets two things:
 

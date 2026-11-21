@@ -64,6 +64,12 @@ describe("buildTask", () => {
   it("records nothing for an agent that was never asked anything", () => {
     expect(buildTask({ ...base, entries: [at({ type: "assistant_message", text: "Hi" })] })).toBeNull();
   });
+
+  it("keeps the latest native subtask status and an explicit non-self parent", () => {
+    const task = buildTask({ ...base, agent: { ...base.agent, parentAgentId: "parent" }, observedAt: "2026-11-21T12:00:00Z", entries: [at({ type: "user_message", text: "Review" }), at({ type: "tool_call", callId: "c", name: "Task", status: "running", detail: { type: "sub_agent", description: "Review code", childSessionId: "native-c" } }), at({ type: "tool_call", callId: "c", name: "Task", status: "completed", detail: { type: "sub_agent", description: "Review code", childSessionId: "native-c" } })] });
+    expect(task?.parentAgentId).toBe("parent");
+    expect(task?.subtasks).toEqual([{ callId: "c", description: "Review code", status: "completed", nativeSessionRef: "native-c", observedAt: "2026-11-21T12:00:00Z" }]);
+  });
 });
 
 describe("taskNeedsCheck", () => {

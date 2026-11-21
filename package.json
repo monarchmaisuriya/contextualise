@@ -1,7 +1,7 @@
 {
   "name": "contextualise",
   "private": true,
-  "version": "0.34.0",
+  "version": "0.35.0",
   "files": [
     "paseo-plugin.json",
     "contextualise.png",
@@ -9,6 +9,7 @@
     "OVERVIEW.md",
     "README.md",
     "CHANGELOG.md",
+    "CREDITS.md",
     "index.client.tsx",
     "index.server.ts",
     "grammars/",

@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { z } from "zod";
 import type { PaseoApi } from "./paseo-types";
 import { HISTORY_ROW_KIND } from "../shared/history";
+import { emptyResult, isEmptyResult } from "./retrieval-outcome";
 import { ANSWER_MAX_BYTES, browseHistory, ChatHistory, type HistoryRow, loadHistory, readHistory, searchHistory, type TimelineFetch, type TimelinePage } from "./chat-history";
 
 // The history tools as Paseo tools, the prompt note that points a chat at them, the row added after a
@@ -112,8 +113,8 @@ export function historyTools(deps: HistoryDeps) {
       const notes = [reloaded ? "This chat's history was reloaded since it was last read (ids changed); use ids from this answer." : "", capped ? `Only the newest ${rows.length.toLocaleString("en-US")} history items are searched.` : ""].filter(Boolean);
       const note = notes.join(" ");
       // The notes come out of the same 16 KiB the answer may use.
-      const { text } = answer(rows, ANSWER_MAX_BYTES - (note ? Buffer.byteLength(note, "utf8") + 1 : 0));
-      return { text: note ? `${note}\n${text}` : text };
+       const result = answer(rows, ANSWER_MAX_BYTES - (note ? Buffer.byteLength(note, "utf8") + 1 : 0));
+       return emptyResult({ text: note ? `${note}\n${result.text}` : result.text }, isEmptyResult(result));
     } catch (error) {
       return { isError: true, text: error instanceof Error ? error.message : String(error) };
     }

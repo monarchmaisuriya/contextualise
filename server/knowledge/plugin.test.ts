@@ -261,6 +261,37 @@ describe("contributeKnowledge", () => {
     expect(items[0].text).toContain("quoted from the repository:\n\nOne daemon.");
   });
 
+  it("prepares selected entries with an exact receipt and refuses an empty selection", async () => {
+    await create(top);
+    const { projects } = await call("knowledge.projects", {}) as { projects: { repoKey: string }[] };
+    const repoKey = projects[0].repoKey;
+    const result = await call("knowledge.prepare-context", { repoKey, mode: "selected", ids: ["architecture:ARCHITECTURE.md:1"] }) as { text: string; receipt: { characters: number; bytes: number; included: number } };
+    expect(result.receipt.included).toBe(1);
+    expect(result.receipt.characters).toBe(result.text.length);
+    expect(result.receipt.bytes).toBe(Buffer.byteLength(result.text));
+    expect(result.text).toMatch(/^Attach grant \(project_attach\): /);
+    await expect(call("knowledge.prepare-context", { repoKey, mode: "selected", ids: [] })).rejects.toThrow("Choose at least one entry");
+  });
+
+  it("refreshes indexed content before preparing a selected entry", async () => {
+    await create(top);
+    const { projects } = await call("knowledge.projects", {}) as { projects: { repoKey: string }[] };
+    writeFileSync(join(top, "ARCHITECTURE.md"), "# Overview\nChanged only before preparation.\n");
+    const result = await call("knowledge.prepare-context", { repoKey: projects[0].repoKey, mode: "selected", ids: ["architecture:ARCHITECTURE.md:1"] }) as { text: string; receipt: { freshness: string } };
+    expect(result.text).toContain("Changed only before preparation.");
+    expect(result.receipt.freshness).toBe("current");
+  });
+
+  it("links recorded children through their explicit parent fact in both directions", async () => {
+    await create(top);
+    const { projects } = await call("knowledge.projects", {}) as { projects: { repoKey: string }[] };
+    const repoKey = projects[0].repoKey;
+    await emit("agent.turn_ended", { agent: { id: "parent", provider: "claude", cwd: top, title: "Parent" }, outcome: { kind: "completed" } });
+    await emit("agent.turn_ended", { agent: { id: "child", parentAgentId: "parent", provider: "claude", cwd: top, title: "Child" }, outcome: { kind: "completed" } });
+    expect(await call("knowledge.task-relations", { repoKey, id: "task:parent" })).toMatchObject({ children: [{ id: "task:child", title: "Child", native: false }] });
+    expect(await call("knowledge.task-relations", { repoKey, id: "task:child" })).toMatchObject({ parent: { id: "task:parent", title: "Parent" } });
+  });
+
   it("offers each whole project in Attach when nothing is typed, after checking it for changes", async () => {
     await create(top);
     await emit("agent.turn_ended", { agent: { id: "a1", provider: "codex", cwd: top, title: null }, outcome: { kind: "completed" } });
@@ -273,7 +304,10 @@ describe("contributeKnowledge", () => {
     const { items } = (await attach(""))!;
     expect(refresh.mock.calls.map(([, maxWaitMs]) => maxWaitMs)).toEqual([300]);
     refresh.mockRestore();
-    expect(items).toHaveLength(1);
+    expect(items).toHaveLength(2);
+    expect(items[1].title).toContain("overview");
+    expect(items[1].text.split("\n")[0]).toMatch(/^Attach grant \(project_attach\): /);
+    expect(items[1].text).not.toContain("### ARCHITECTURE.md");
     expect(items[0]).toMatchObject({ identifier: "", title: expect.stringMatching(/^contextualise-plugin-repo-/) });
     expect(items[0].subtitle).toMatch(/^1 document · about \d+ tokens · /);
     // With a chat in the project, the row leads with when it was last active, as Attach > Chat does.
@@ -302,7 +336,8 @@ describe("contributeKnowledge", () => {
       const titles = (await attach(""))!.items.map((item) => item.title);
       expect(titles).toEqual(expect.arrayContaining([basename(top), "Backend"]));
       expect(titles).not.toContain("old");
-      expect(titles).toHaveLength(2);
+      expect(titles).toHaveLength(4);
+      expect(titles.filter((title) => title.includes("overview"))).toHaveLength(2);
     } finally {
       rmSync(fresh, { recursive: true, force: true });
       rmSync(old, { recursive: true, force: true });
@@ -337,7 +372,7 @@ describe("contributeKnowledge", () => {
   it("puts a word before knowledge rows in Attach only when the label setting asks for one", async () => {
     await create(top);
     values = { ...values, pickerPrefix: "word" };
-    expect((await attach(""))!.items.map((item) => item.identifier)).toEqual(["Whole project"]);
+    expect((await attach(""))!.items.map((item) => item.identifier)).toEqual(["Whole project", "Overview"]);
     expect((await attach("daemon"))!.items.map((item) => item.identifier)).toEqual(["Design"]);
   });
 

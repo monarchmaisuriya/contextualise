@@ -61,4 +61,12 @@ describe("projectPack", () => {
     store.replaceSource({ path: "CLAUDE.md", kind: "convention", blob: "c2", chunks: [{ title: "Rules", body: "part one", line: 1 }, { title: "Rules", body: "part two", line: 1 }] });
     expect(projectPack(store, project).text).toContain("### CLAUDE.md\n#### Rules\npart one\npart two");
   });
+
+  it("bounds oversized fixed sections and reserves the actual grant in the final envelope", () => {
+    store.replaceSource({ path: "(brief)", kind: "brief", blob: "large", chunks: [{ title: "Description", body: "x".repeat(70_000), line: 1 }] });
+    const pack = projectPack(store, project, 4_500, "Attach grant (project_attach): signed-grant\n\n");
+    expect(pack.text.length).toBeLessThanOrEqual(4_500);
+    expect(pack.text.startsWith("Attach grant (project_attach): signed-grant\n\n")).toBe(true);
+    expect(pack.text).toContain("[shortened]");
+  });
 });

@@ -24,6 +24,10 @@ import { ProjectPrefsStore } from "./prefs";
 import { UsageLog } from "./usage";
 import { overviewFor, withoutMarkers } from "./overview";
 import { projectPack } from "./pack";
+import { prepareContext } from "./prepare";
+import { receipt, type ContextActivity } from "../context-activity";
+import { contextToolSchema, prepareContextRpc, taskRelationsRpc } from "../../shared/context";
+import { emptyResult, isEmptyResult } from "../retrieval-outcome";
 import { type LiveAgent, needsYou } from "../agent-state";
 import { waitingAgents } from "./pulse";
 import { ATTACH_GRANT_LABEL, PROJECT_ATTACH_TOOL, SECTION_END, SECTION_START, unavailableSection, withoutSection, withSection } from "./section";
@@ -74,6 +78,7 @@ const WORKSPACE_CHATS_PAGE_BYTES = 14 * 1024;
 const SUMMARY_WORKER_MS = 5 * 60_000;
 
 interface KnowledgeDeps {
+  activity?: ContextActivity;
   resolveRoot: () => Promise<string>;
   settings: () => Promise<SnapshotSettings>;
   // The tags, for attachment_updates on an attached tag.
@@ -380,7 +385,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     try {
       // It listens while knowledge is off too, answering that it is off: agents keep their stored tool
       // address, and OpenCode will not load an agent whose tool server refuses connections.
-      const http: Server | null = await new KnowledgeMcp(tokens, service, usage, knowledgeOn, attachedProjects, readConversation).listen(knowledgePort);
+      const http: Server | null = await new KnowledgeMcp(tokens, service, usage, knowledgeOn, attachedProjects, readConversation, deps.activity).listen(knowledgePort);
       console.log(`[contextualise] knowledge tools on 127.0.0.1:${knowledgePort}`);
       return { tokens, port: knowledgePort, http, problem: null };
     } catch (error) {
@@ -514,7 +519,14 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     if (isWorkerCwd(await deps.resolveRoot(), request.cwd)) return request;
     const opened = request as typeof request & { tools?: unknown[] };
     const history = (await historyOn()) ? [...historyTools(chatHistory), ...attachedHistoryTools(attachedHistory), ...workspaceHistoryTools(workspaceHistory), attachmentUpdatesTool] : [];
-    return { ...opened, tools: [...(opened.tools ?? []), projectAttachTool, ...history] } as typeof request;
+    const measured = history.map((definition) => ({ ...definition, execute: async (input: never, context: never) => {
+      const run = () => Promise.resolve((definition.execute as (input: never, context: never) => { text?: string; isError?: boolean } | Promise<{ text?: string; isError?: boolean }>)(input, context));
+      const name = contextToolSchema.safeParse(definition.name);
+      if (!deps.activity || !name.success) return run();
+      const caller = context as { agent?: { id?: string; cwd?: string } };
+      return deps.activity.observe(definition.name === "attachment_updates" ? "updates" : "history", name.data, caller.agent?.id ?? "unknown", input, run, (value) => ({ text: value.text ?? "", error: value.isError, empty: isEmptyResult(value) }));
+    } }));
+    return { ...opened, tools: [...(opened.tools ?? []), projectAttachTool, ...measured] } as typeof request;
   });
 
   // Adds the project map and the read tools to every new agent in a git repository. Knowledge enriches
@@ -560,6 +572,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       });
       if (map.state === "off") return { ...request, config: stripped };
       const section = map.text;
+      if (section) deps.activity?.record(receipt(section, "map", "configured"), repo.key);
       if (map.state === "unavailable") return { ...request, config: { ...stripped, systemPrompt: section ? withSection(stripped.systemPrompt, section) : stripped.systemPrompt } };
       const { tokens, port } = await runtime;
       return {
@@ -627,7 +640,8 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       if (!(await deps.settings()).knowledgeEnabled) return;
       const repo = await base.repoFor(agent.cwd);
       if (!repo || !(await prefs.get(repo.key)).enabled) return;
-      const task = buildTask({ agent, outcome: outcome.kind, entries: await readTimeline(paseo, agent.id), top: repo.top, now: new Date().toISOString() });
+      const observedAt = new Date().toISOString();
+      const task = buildTask({ agent, outcome: outcome.kind, entries: await readTimeline(paseo, agent.id), top: repo.top, now: new Date().toISOString(), observedAt });
       if (!task) return;
       const blobs = await currentBlobs(repo);
       const previous = (await base.open(repo)).task(task.id);
@@ -792,7 +806,9 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
           const registered = await attachmentUpdates(agent.id, grants ?? [], { store: seenStore, verify: (grant) => verifyAnyGrant(tokens, grant), subjects: async () => [], registerOnly: true });
           return { text: `${await workspaceChatsGiven(paseo, caller)}\n\n${registered}\nCall attachment_updates without workspaceChats to check attachment changes.` };
         }
-        return { text: await attachmentUpdates(agent.id, grants ?? [], { store: seenStore, verify: (grant) => verifyAnyGrant(tokens, grant), subjects: (found) => updateSubjects(paseo, caller, found) }) };
+        let empty = false;
+        const text = await attachmentUpdates(agent.id, grants ?? [], { store: seenStore, verify: (grant) => verifyAnyGrant(tokens, grant), subjects: (found) => updateSubjects(paseo, caller, found), onOutcome: (value) => { empty = value; } });
+        return emptyResult({ text }, empty);
       } catch (error) {
         return { isError: true, text: error instanceof Error ? error.message : String(error) };
       }
@@ -1197,6 +1213,19 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     return service.read(await project(repoKey), id, { connections: true });
   });
   handleOn(listTasksRpc, async ({ repoKey, limit, offset }) => service.tasks(await project(repoKey), limit, offset));
+  handleOn(taskRelationsRpc, async ({ repoKey, id }) => {
+    const store = await base.open(await project(repoKey));
+    const task = store.task(id);
+    if (!task) throw new Error("This task is no longer recorded");
+    const parent = task.parentAgentId ? store.task(`task:${task.parentAgentId}`) : null;
+    const recorded = store.childrenOf(task.agentId);
+    const children = recorded.slice(0, 100).map((child) => ({ id: child.id as string | null, title: child.generatedTitle ?? child.title, status: child.outcome as "completed" | "failed" | "canceled" | "running", native: false }));
+    children.push(...(task.subtasks ?? []).filter((child) => !child.childAgentId || !recorded.some((known) => known.agentId === child.childAgentId)).map((child) => {
+      const found = child.childAgentId ? store.task(`task:${child.childAgentId}`) : null;
+      return { id: found?.id ?? null, title: child.description, status: child.status, native: !found };
+    }));
+    return { parent: parent ? { id: parent.id, title: parent.generatedTitle ?? parent.title } : null, children: children.slice(0, 100), truncated: Boolean(task.subtasksTruncated || children.length > 100 || recorded.length > 100) };
+  });
   handleOn(projectFactsRpc, async ({ repoKey }) => service.facts(await project(repoKey)));
   // Paseo's panel state hooks throw in screens and this plugin shares components between both, so the
   // client sends the workspace id and the folder is looked up here.
@@ -1211,6 +1240,21 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     }
   });
   handleOn(knowledgeUsageRpc, async ({ repoKey }) => usage.lastDays((await project(repoKey)).key));
+  handleOn(prepareContextRpc, async ({ repoKey, mode, ids }, { paseo }) => {
+    remember(paseo);
+    const repo = await project(repoKey);
+    base.invalidate(repoKey);
+    const refreshed = await base.refresh(repo, ATTACH_WAIT_MS).catch(() => "failed" as const);
+    const store = await base.open(repo);
+    const map = await overviewFor({ repoKey, settings: await deps.settings(), prefs: await prefs.get(repoKey), problem: async () => (await runtime).problem, open: async () => ({ store, updating: base.isIndexing(repoKey) }), memoriseAvailable });
+    const { tokens, problem } = await runtime;
+    if (problem) throw new Error(`Context preparation unavailable: ${problem}`);
+    const prefix = `${ATTACH_GRANT_LABEL} ${tokens.mintProjectGrant(repoKey, repo.top)}\n\n`;
+    const result = prepareContext(store, { name: repoKey.split("/").at(-1) ?? repoKey, repoKey }, mode, ids, prefix, map.text ? withoutMarkers(map.text) : null, refreshed !== "fresh");
+    if (refreshed === "failed") result.receipt.freshness = "unknown";
+    deps.activity?.record(result.receipt, repoKey);
+    return result;
+  });
   // The live agents working in a project: not archived, not Paseo's own, and in a folder of the
   // project. An agent whose folder cannot be resolved (gone, unreadable, git refusing it) is not
   // counted here and is logged; it cannot fail the answer for every project.
@@ -1308,7 +1352,8 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
   // `showActivity`: lead with when the project was last active, as Attach > Chat does ("Show when it was
   // last used").
   const projectItem = (found: { repoKey: string; name: string; top: string; activeAt: string | null }, store: KnowledgeStore, updating: boolean, pickerTitleMaxChars: number, label: (word: string) => string, grant: string | null, showActivity: boolean) => {
-    const pack = projectPack(store, found);
+    const pack = projectPack(store, found, undefined, grant ? `${ATTACH_GRANT_LABEL} ${grant}\n\n` : "");
+    deps.activity?.record(receipt(pack.text, "project", "prepared", pack.included, pack.documents - pack.included, updating ? "updating" : "current"), found.repoKey);
     const active = showActivity && found.activeAt ? `${shortTimeAgo(found.activeAt)} · ` : "";
     return {
       id: `${found.repoKey}|project`,
@@ -1316,7 +1361,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       title: capTitle(found.name, pickerTitleMaxChars),
       subtitle: `${active}${updating ? "Updating · " : ""}${pack.documents === 0 ? "No design documents, rules, or decisions" : pack.included === pack.documents ? `${pack.documents} document${pack.documents === 1 ? "" : "s"}` : `${pack.included} of ${pack.documents} documents`} · about ${pack.tokens.toLocaleString("en-US")} tokens · ${found.top}`.slice(0, 200),
       url: DOCS_URL,
-      text: grant ? `${ATTACH_GRANT_LABEL} ${grant}\n\n${pack.text}` : pack.text,
+      text: pack.text,
       resourceType: "knowledge",
     };
   };
@@ -1361,7 +1406,15 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
     const wholes = await Promise.all(
       projects.filter(({ found }) => words === "" || found.name.toLowerCase().includes(words)).map(async ({ found, repo, updating }) => projectItem(found, await base.open(repo), updating, pickerTitleMaxChars, label, tokens ? tokens.mintProjectGrant(found.repoKey, found.top) : null, agentShowActivity)),
     );
-    if (words === "") return { items: wholes };
+    const overviews = await Promise.all(projects.filter(({ found }) => words === "" || found.name.toLowerCase().includes(words)).map(async ({ found, repo, updating }) => {
+      const store = await base.open(repo);
+      const map = await overviewFor({ repoKey: found.repoKey, settings: await deps.settings(), prefs: await prefs.get(found.repoKey), problem: async () => (await runtime).problem, open: async () => ({ store, updating }), memoriseAvailable });
+      const prefix = tokens ? `${ATTACH_GRANT_LABEL} ${tokens.mintProjectGrant(found.repoKey, found.top)}\n\n` : "";
+      const prepared = prepareContext(store, found, "overview", [], prefix, map.text ? withoutMarkers(map.text) : null, updating);
+      deps.activity?.record(prepared.receipt, found.repoKey);
+      return { id: `${found.repoKey}|overview|project`, identifier: label("Overview"), title: capTitle(`${found.name} · overview`, pickerTitleMaxChars), subtitle: `Short project map · about ${prepared.receipt.tokens} tokens${updating ? " · updating" : ""}`, url: DOCS_URL, text: prepared.text, resourceType: "knowledge" };
+    }));
+    if (words === "") return { items: [...wholes, ...overviews] };
     const entries = await Promise.all(
       projects.map(async ({ found, repo, updating }) => {
         const hits = await service.search(repo, query, [], ATTACH_RESULTS, [], 0);
@@ -1381,7 +1434,7 @@ export function contributeKnowledge(server: PluginServerContext, deps: Knowledge
       }),
     );
     // Every project's results are kept; Paseo's picker scrolls.
-    return { items: [...wholes, ...entries.flat()] };
+    return { items: [...wholes, ...overviews, ...entries.flat()] };
   });
 
   let titles: { at: number; map: Promise<Map<string, string>> } | null = null;

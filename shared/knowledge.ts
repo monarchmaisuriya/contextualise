@@ -50,6 +50,10 @@ export const knowledgeEntrySchema = searchHitSchema.omit({ snippet: true }).exte
 export type KnowledgeEntry = z.infer<typeof knowledgeEntrySchema>;
 
 export const taskSummarySchema = z.object({
+  parentAgentId: z.string().nullable().optional(),
+  lineageObservedAt: z.string().optional(),
+  subtasks: z.array(z.object({ callId: z.string(), description: z.string(), status: z.enum(["running", "completed", "failed", "canceled"]), observedAt: z.string(), childAgentId: z.string().optional(), nativeSessionRef: z.string().optional() })).max(100).optional(),
+  subtasksTruncated: z.boolean().optional(),
   id: z.string(),
   agentId: z.string(),
   provider: z.string(),

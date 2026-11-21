@@ -13,6 +13,7 @@ import { type ProjectRoot, projectRoot } from "./git";
 import { CONVERSATION_TOOL, KNOWLEDGE_OFF, KNOWLEDGE_SERVER, KNOWLEDGE_TOOLS, KnowledgeMcp, knowledgeServerEntry } from "./mcp";
 import { KnowledgeService } from "./service";
 import { SymbolReader } from "./symbols";
+import { ContextActivity } from "../context-activity";
 
 describe("knowledge tools", () => {
   let top: string;
@@ -22,6 +23,7 @@ describe("knowledge tools", () => {
   let tokens: TokenAuthority;
   let related: ((repoKey: string, path: string) => Promise<{ id: string; subject: string }[]>) | null;
   let knowledgeOn: boolean;
+  let activity: ContextActivity;
   // Projects linked now, by "<workspace>|<project key>".
   const attachedNow = new Map<string, ProjectRoot[]>();
   const calls: [string, string, string][] = [];
@@ -53,16 +55,27 @@ describe("knowledge tools", () => {
     tokens = new TokenAuthority(await loadTokenSecret(root));
     calls.length = 0;
     knowledgeOn = true;
-    http = await new KnowledgeMcp(tokens, new KnowledgeService(base, async () => related), { recordCall: async (repoKey, tool, token) => void calls.push([repoKey, tool, token]) }, async () => knowledgeOn, async (workspace) => attachedNow.get(workspace) ?? []).listen(0);
+    activity = new ContextActivity();
+    http = await new KnowledgeMcp(tokens, new KnowledgeService(base, async () => related), { recordCall: async (repoKey, tool, token) => void calls.push([repoKey, tool, token]) }, async () => knowledgeOn, async (workspace) => attachedNow.get(workspace) ?? [], null, activity).listen(0);
     attachedNow.clear();
   });
   afterEach(async () => {
+    activity.stop();
     for (const client of clients.splice(0)) await client.close();
     http.closeAllConnections();
     await new Promise((done) => http.close(done));
     base.close();
     rmSync(top, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
+  });
+
+  it("classifies a zero-hit search without changing its model-visible result", async () => {
+    const repo = projectRoot("local/abc", top);
+    activity.control("start");
+    const client = await connect(tokens.mint({ repoKey: repo.key, top }));
+    const result = await client.callTool({ name: "knowledge_search", arguments: { query: "nonexistentword" } });
+    expect(textOf(result)).toContain("Nothing in");
+    expect(activity.snapshot(repo.key).events[0]).toMatchObject({ tool: "knowledge_search", outcome: "empty", state: "returned" });
   });
 
   it("reads an attached conversation only with its grant, and only up to when it was attached", async () => {

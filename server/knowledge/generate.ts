@@ -61,6 +61,7 @@ const explainSchema = z.object({ explanation: z.string().trim().min(1).max(2_000
 export type RunWorkerFn = (paseo: PaseoApi, root: string, job: WorkerJob, onCreated: (agentId: string) => void) => Promise<string>;
 
 export interface GenerationAgent {
+  parentAgentId?: string | null;
   id: string;
   provider: string;
   cwd: string;
@@ -177,6 +178,7 @@ export class Generator {
   async summarize(paseo: PaseoApi, project: ProjectRoot, agent: GenerationAgent, refresh: "changed" | "grown" = "changed"): Promise<"done" | "skipped" | "capped"> {
     const values = await this.deps.settings();
     if (!values.knowledgeEnabled || !values.knowledgeGenerate || !(await this.deps.prefs.get(project.key)).enabled) return "skipped";
+    const observedAt = this.now().toISOString();
     const entries = await this.deps.readTimeline(paseo, agent.id);
     const turns = entries.filter((entry) => entry.item.type === "user_message").length;
     const store = await this.deps.base.open(project);
@@ -187,7 +189,7 @@ export class Generator {
       const current = refresh === "changed" ? turns === covered : turns < 2 * covered && (turns === covered || !dayOld);
       if (current) return "skipped";
     }
-    const task = buildTask({ agent, outcome: existing?.outcome ?? "completed", entries, top: project.top, now: existing?.endedAt ?? this.now().toISOString() });
+    const task = buildTask({ agent, outcome: existing?.outcome ?? "completed", entries, top: project.top, now: existing?.endedAt ?? this.now().toISOString(), observedAt });
     const slice = sliceTranscript(entries.map((entry) => entry.item));
     if (!task || slice.userMessages === 0) return "skipped";
     if (!(await this.takeRun())) return "capped";
@@ -307,7 +309,8 @@ export class Generator {
     let imported = 0;
     for (const agent of await this.projectAgents(paseo, project)) {
       if (store.task(`task:${agent.id}`)) continue;
-      const task = buildTask({ agent, outcome: agent.failed ? "failed" : "completed", entries: await this.deps.readTimeline(paseo, agent.id), top: project.top, now: agent.updatedAt });
+      const observedAt = this.now().toISOString();
+      const task = buildTask({ agent, outcome: agent.failed ? "failed" : "completed", entries: await this.deps.readTimeline(paseo, agent.id), top: project.top, now: agent.updatedAt, observedAt });
       if (!task) continue;
       const blobs = await currentBlobs(project);
       await this.deps.base.recordTask(project, { ...task, citations: task.files.map((path) => ({ path, blob: blobs.get(path) ?? "missing" })) });
@@ -322,7 +325,7 @@ export class Generator {
       const page = await paseo.agents.list({ filter: { includeArchived: true }, page: { limit: 200, ...(cursor ? { cursor } : {}) } });
       for (const { agent } of page.entries) {
         if (agent.internal || (await this.deps.base.repoFor(agent.cwd))?.key !== project.key) continue;
-        agents.push({ id: agent.id, provider: agent.provider, cwd: agent.cwd, title: agent.title, updatedAt: agent.updatedAt, failed: Boolean(agent.lastError) });
+        agents.push({ id: agent.id, provider: agent.provider, cwd: agent.cwd, title: agent.title, updatedAt: agent.updatedAt, failed: Boolean(agent.lastError), ...(agent.labels?.["paseo.parent-agent-id"] ? { parentAgentId: agent.labels["paseo.parent-agent-id"] } : {}) });
       }
       if (!page.pageInfo.hasMore || !page.pageInfo.nextCursor) break;
       cursor = page.pageInfo.nextCursor;

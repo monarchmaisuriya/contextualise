@@ -15,6 +15,8 @@ import { memoriseNote } from "./memorise-note";
 import { type Navigation, NeedsYou, Period, RiskyFiles, StartHere, usePulse } from "./knowledge/pulse";
 import { AreaPage, AreasView, Connections, EntryBody, type ReadTarget, TaskRow, useFacts } from "./project-map";
 import { overviewLine, usageLine } from "./usage-line";
+import { ContextView } from "./context-view";
+import { taskRelationsRpc } from "../shared/context";
 
 const PROJECTS_QUERY = ["contextualise", "knowledge", "projects"];
 const knowledgeKey = (part: string, repoKey: string) => ["contextualise", "knowledge", part, repoKey];
@@ -23,11 +25,12 @@ const OVERVIEW_ROWS = 5;
 const PAGE = 50;
 // The kinds of written documents, listed together under Documents.
 const DOCUMENT_KINDS = ["architecture", "convention", "adr", "doc"] as const;
-type ScreenView = "overview" | "areas" | "documents" | "code" | "tasks";
+type ScreenView = "overview" | "context" | "areas" | "documents" | "code" | "tasks";
 
 // The views, with what each counts on its tab; a view with nothing in it is left out.
 const VIEWS: readonly (readonly [ScreenView, string, (project: Project) => number])[] = [
   ["overview", "Overview", () => 0],
+  ["context", "Context", () => 0],
   ["areas", "Areas", () => 0],
   ["documents", "Documents", (project) => DOCUMENT_KINDS.reduce((sum, kind) => sum + project.counts[kind], 0)],
   ["code", "Code", (project) => project.counts.code],
@@ -56,15 +59,18 @@ function HitRow({ hit, pins, onRead, styles }: { hit: SearchHit; pins: Pins; onR
 
 // Every recorded conversation, newest first, a page at a time.
 function TaskList({ repoKey, onRead, styles }: { repoKey: string; onRead(target: ReadTarget): void; styles: Styles }) {
+  const [filter, setFilter] = useState("all");
   const listTasks = useRpc(listTasksRpc);
   const { pages, items: tasks, total } = usePagedList([...knowledgeKey("tasks", repoKey), "all"], (offset) => listTasks({ repoKey, limit: PAGE, offset }), (page) => page.tasks);
   return (
     <>
       <SectionHeader label={tasks.length < total ? `Past work · showing ${tasks.length} of ${total}` : "Past work"} count={tasks.length < total ? undefined : total} styles={styles} />
+      <View style={pad}><Segmented options={[{ value: "all", label: "All" }, { value: "completed", label: "Completed" }, { value: "failed", label: "Failed" }, { value: "canceled", label: "Canceled" }]} value={filter} onChange={setFilter} label="Filter loaded tasks by outcome" styles={styles} /></View>
       {pages.isLoading ? <StateView state="loading" styles={styles} /> : null}
       {pages.error ? <StateView state="error" text={errorText(pages.error)} styles={styles} /> : null}
       {tasks.length === 0 && !pages.isLoading ? <Text style={[styles.muted, pad]}>No work recorded yet.</Text> : null}
-      {tasks.map((task) => <TaskRow key={task.id} task={task} onOpen={onRead} styles={styles} />)}
+      {tasks.filter((task) => filter === "all" || task.outcome === filter).map((task) => <TaskRow key={task.id} task={task} onOpen={onRead} styles={styles} />)}
+      {filter !== "all" ? <Text style={[styles.note, pad]}>Filtering the loaded tasks. Show more to include older work.</Text> : null}
       {pages.hasNextPage ? <Button label="Show more" styles={styles} disabled={pages.isFetchingNextPage} onPress={() => void pages.fetchNextPage()} /> : null}
     </>
   );
@@ -72,18 +78,29 @@ function TaskList({ repoKey, onRead, styles }: { repoKey: string; onRead(target:
 
 // One entry in the reader, with Copy and Pin.
 function EntryReader({ repoKey, target, pins, onClose, styles }: { repoKey: string; target: ReadTarget; pins: Pins; onClose(): void; styles: Styles }) {
+  const [related, setRelated] = useState<ReadTarget>(target);
+  const current = related;
+  const relations = useRpc(taskRelationsRpc);
+  const family = useQuery({ queryKey: ["contextualise", "task-family", repoKey, current.id], queryFn: () => relations({ repoKey, id: current.id }), enabled: current.id.startsWith("task:") });
   const read = useRpc(readKnowledgeRpc);
-  const entry = useQuery({ queryKey: ["contextualise", "knowledge", "read", repoKey, target.id], queryFn: () => read({ repoKey, id: target.id }) });
+  const entry = useQuery({ queryKey: ["contextualise", "knowledge", "read", repoKey, current.id], queryFn: () => read({ repoKey, id: current.id }) });
   const body = entry.data ? readerBody(entry.data) : undefined;
   return (
     <ReaderSheet
-      title={entry.data?.title ?? target.title}
-      text={body && target.lead ? `${target.lead}\n\n${body.text}` : body?.text}
+      title={entry.data?.title ?? current.title}
+      text={body && current.lead ? `${current.lead}\n\n${body.text}` : body?.text}
       plain={body?.plain}
       meta={entry.data ? entryMeta(entry.data) : undefined}
       error={entry.error ? errorText(entry.error) : undefined}
-      pin={{ pinned: pins.isPinned(target.id), onChange: (pinned) => pins.setPinned(target.id, pinned) }}
-      footer={entry.data?.connections ? <Connections connections={entry.data.connections} styles={styles} /> : undefined}
+      pin={{ pinned: pins.isPinned(current.id), onChange: (pinned) => pins.setPinned(current.id, pinned) }}
+      footer={<>
+        {entry.data?.connections ? <Connections connections={entry.data.connections} styles={styles} /> : null}
+        {family.error ? <StateView state="error" text={errorText(family.error)} styles={styles} /> : null}
+        {family.data?.parent ? <><SectionHeader label="Parent task" styles={styles} /><ListRow title={family.data.parent.title} onPress={() => { const parent = family.data?.parent; if (parent) setRelated(parent); }} styles={styles} /></> : null}
+        {family.data?.children.some((child) => !child.native) ? <><SectionHeader label="Recorded child tasks" styles={styles} />{family.data.children.filter((child) => !child.native).map((child) => <ListRow key={child.id} title={child.title} meta={child.status} onPress={child.id ? () => setRelated({ id: child.id!, title: child.title }) : undefined} styles={styles} />)}</> : null}
+        {family.data?.children.some((child) => child.native) ? <><SectionHeader label="Native subtask observations" styles={styles} /><Text style={[styles.note, pad]}>These references may overlap the recorded tasks above. Their native identifiers have not been resolved to Paseo task identities.</Text>{family.data.children.filter((child) => child.native).map((child, index) => <ListRow key={`native:${index}`} title={child.title} meta={`${child.status} · native observation`} styles={styles} />)}</> : null}
+        {family.data?.truncated ? <Text style={styles.note}>More relationship observations exist than this view can retain.</Text> : null}
+      </>}
       onClose={onClose}
       styles={styles}
     />
@@ -310,7 +327,7 @@ export function KnowledgeView(props: ({ fixedRepoKey: string } | { hostId: strin
     return framed(<StateView state="empty" text={fixedRepoKey ? "No knowledge for this project yet. It is read when an agent starts here." : "No project knowledge yet. It is read when an agent starts in a project folder, in git or not."} styles={styles} />);
   }
   const readLine = !project.enabled ? "Off: new agents here start without it" : project.indexing ? "Reading the project…" : project.indexedAt ? `Read ${ago(project.indexedAt)}` : "";
-  const views = VIEWS.filter(([value, , count]) => value === "overview" || value === "areas" || count(project) > 0).map(([value, label, count]) => ({ value, label, count: count(project) }));
+  const views = VIEWS.filter(([value, , count]) => value === "overview" || value === "context" || value === "areas" || count(project) > 0).map(([value, label, count]) => ({ value, label, count: count(project) }));
   const named = (candidate: Project) => (all.filter((other) => other.name === candidate.name).length > 1 ? `${candidate.name} (${candidate.repoKey})` : candidate.name);
   const generation = project.generation;
   // On a wide screen of its own, the projects and views sit in a rail beside the page, like a
@@ -364,6 +381,8 @@ export function KnowledgeView(props: ({ fixedRepoKey: string } | { hostId: strin
       </>
     ) : area !== null ? (
       <AreaPage repoKey={project.repoKey} path={area} onOpenArea={setArea} onBack={() => setArea(null)} onRead={setReading} styles={styles} onExplain={writing && !running ? () => change(explain({ repoKey: project.repoKey, path: area })) : null} />
+    ) : view === "context" ? (
+      <ContextView key={project.repoKey} repoKey={project.repoKey} styles={styles} />
     ) : view === "tasks" ? (
       <TaskList repoKey={project.repoKey} onRead={setReading} styles={styles} />
     ) : view === "code" ? (
@@ -379,7 +398,7 @@ export function KnowledgeView(props: ({ fixedRepoKey: string } | { hostId: strin
     <>
       {menu.sheet}
       <ActionSheet title="Choose project" open={choosing} onOpenChange={setChoosing} actions={all.map((candidate) => ({ label: candidate.repoKey === repoKey ? `${named(candidate)} · shown` : named(candidate), onPress: () => setRepoKey(candidate.repoKey) }))} styles={styles} />
-      {reading ? <EntryReader repoKey={project.repoKey} target={reading} pins={pins} onClose={() => setReading(null)} styles={styles} /> : null}
+      {reading ? <EntryReader key={`${project.repoKey}:${reading.id}`} repoKey={project.repoKey} target={reading} pins={pins} onClose={() => setReading(null)} styles={styles} /> : null}
     </>
   );
   const viewRow = (entry: (typeof views)[number], nested: boolean) => (

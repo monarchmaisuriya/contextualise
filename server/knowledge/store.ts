@@ -4,6 +4,7 @@ import { codeEntryBody, KNOWLEDGE_KINDS, type KnowledgeKind, type TaskSummary, t
 import type { FileLink } from "./facts";
 import type { AdrInfo, TextChunk } from "./sources";
 import type { CodeImport, CodeSymbol } from "./symbols";
+import { mergeTaskLineage } from "./lineage";
 
 export interface StoredHit {
   id: string;
@@ -305,17 +306,23 @@ export class KnowledgeStore {
     return (this.db.prepare("SELECT status, superseded_by AS supersededBy FROM sources WHERE path = ?").get(path) as { status: string | null; supersededBy: string | null } | undefined) ?? null;
   }
 
-  upsertTask(task: TaskRecord): void {
-    this.transaction(() => {
+  upsertTask(task: TaskRecord): TaskRecord {
+    return this.transaction(() => {
+      task = mergeTaskLineage(this.task(task.id), task);
       this.db.prepare("INSERT INTO tasks (id, ended_at, record) VALUES (?, ?, ?) ON CONFLICT (id) DO UPDATE SET ended_at = excluded.ended_at, record = excluded.record").run(task.id, task.endedAt, JSON.stringify(task));
       this.db.prepare("DELETE FROM tasks_text WHERE id = ?").run(task.id);
       this.db.prepare("INSERT INTO tasks_text (id, title, request, files) VALUES (?, ?, ?, ?)").run(task.id, task.title, task.request, task.files.join(" "));
+      return task;
     });
   }
 
   // Tasks that ended at or after `since` (ISO time), newest first.
   tasksSince(since: string): TaskRecord[] {
     return (this.db.prepare("SELECT record FROM tasks WHERE ended_at >= ? ORDER BY ended_at DESC").all(since) as { record: string }[]).map((row) => JSON.parse(row.record) as TaskRecord);
+  }
+
+  childrenOf(agentId: string): TaskRecord[] {
+    return (this.db.prepare("SELECT record FROM tasks WHERE json_extract(record, '$.parentAgentId') = ? ORDER BY ended_at DESC LIMIT 101").all(agentId) as { record: string }[]).map((row) => JSON.parse(row.record) as TaskRecord);
   }
 
   isCode(path: string): boolean {

@@ -10,7 +10,7 @@ import { CONTROL_HEIGHT, searchWidth, segmentedScrolls, TEXT } from "./rules";
 export function Button({ label, icon, onPress, styles, disabled, kind = "ghost" }: { label: string; icon?: string; onPress(): void; styles: Styles; disabled?: boolean; kind?: "ghost" | "primary" }) {
   const color = kind === "primary" ? styles.colors.accentForeground : styles.colors.foreground;
   return (
-    <Pressable style={[kind === "primary" ? styles.button : styles.ghost, styles.inline, disabled ? { opacity: 0.5 } : null]} onPress={onPress} disabled={disabled} hitSlop={6} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled: Boolean(disabled) }}>
+    <Pressable style={[kind === "primary" ? styles.button : styles.ghost, styles.inline, styles.compact ? { minHeight: 44, height: 44 } : null, disabled ? { opacity: 0.5 } : null]} onPress={onPress} disabled={disabled} hitSlop={6} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled: Boolean(disabled) }}>
       {icon ? <Icon name={icon} size={14} color={color} /> : null}
       <Text style={kind === "primary" ? styles.buttonText : styles.ghostText}>{label}</Text>
     </Pressable>
@@ -86,7 +86,7 @@ export function SearchField({ value, onChange, placeholder, label, styles }: { v
 // the row with equal, centered options, for a choice that splits a popover in two.
 export function Segmented<Value extends string>({ options, value, onChange, label, styles, stretch = false }: { options: readonly { label: string; value: Value }[]; value: Value; onChange(value: Value): void; label: string; styles: Styles; stretch?: boolean }) {
   const items = (
-    <View style={{ flexDirection: "row", flexWrap: "nowrap", height: 28, borderWidth: 1, borderColor: styles.colors.border, borderRadius: 6, overflow: "hidden", alignSelf: stretch ? "stretch" : "flex-start" }} accessibilityRole="tablist" accessibilityLabel={label}>
+    <View style={{ flexDirection: "row", flexWrap: "nowrap", height: styles.compact ? 44 : 28, borderWidth: 1, borderColor: styles.colors.border, borderRadius: 6, overflow: "hidden", alignSelf: stretch ? "stretch" : "flex-start" }} accessibilityRole="tablist" accessibilityLabel={label}>
       {options.map((option) => {
         const selected = option.value === value;
         return (

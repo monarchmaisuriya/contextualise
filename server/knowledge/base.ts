@@ -36,6 +36,7 @@ interface Opened {
 // The per-repository indexes of this daemon. One re-index per repository runs at a time; a caller
 // that cannot wait (agent creation) gets "updating" and the run finishes in the background.
 export class KnowledgeBase {
+  private readonly taskWrites = new Map<string, Promise<void>>();
   private readonly opened = new Map<string, Opened>();
   private readonly running = new Map<string, Promise<void>>();
   private readonly freshUntil = new Map<string, number>();
@@ -187,8 +188,13 @@ export class KnowledgeBase {
   async recordTask(project: ProjectRoot, task: TaskRecord): Promise<void> {
     const repo = await this.canonical(project);
     const store = await this.open(repo);
-    store.upsertTask(task);
-    await appendFile(join(await this.dir(), `${KnowledgeBase.fileName(repo.key)}.tasks.jsonl`), `${JSON.stringify(task)}\n`, { mode: 0o600 });
+    const previous = this.taskWrites.get(repo.key) ?? Promise.resolve();
+    const write = previous.catch(() => undefined).then(async () => {
+      const merged = store.upsertTask(task);
+      await appendFile(join(await this.dir(), `${KnowledgeBase.fileName(repo.key)}.tasks.jsonl`), `${JSON.stringify(merged)}\n`, { mode: 0o600 });
+    });
+    this.taskWrites.set(repo.key, write);
+    try { await write; } finally { if (this.taskWrites.get(repo.key) === write) this.taskWrites.delete(repo.key); }
   }
 
   // Every repository that has an index, including ones not opened since the plugin started.

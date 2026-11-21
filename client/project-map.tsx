@@ -254,8 +254,8 @@ export function AreaPage({ repoKey, path, onOpenArea, onBack, onRead, styles, on
 
 // One finished task: what it was, how it ended, when, and by which agent. Used wherever tasks are
 // listed, so they read the same everywhere; pressed, its record opens in the reader.
-export function TaskRow({ task, onOpen, styles }: { task: Pick<TaskSummary, "id" | "title" | "generatedTitle" | "outcome" | "endedAt"> & Partial<Pick<TaskSummary, "summary" | "provider" | "needsCheck">>; onOpen(target: ReadTarget): void; styles: Styles }) {
+export function TaskRow({ task, onOpen, styles }: { task: Pick<TaskSummary, "id" | "title" | "generatedTitle" | "outcome" | "endedAt"> & Partial<Pick<TaskSummary, "summary" | "provider" | "needsCheck" | "subtasks" | "parentAgentId">>; onOpen(target: ReadTarget): void; styles: Styles }) {
   const title = task.generatedTitle ?? task.title;
-  const meta = [task.outcome, ago(task.endedAt), ...(task.provider ? [task.provider] : []), ...(task.needsCheck ? ["needs check"] : [])].join(" · ");
+  const meta = [task.outcome, ago(task.endedAt), ...(task.provider ? [task.provider] : []), ...(task.parentAgentId ? ["delegated task"] : []), ...(task.subtasks?.length ? [`${task.subtasks.length} subtasks`] : []), ...(task.needsCheck ? ["needs check"] : [])].join(" · ");
   return <ListRow title={title} meta={meta} accessibilityLabel={`Read ${title}`} onPress={() => onOpen({ id: task.id, title, lead: task.summary })} styles={styles} />;
 }

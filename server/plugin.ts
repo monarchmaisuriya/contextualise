@@ -23,6 +23,8 @@ import {
   type TagSummary,
 } from "../shared/contracts";
 import { AutoRefresh } from "./auto-refresh";
+import { ContextActivity } from "./context-activity";
+import { contextActivityRpc, contextRecordingRpc } from "../shared/context";
 import { contributeKnowledge } from "./knowledge/plugin";
 import { Fetcher } from "./fetches";
 import { configuredServers } from "./provider-config";
@@ -38,6 +40,9 @@ const DIRECTORY_CACHE_MS = 5_000;
 export const TAGS_OFF = "Tags are off. Turn them on in Settings > Contextualise.";
 
 export function contributeTags(server: PluginServerContext, resolveRoot: () => Promise<string>) {
+  const activity = new ContextActivity();
+  server.handle(contextActivityRpc, ({ repoKey }) => activity.snapshot(repoKey));
+  server.handle(contextRecordingRpc, ({ action }) => activity.control(action));
   const store = new TagStore(resolveRoot);
   const settings = server.registerSettings(snapshotSettings);
   const readings = new Memo(READINGS_CACHE_MS);
@@ -124,7 +129,7 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
 
   server.handle(searchTagsRpc, tagsOnly(async ({ query }, { paseo }) => {
     const options = await currentSettings();
-    return { items: await searchTags(paseo, readings, await listTags(paseo), query, options, knowledge.attachmentGrant) };
+    return { items: await searchTags(paseo, readings, await listTags(paseo), query, options, knowledge.attachmentGrant, activity) };
   }));
 
   server.handle(searchAgentsRpc, async ({ query }, { paseo }) => {
@@ -134,17 +139,18 @@ export function contributeTags(server: PluginServerContext, resolveRoot: () => P
     // Both plugins' background agents run under the Paseo home's plugin-data folder.
     const pluginData = dirname(await resolveRoot());
     const isBackground = (agent: { cwd?: string }) => Boolean(agent.cwd) && (resolve(agent.cwd as string) === pluginData || resolve(agent.cwd as string).startsWith(`${pluginData}${sep}`));
-    return { items: await searchAgents(paseo, await directory(paseo), query, options, { readings: agentReadings, pinned, serverId: await serverId, generatedTitles: await knowledge.generatedTitles(), isBackground, conversationGrant: knowledge.conversationGrant }) };
+    return { items: await searchAgents(paseo, await directory(paseo), query, options, { readings: agentReadings, pinned, serverId: await serverId, generatedTitles: await knowledge.generatedTitles(), isBackground, conversationGrant: knowledge.conversationGrant, activity }) };
   });
 
   server.handle(searchTerminalsRpc, async ({ query }, { paseo }) => {
     const options = await currentSettings();
-    return { items: await searchTerminals(paseo, readings, await directory(paseo), query, options, knowledge.attachmentGrant) };
+    return { items: await searchTerminals(paseo, readings, await directory(paseo), query, options, knowledge.attachmentGrant, activity) };
   });
 
-  const knowledge = contributeKnowledge(server, { resolveRoot, settings: currentSettings, listTags });
+  const knowledge = contributeKnowledge(server, { resolveRoot, settings: currentSettings, listTags, activity });
 
   return async () => {
+    activity.stop();
     autoRefresh.stop();
     void stopFollowingSetting();
     readings.clear();

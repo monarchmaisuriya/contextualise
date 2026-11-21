@@ -8,6 +8,7 @@ import { describeMembers, isUnreadable, lastTurns, matchTags, renderConversation
 import { agentTitle, capTitle, cleanTitle, gitParts, workspaceLabel, workspaceSearchText } from "./rows";
 import { agentLive, type Directory, type DirectoryAgent, type DirectoryWorkspace, lastTagged } from "./tags";
 import { newestFirst, timeOf, workspaceTimes } from "./newest-first";
+import { receipt, type ContextActivity } from "./context-activity";
 
 const TIMELINE_PAGE = 200;
 const MAX_TIMELINE_PAGES = 5;
@@ -97,11 +98,12 @@ const withGrant = async (text: string, grantLine: GrantLine | undefined, grant: 
   return line ? `${text}\n\n${line}` : text;
 };
 
-export async function tagAttachment(paseo: PaseoApi, memo: Memo, fullTag: TagSummary, options: SnapshotSettings, grantLine?: GrantLine): Promise<PluginAttachmentItem> {
+export async function tagAttachment(paseo: PaseoApi, memo: Memo, fullTag: TagSummary, options: SnapshotSettings, grantLine?: GrantLine, activity?: ContextActivity): Promise<PluginAttachmentItem> {
   const tag = includedParts(fullTag, options);
   const readable = tag.agents.filter((agent) => agent.state !== "missing");
   const readings = await Promise.all(readable.map((agent) => memo.get(`agent:${agent.agentId}:${options.turnsPerAgent}`, () => readAgent(paseo, agent.agentId, options.turnsPerAgent))));
   const text = await withGrant(renderSnapshot(tag, readings, options.snapshotMaxChars), grantLine, { kind: "tag", key: tag.key, upTo: new Date().toISOString() });
+  activity?.record(receipt(text, "tag", "prepared", readings.length));
   return {
     id: tag.key,
     identifier: rowPrefix("tag", undefined, options.pickerPrefix),
@@ -117,8 +119,8 @@ export async function tagAttachment(paseo: PaseoApi, memo: Memo, fullTag: TagSum
 // A time in milliseconds as a row's age ("3h"), or null.
 const ageOf = (ms: number | null | undefined) => (ms === null || ms === undefined ? null : shortTimeAgo(new Date(ms).toISOString()));
 
-export async function searchTags(paseo: PaseoApi, memo: Memo, tags: readonly TagSummary[], query: string, options: SnapshotSettings, grantLine?: GrantLine): Promise<PluginAttachmentItem[]> {
-  return Promise.all(matchTags(tags, query).map((tag) => tagAttachment(paseo, memo, tag, options, grantLine)));
+export async function searchTags(paseo: PaseoApi, memo: Memo, tags: readonly TagSummary[], query: string, options: SnapshotSettings, grantLine?: GrantLine, activity?: ContextActivity): Promise<PluginAttachmentItem[]> {
+  return Promise.all(matchTags(tags, query).map((tag) => tagAttachment(paseo, memo, tag, options, grantLine, activity)));
 }
 
 function words(query: string): string[] {
@@ -191,6 +193,7 @@ async function mapLimited<T, R>(items: readonly T[], limit: number, run: (item: 
 }
 
 export interface AgentSearchContext {
+  activity?: ContextActivity;
   readings: AgentReadings;
   pinned: ReadonlySet<string>;
   serverId: string | null;
@@ -230,6 +233,7 @@ export async function searchAgents(paseo: PaseoApi, directory: Directory, query:
       const active = agent.updatedAt ? shortTimeAgo(agent.updatedAt) : "";
       const grant = await context.conversationGrant?.(agent.id).catch(() => null);
       const text = `${renderConversation(member, workspaceName, reading, options.snapshotMaxChars)}${grant ? `\n\n${grant}` : ""}`;
+      context.activity?.record(receipt(text, "chat", "prepared", isUnreadable(reading) ? 0 : reading.turns.length, isUnreadable(reading) ? 0 : reading.earlier));
       const { title, includesWorkspace } = agentTitle(agent, workspace, sharing.get(agent.workspaceId ?? "") ?? 1, { maxChars: options.pickerTitleMaxChars, shortenLinks: options.shortenLinks, generated: generatedTitles.get(agent.id) });
       return {
         id: agent.id,
@@ -256,7 +260,7 @@ export async function searchAgents(paseo: PaseoApi, directory: Directory, query:
 }
 
 // Any terminal on this host, matched on name, workspace, and folder.
-export async function searchTerminals(paseo: PaseoApi, memo: Memo, directory: Directory, query: string, options: SnapshotSettings, grantLine?: GrantLine): Promise<PluginAttachmentItem[]> {
+export async function searchTerminals(paseo: PaseoApi, memo: Memo, directory: Directory, query: string, options: SnapshotSettings, grantLine?: GrantLine, activity?: ContextActivity): Promise<PluginAttachmentItem[]> {
   const workspaces = workspacesById(directory);
   const { entries } = await paseo.terminals.list();
   // Terminals of the workspace whose chats ran most recently first: Paseo's SDK gives a terminal no
@@ -272,6 +276,7 @@ export async function searchTerminals(paseo: PaseoApi, memo: Memo, directory: Di
       const workspaceName = workspace ? workspaceLabel(workspace) : null;
       const capture = await memo.get(`terminal:${terminal.id}:${options.terminalLines}`, () => paseo.terminals.ref(terminal.id).capture({ start: -options.terminalLines, stripAnsi: true }));
       const text = await withGrant(renderTerminal(terminal, workspaceName, capture.lines, capture.totalLines, options.snapshotMaxChars), grantLine, { kind: "terminal", terminalId: terminal.id, lines: capture.totalLines });
+      activity?.record(receipt(text, "terminal", "prepared"));
       return {
         id: terminal.id,
         identifier: rowPrefix("terminal", undefined, options.pickerPrefix),

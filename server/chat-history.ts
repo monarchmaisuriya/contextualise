@@ -1,4 +1,5 @@
 import { redactSecrets } from "./secrets";
+import { emptyResult } from "./retrieval-outcome";
 
 // A chat's own earlier history, as exact text, for the history tools. Paseo keeps a chat's whole
 // timeline even after its CLI compacts its context, so a chat can search and reload what it dropped.
@@ -310,18 +311,18 @@ export interface SearchInput {
 
 // Matches, newest first: every word of `query` in the item, any of `tools`, all of `files`, and
 // failed items when `failed`. With `load`, the first three are loaded and the rest named.
-export function searchHistory(rows: readonly HistoryRow[], input: SearchInput, budget = ANSWER_MAX_BYTES, names = OWN_HISTORY): { text: string } {
+export function historyMatches(row: HistoryRow, input: SearchInput): boolean {
   const words = (input.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
   const tools = (input.tools ?? []).map((tool) => tool.toLowerCase());
-  const files = input.files ?? [];
-  const matches = [...rows].reverse().filter((row) => {
-    const lower = row.text.toLowerCase();
-    if (!words.every((word) => lower.includes(word))) return false;
-    if (tools.length > 0 && !(row.tool && tools.some((tool) => row.tool!.toLowerCase() === tool || row.tool!.toLowerCase().endsWith(`__${tool}`)))) return false;
-    if (!files.every((file) => row.files.some((path) => path === file || path.endsWith(`/${file}`)) || row.text.includes(file))) return false;
-    return !input.failed || row.failed;
-  });
-  if (matches.length === 0) return { text: `No history matches${words.length ? ` "${words.join(" ")}"` : ""} in ${names.scope} (${rows.length} items).` };
+  return words.every((word) => row.text.toLowerCase().includes(word)) &&
+    (tools.length === 0 || Boolean(row.tool && tools.some((tool) => row.tool!.toLowerCase() === tool || row.tool!.toLowerCase().endsWith(`__${tool}`)))) &&
+    (input.files ?? []).every((file) => row.files.some((path) => path === file || path.endsWith(`/${file}`)) || row.text.includes(file)) && (!input.failed || row.failed);
+}
+
+export function searchHistory(rows: readonly HistoryRow[], input: SearchInput, budget = ANSWER_MAX_BYTES, names = OWN_HISTORY): { text: string } {
+  const words = (input.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+  const matches = [...rows].reverse().filter((row) => historyMatches(row, input));
+  if (matches.length === 0) return emptyResult({ text: `No history matches${words.length ? ` "${words.join(" ")}"` : ""} in ${names.scope} (${rows.length} items).` }, true);
   const limit = Math.min(Math.max(1, input.limit ?? SEARCH_LIMIT), SEARCH_LIMIT_MAX);
   const shown = matches.slice(0, limit);
   const head = `${matches.length} match${matches.length === 1 ? "" : "es"} in ${names.scope}, newest first${matches.length > shown.length ? ` (showing ${shown.length})` : ""}:`;
@@ -341,7 +342,7 @@ export function browseHistory(rows: readonly HistoryRow[], input: { id: string; 
   const count = Math.min(Math.max(1, input.count ?? BROWSE_COUNT), BROWSE_COUNT_MAX);
   const [from, to] = input.direction === "before" ? [at - count, at] : input.direction === "after" ? [at + 1, at + 1 + count] : [at - Math.floor(count / 2), at + Math.ceil(count / 2)];
   const picked = rows.slice(Math.max(0, from), Math.min(rows.length, to));
-  if (picked.length === 0) return { text: `Nothing ${input.direction} ${input.id}: it is the ${input.direction === "before" ? "first" : "last"} item.` };
+  if (picked.length === 0) return emptyResult({ text: `Nothing ${input.direction} ${input.id}: it is the ${input.direction === "before" ? "first" : "last"} item.` }, true);
   return { text: fit(`History ${input.direction} ${input.id}, oldest first:`, picked.map((row) => reference(row)), "", budget) };
 }
 

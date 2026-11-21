@@ -2,6 +2,21 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.35.0 - 2026-11-21
+
+### Added
+
+- A Context workspace in Project knowledge: prepare an overview, selected entries or full project, inspect an exact-size receipt, read the preview and copy it with explicit feedback.
+- Explicit, temporary host-local retrieval diagnostics: source categories, sizes, handler timing, failures and repeated-result observations. Recording defaults off and does not retain transcript bodies, queries, paths or grants.
+- An Overview choice in Attach > Project, alongside the existing full-project choice.
+- Recorded task parent/subtask facts and outcome filters in Past work. Older task records remain readable.
+- Credits identifying Paseo Context and dsh-context as inspiration, plus links to existing grammar licenses.
+
+### Fixed
+
+- Whole-project limits now include grants and fixed framing, bound oversized descriptions/area lists, and keep omitted documents whole.
+- Task-lineage writes merge at the store boundary and serialize their durable log appends so delayed writers do not restore a running status over a completed child.
+
 ## 0.34.0 - 2026-11-19
 
 ### Changed
