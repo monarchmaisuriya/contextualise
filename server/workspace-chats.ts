@@ -1,7 +1,7 @@
 import type { SnapshotSettings } from "../shared/contracts";
 import { shortTimeAgo } from "../shared/time";
 import type { TimelineFetch } from "./chat-history";
-import { STUCK_RETRY_MS, type SummaryEntry, type SummaryStore, summarizeChat, summaryText } from "./chat-summaries";
+import { DUE_AFTER_MS, STUCK_RETRY_MS, type SummaryEntry, type SummaryStore, summarizeChat, summaryText } from "./chat-summaries";
 import type { DailyRuns, RunQueue } from "./knowledge/background-runs";
 import { QuietTimers } from "./knowledge/background-runs";
 import type { PaseoApi } from "./paseo-types";
@@ -72,6 +72,9 @@ export class WorkspaceSummaries {
         const takeRun = async () => (await on()) && this.deps.daily.take();
         const outcome = await summarizeChat(chat.id, this.deps.timeline(paseo, chat.id), { store: this.deps.store, takeRun, write: (prompt) => this.deps.write(paseo, chat, prompt), now: this.now }, generation);
         if (outcome === "capped" && (await on())) this.afterCap(paseo, chat);
+        // Too little new text for a run yet: look again once the update is due, so a chat that stays quiet
+        // is still brought up to date. A new turn before then restarts this wait.
+        if (outcome === "waiting") this.timers.set(chat.id, DUE_AFTER_MS, () => this.enqueue(paseo, chat));
       })
       .catch((error: unknown) => console.error(`[contextualise] could not summarise chat ${chat.id}: ${String(error)}`));
   }

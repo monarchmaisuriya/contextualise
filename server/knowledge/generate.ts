@@ -205,6 +205,7 @@ export class Generator {
         timeoutMs: WORKER_TIMEOUT_MS,
         outputSchema: SUMMARY_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
         notify: values.notifyBackgroundWork,
+        kind: "text",
       },
       () => undefined,
     );
@@ -226,7 +227,7 @@ export class Generator {
   private async worker(paseo: PaseoApi, title: string, prompt: string, outputSchema: Record<string, unknown>): Promise<string> {
     const values = await this.deps.settings();
     const provider = providerFor(values.knowledgeGenerateProvider, null);
-    return this.deps.runWorker(paseo, await this.deps.root(), { provider, model: provider === "claude" ? values.claudeFetchModel : values.codexFetchModel, title, prompt, timeoutMs: WORKER_TIMEOUT_MS, outputSchema, notify: values.notifyBackgroundWork }, () => undefined);
+    return this.deps.runWorker(paseo, await this.deps.root(), { provider, model: provider === "claude" ? values.claudeFetchModel : values.codexFetchModel, title, prompt, timeoutMs: WORKER_TIMEOUT_MS, outputSchema, notify: values.notifyBackgroundWork, kind: "text" }, () => undefined);
   }
 
   private async enabled(project: ProjectRoot): Promise<boolean> {

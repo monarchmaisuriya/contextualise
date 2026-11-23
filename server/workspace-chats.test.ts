@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { snapshotSettingsSchema, type SnapshotSettings } from "../shared/contracts";
 import type { TimelineFetch } from "./chat-history";
-import { type SummaryEntry, SummaryStore } from "./chat-summaries";
+import { DUE_AFTER_MS, type SummaryEntry, SummaryStore } from "./chat-summaries";
 import { DailyRuns, RunQueue } from "./knowledge/background-runs";
 import type { PaseoApi } from "./paseo-types";
 import { isUserChat } from "./workers";
@@ -35,6 +35,7 @@ describe("WorkspaceSummaries", () => {
   let now: Date;
   let reads: number;
   let queue: RunQueue;
+  let fetchFor: () => TimelineFetch;
   // Every queued run finished.
   const drained = () => queue.run(async () => undefined);
   const make = () => {
@@ -48,7 +49,7 @@ describe("WorkspaceSummaries", () => {
       summarisable: async (_paseo, chat) => mine.has(chat.id),
       timeline: () => {
         reads += 1;
-        return oneMessage;
+        return fetchFor();
       },
       write: async (_paseo, chat) => {
         writes.push(chat.id);
@@ -69,6 +70,7 @@ describe("WorkspaceSummaries", () => {
     now = new Date("2026-11-11T12:00:00.000Z");
     reads = 0;
     queue = new RunQueue();
+    fetchFor = () => oneMessage;
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -170,6 +172,26 @@ describe("WorkspaceSummaries", () => {
     await drained();
     expect(await store.get("c1")).toBeNull();
     expect(reads).toBe(1);
+  });
+
+  it("brings a chat that went quiet with a small update up to date once it is due", async () => {
+    const summaries = make();
+    let items = [{ type: "user_message", text: "Import list 42" }];
+    fetchFor = () => async () => {
+      const entries = items.map((item, index) => ({ item, timestamp: "2026-11-11T10:00:00.000Z", seqStart: index + 1 }));
+      return { epoch: "e1", reset: false, entries, hasOlder: false, hasNewer: false, startCursor: { epoch: "e1", seq: 1 }, endCursor: { epoch: "e1", seq: entries.length }, error: null };
+    };
+    summaries.enqueue(paseo, chat("c1"));
+    await settle();
+    items = [...items, { type: "assistant_message", text: "Imported" }];
+    await summaries.turnEnded(paseo, chat("c1"));
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    await drained();
+    expect(writes).toEqual(["c1"]);
+    now = new Date(now.getTime() + DUE_AFTER_MS);
+    await vi.advanceTimersByTimeAsync(DUE_AFTER_MS);
+    await drained();
+    expect(writes).toEqual(["c1", "c1"]);
   });
 });
 

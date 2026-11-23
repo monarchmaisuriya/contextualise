@@ -1,9 +1,9 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type { PaseoApi } from "./paseo-types";
-import { LOCKDOWN, runWorker } from "./workers";
+import { LOCKDOWN, runFetchWorker, runWorker } from "./workers";
 
 // Modes Paseo 0.13 accepts (from its error for "read-only"), and the lockdown each worker needs.
 test("fetch workers start in a mode Paseo accepts, locked down", () => {
@@ -25,7 +25,7 @@ test("gives up when the worker cannot be started in time, archives one that star
     },
     providers: { listModels: async () => ({ models: [{ id: "claude-x" }] }) },
   } as unknown as PaseoApi;
-  const job = { provider: "claude" as const, title: "t", prompt: "p", model: "claude-x", timeoutMs: 300, outputSchema: {}, notify: false };
+  const job = { provider: "claude" as const, title: "t", prompt: "p", model: "claude-x", timeoutMs: 300, outputSchema: {}, notify: false, kind: "text" as const };
   try {
     const started = Date.now();
     await expect(runWorker(paseo, root, job, () => undefined)).rejects.toThrow("did not start");
@@ -54,9 +54,47 @@ test.each([
     providers: { listModels: async () => ({ models: [{ id: "claude-x" }] }) },
   } as unknown as PaseoApi;
   try {
-    await runWorker(paseo, root, { provider: "claude", title: "t", prompt: "p", model: "claude-x", timeoutMs: 1_000, outputSchema: {}, notify }, () => undefined).catch(() => undefined);
+    await runWorker(paseo, root, { provider: "claude", title: "t", prompt: "p", model: "claude-x", timeoutMs: 1_000, outputSchema: {}, notify, kind: "text" }, () => undefined).catch(() => undefined);
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ background }));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+// A summary or description worker answers from its prompt alone, so a Claude one starts without the MCP
+// servers in M's Claude config (strict MCP mode, none passed) and without M's CLAUDE.md. A fetch worker
+// reads through M's servers, so it keeps them.
+describe("what a worker is started with", () => {
+  const created = async (start: (paseo: PaseoApi, root: string) => Promise<unknown>) => {
+    const root = await mkdtemp(join(tmpdir(), "contextualise-workers-"));
+    const create = vi.fn(async () => ({ id: "a1", waitForFinish: async () => ({ status: "idle", lastMessage: "{}" }), archive: async () => {} }));
+    const paseo = {
+      workspaces: {
+        list: async () => ({ entries: [{ id: "w1", workspaceDirectory: join(root, "workers") }], pageInfo: { hasMore: false } }),
+        ref: () => ({ agents: { create } }),
+      },
+      providers: { listModels: async () => ({ models: [{ id: "claude-x" }] }) },
+    } as unknown as PaseoApi;
+    try {
+      await start(paseo, root);
+      return (create.mock.calls[0] as unknown as [{ config: { mcpServers?: unknown; options: Record<string, unknown> }; env?: Record<string, string> }])[0];
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  };
+
+  test("a text-only Claude worker gets no MCP servers, strict MCP mode, and no CLAUDE.md, still locked down", async () => {
+    const request = await created((paseo, root) => runWorker(paseo, root, { provider: "claude", title: "t", prompt: "p", model: "claude-x", timeoutMs: 1_000, outputSchema: {}, notify: false, kind: "text" }, () => undefined));
+    expect(request.config.mcpServers).toEqual({});
+    expect(request.config.options).toMatchObject({ extraArgs: { "strict-mcp-config": null }, disallowedTools: expect.arrayContaining(["Bash", "mcp__paseo"]) });
+    expect(request.env).toEqual({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1" });
+  });
+
+  test("a fetch worker keeps M's MCP servers and setup", async () => {
+    const route = { provider: "claude" as const } as unknown as Parameters<typeof runFetchWorker>[2]["route"];
+    const request = await created((paseo, root) => runFetchWorker(paseo, root, { route, title: "t", prompt: "p", model: "claude-x", timeoutMs: 1_000, notify: false }, () => undefined));
+    expect(request.config.mcpServers).toBeUndefined();
+    expect(request.config.options).not.toHaveProperty("extraArgs");
+    expect(request.env).toBeUndefined();
+  });
 });

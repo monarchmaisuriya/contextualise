@@ -19,6 +19,19 @@ export const LOCKDOWN: Record<FetchProvider, { modeId: string; options: Record<s
   // still asks before every MCP tool not marked read-only (checked live).
   codex: { modeId: "auto", options: { sandbox_mode: "read-only", web_search: "disabled" } },
 };
+
+// A worker that only turns the text in its prompt into a reply (a chat or task summary, a project
+// description) needs no tools and none of M's own setup. Claude otherwise loads M's CLAUDE.md files and
+// every MCP server in M's Claude config into each session: on M's machine 77k tokens before the prompt,
+// together with what other plugins add. Claude text workers start without CLAUDE.md, and in strict MCP
+// mode, so of M's configured servers none load. Other plugins skip workers folders themselves. Codex
+// workers are unchanged. Fetch workers keep M's servers: their routes read through them.
+const TEXT_ONLY_ENV: Record<FetchProvider, Record<string, string>> = { claude: { CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1" }, codex: {} };
+const TEXT_ONLY_OPTIONS: Record<FetchProvider, Record<string, unknown>> = { claude: { extraArgs: { "strict-mcp-config": null } }, codex: {} };
+export function textOnlyLaunch(provider: FetchProvider): { modeId: string; options: Record<string, unknown>; env: Record<string, string> } {
+  const { modeId, options } = LOCKDOWN[provider];
+  return { modeId, options: { ...options, ...TEXT_ONLY_OPTIONS[provider] }, env: TEXT_ONLY_ENV[provider] };
+}
 const POLL_MS = 15_000;
 const PERMISSION_BACKOFF_MS = 2_000;
 const MAX_PERMISSION_WAITS = 30;
@@ -77,6 +90,8 @@ export interface WorkerJob {
   outputSchema: Record<string, unknown>;
   // The "notifyBackgroundWork" setting: whether Paseo notifies M when this worker finishes.
   notify: boolean;
+  // "text": the reply comes from the prompt alone (see textOnlyLaunch). "fetch": reads through M's servers.
+  kind: "text" | "fetch";
 }
 
 const workspaceLookups = new Map<string, Promise<string>>();
@@ -118,7 +133,7 @@ export function workerWorkspace(paseo: PaseoApi, root: string, deadline: number)
 // Runs one fetch worker to its final message.
 export function runFetchWorker(paseo: PaseoApi, root: string, job: FetchJob, onCreated: (agentId: string) => void): Promise<string> {
   const { route, ...rest } = job;
-  return runWorker(paseo, root, { ...rest, provider: route.provider, outputSchema: FETCH_OUTPUT_SCHEMA as unknown as Record<string, unknown> }, onCreated);
+  return runWorker(paseo, root, { ...rest, provider: route.provider, outputSchema: FETCH_OUTPUT_SCHEMA as unknown as Record<string, unknown>, kind: "fetch" }, onCreated);
 }
 
 // Runs one background agent to its final message, within `job.timeoutMs` from the call, starting
@@ -128,9 +143,16 @@ export async function runWorker(paseo: PaseoApi, root: string, job: WorkerJob, o
   const workspaceId = await workerWorkspace(paseo, root, deadline);
   let handle: Awaited<ReturnType<PaseoApi["agents"]["create"]>> | null = null;
   try {
-    const { modeId, options } = LOCKDOWN[job.provider];
+    const launch = job.kind === "text" ? textOnlyLaunch(job.provider) : { ...LOCKDOWN[job.provider], env: {} };
     const provider = await beforeDeadline(fetchModel(paseo, job.provider, job.model), deadline, "listing models");
-    const creating = paseo.workspaces.ref(workspaceId).agents.create({ title: job.title.slice(0, 120), config: { provider, modeId, options }, prompt: job.prompt, outputSchema: job.outputSchema, background: !job.notify });
+    const creating = paseo.workspaces.ref(workspaceId).agents.create({
+      title: job.title.slice(0, 120),
+      config: { provider, modeId: launch.modeId, options: launch.options, ...(job.kind === "text" ? { mcpServers: {} } : {}) },
+      ...(Object.keys(launch.env).length > 0 ? { env: launch.env } : {}),
+      prompt: job.prompt,
+      outputSchema: job.outputSchema,
+      background: !job.notify,
+    });
     try {
       handle = await beforeDeadline(creating, deadline, "creating the agent");
     } catch (error) {
