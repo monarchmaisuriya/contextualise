@@ -18,6 +18,11 @@ import { jsonObjectIn } from "./vendor-fetch";
 export const PIECE_BYTES = 40 * 1024;
 // The whole summary, as shown, stays within this many characters.
 export const SUMMARY_MAX_CHARS = 2_000;
+// A chat that already has a summary is brought up to date only once this much new text has piled up,
+// or once DUE_AFTER_MS has passed since its last update. Each update is a whole helper session whose
+// fixed setup outweighs a small new part, so a short exchange waits to be read with the next ones.
+export const UPDATE_MIN_BYTES = 16 * 1024;
+export const DUE_AFTER_MS = 6 * 60 * 60_000;
 // A piece the model cannot summarise within the limit is tried this many times, then left.
 export const PIECE_TRIES = 3;
 // A summary stopped at a piece is tried again only after this long, and only once the chat changed.
@@ -352,7 +357,7 @@ export interface SummarizeDeps {
   now?: () => Date;
 }
 
-export type SummarizeOutcome = "current" | "done" | "capped" | "stuck" | "removed";
+export type SummarizeOutcome = "current" | "done" | "capped" | "stuck" | "removed" | "waiting";
 
 // Brings one chat's summary up to date: reads only what is new since its anchor, piece by piece, and
 // saves after every piece that ends on a whole unit, so a cap, a timeout, or a restart loses nothing.
@@ -377,6 +382,11 @@ export async function summarizeChat(chatId: string, fetch: TimelineFetch, deps: 
   // A summary stopped at a piece is tried again only once the chat has grown, and a day later.
   if (existing?.stuckAt && !read.restarted && (existing.stuckUnits === total || now().getTime() - Date.parse(existing.stuckAt) < STUCK_RETRY_MS)) return "stuck";
   const base = read.restarted ? null : existing;
+  // Too little new for its own run yet: nothing is read into a model, and the place stays, so the next
+  // update sends this part together with what follows. A first summary still being written (stopped by
+  // the cap or a failure), and a rebuilt chat, never wait.
+  const pending = read.units.reduce((sum, unit) => sum + bytes(unit.text) + 1, 0);
+  if (base?.summary && base.complete && pending < UPDATE_MIN_BYTES && now().getTime() - Date.parse(base.updatedAt) < DUE_AFTER_MS) return "waiting";
   // What is saved: the summary through the last whole unit read.
   let saved: Omit<SummaryEntry, "updatedAt" | "stuckAt" | "stuckUnits" | "complete"> = { summary: base?.summary ?? null, anchor: base?.anchor ?? null, messages: base?.messages ?? 0, coveredTo: base?.coveredTo ?? "" };
   let summary = saved.summary;

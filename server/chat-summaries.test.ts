@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { TimelineFetch, TimelinePage } from "./chat-history";
-import { type ChatSummary, PIECE_BYTES, piecesOf, SUMMARY_MAX_CHARS, type SummarizeDeps, summarizeChat, SummaryStore, unitOf } from "./chat-summaries";
+import { type ChatSummary, DUE_AFTER_MS, PIECE_BYTES, piecesOf, SUMMARY_MAX_CHARS, type SummarizeDeps, summarizeChat, SummaryStore, UPDATE_MIN_BYTES, unitOf } from "./chat-summaries";
 
 type Item = Record<string, unknown>;
 const user = (text: string): Item => ({ type: "user_message", text });
@@ -32,6 +32,9 @@ describe("summarizeChat", () => {
   let prompts: string[];
   let runsLeft: number;
   let answer: (prompt: string, index: number) => string;
+  let now: Date;
+  // Moves the clock past the time an existing summary waits for more text, so a small update runs.
+  const due = () => (now = new Date(now.getTime() + DUE_AFTER_MS));
   const deps = (): SummarizeDeps => ({
     store,
     takeRun: async () => runsLeft-- > 0,
@@ -39,7 +42,7 @@ describe("summarizeChat", () => {
       prompts.push(prompt);
       return answer(prompt, prompts.length);
     },
-    now: () => new Date("2026-11-11T12:00:00.000Z"),
+    now: () => now,
   });
   // What each prompt carried as the next part of the chat.
   const parts = () => prompts.map((prompt) => prompt.slice(prompt.indexOf("<next_part>\n") + 12, prompt.indexOf("\n</next_part>")));
@@ -49,6 +52,7 @@ describe("summarizeChat", () => {
     store = new SummaryStore(async () => file);
     prompts = [];
     runsLeft = 1_000;
+    now = new Date("2026-11-11T12:00:00.000Z");
     answer = (_prompt, index) => reply({ goal: "Ship the import", done: [`step ${index}`] });
   });
 
@@ -73,6 +77,7 @@ describe("summarizeChat", () => {
     expect(await summarizeChat("c1", timeline(items), deps())).toBe("current");
     expect(prompts).toEqual([]);
     items.push(user("Now the second list"), { type: "tool_call", name: "Bash", status: "completed", detail: { type: "shell", command: "npm run import", exitCode: 0 } }, agent("Done"));
+    due();
     expect(await summarizeChat("c1", timeline(items), deps())).toBe("done");
     expect(parts()).toEqual(["user: Now the second list\nran: npm run import (exit 0)\nagent: Done"]);
     expect(prompts[0]).toContain('"goal":"Ship the import"');
@@ -86,6 +91,7 @@ describe("summarizeChat", () => {
     // Rebuilt: other epoch, ids and times; the same content.
     expect(await summarizeChat("c1", timeline(items, { epoch: "e9", time: () => "2026-11-11T11:00:00.000Z" }), deps())).toBe("current");
     // One unit added after a rebuild: only it is sent.
+    due();
     expect(await summarizeChat("c1", timeline([...items, user("five")], { epoch: "e9" }), deps())).toBe("done");
     expect(parts()).toEqual(["user: five"]);
     prompts = [];
@@ -94,6 +100,40 @@ describe("summarizeChat", () => {
     expect(parts()[0].startsWith("user: one")).toBe(true);
     expect(prompts[0]).toContain("<summary_so_far>\nnone");
     expect((await store.get("c1"))!.messages).toBe(3);
+  });
+
+  it("waits for more of a summarised chat before another run, and sends what piled up together", async () => {
+    const items = [user("Import the list"), agent("Imported 120 contacts")];
+    await summarizeChat("c1", timeline(items), deps());
+    prompts = [];
+    items.push(user("Now the second list"), agent("Done"));
+    expect(await summarizeChat("c1", timeline(items), deps())).toBe("waiting");
+    expect(prompts).toEqual([]);
+    items.push(user("And the third"), agent("Done too"));
+    expect(await summarizeChat("c1", timeline(items), deps())).toBe("waiting");
+    due();
+    expect(await summarizeChat("c1", timeline(items), deps())).toBe("done");
+    expect(parts()).toEqual(["user: Now the second list\nagent: Done\nuser: And the third\nagent: Done too"]);
+  });
+
+  it("runs at once when enough new text piled up, and never holds back a first summary", async () => {
+    const items = [user("Start")];
+    expect(await summarizeChat("c1", timeline(items), deps())).toBe("done");
+    prompts = [];
+    items.push(user(`long ${"q".repeat(UPDATE_MIN_BYTES)}`));
+    expect(await summarizeChat("c1", timeline(items), deps())).toBe("done");
+    expect(prompts).toHaveLength(1);
+  });
+
+  it("finishes a first summary stopped by the cap without waiting, however little is left", async () => {
+    const items = [user(`first ${"a".repeat(PIECE_BYTES - 50)}`), user("the short rest")];
+    runsLeft = 1;
+    expect(await summarizeChat("c1", timeline(items), deps())).toBe("capped");
+    expect((await store.get("c1"))!).toMatchObject({ complete: false });
+    runsLeft = 10;
+    prompts = [];
+    expect(await summarizeChat("c1", timeline(items), deps())).toBe("done");
+    expect(parts()).toEqual(["user: the short rest"]);
   });
 
   it("sends each unit once when many share one time across a piece boundary", async () => {
@@ -128,12 +168,13 @@ describe("summarizeChat", () => {
     const good = (await store.get("c1"))!;
     answer = () => reply({ goal: "g".repeat(SUMMARY_MAX_CHARS + 1) });
     prompts = [];
+    due();
     expect(await summarizeChat("c1", timeline([...items, user("more")]), deps())).toBe("stuck");
     expect(prompts).toHaveLength(3);
     const stuck = (await store.get("c1"))!;
     expect(stuck.summary).toEqual(good.summary);
     expect(stuck.anchor).toEqual(good.anchor);
-    expect(stuck.stuckAt).toBe("2026-11-11T12:00:00.000Z");
+    expect(stuck.stuckAt).toBe(now.toISOString());
     prompts = [];
     expect(await summarizeChat("c1", timeline([...items, user("more"), agent("and more")]), deps())).toBe("stuck");
     expect(prompts).toEqual([]);
@@ -202,11 +243,13 @@ describe("summarizeChat, after review", () => {
     await summarizeChat("c1", timeline(items), deps());
     items.push(user("IMPORTANT NEW REQUEST"), shell("npm test", 1), edit("a.ts"), shell("npm test", 1), edit("a.ts"), agent("end"));
     prompts = [];
+    now = new Date(now.getTime() + DUE_AFTER_MS);
     await summarizeChat("c1", timeline(items), deps());
     expect(parts()).toEqual(["user: IMPORTANT NEW REQUEST\nran: npm test (exit 1)\nedit: a.ts\nran: npm test (exit 1)\nedit: a.ts\nagent: end"]);
     // The same after Paseo rebuilt the timeline: the place is found by position, not by the repeated pattern.
     const rebuilt = [...items, user("one more")];
     prompts = [];
+    now = new Date(now.getTime() + DUE_AFTER_MS);
     await summarizeChat("c1", timeline(rebuilt, { epoch: "e2" }), deps());
     expect(parts()).toEqual(["user: one more"]);
   });

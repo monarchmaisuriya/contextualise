@@ -2,6 +2,13 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.36.0 - 2026-11-23
+
+### Changed
+
+- Claude summary and description helpers start lean: strict MCP mode with no servers, so none from your Claude config load, and no CLAUDE.md files. They answer from their prompt alone. Codex helpers and fetch helpers are unchanged.
+- A chat that already has a summary is updated only once 16 KB of new conversation has piled up, or 6 hours after its last update, instead of after every 5-minute pause. What piles up goes into the next update together, so nothing is skipped; a first summary still being written never waits.
+
 ## 0.35.0 - 2026-11-21
 
 ### Added

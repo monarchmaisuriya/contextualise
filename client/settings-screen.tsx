@@ -103,7 +103,7 @@ const GENERATE_NUMBERS: ReadonlyArray<Field<NumberKey>> = [
   { key: "knowledgeGenerateMaxPerDay", label: "Most summaries per day", hint: "Each summary and each project description counts once (default 20)." },
 ];
 const WORKSPACE_SUMMARY_NUMBERS: ReadonlyArray<Field<NumberKey>> = [
-  { key: "workspaceSummaryQuietMinutes", label: "Update a chat's summary after this many quiet minutes", hint: "A new message restarts the wait (default 5). Each update sends only what was added since." },
+  { key: "workspaceSummaryQuietMinutes", label: "Update a chat's summary after this many quiet minutes", hint: "A new message restarts the wait (default 5). A chat with a summary is updated once 16 KB is new or 6 hours have passed; each update sends only what was added since." },
   { key: "workspaceSummaryMaxPerDay", label: "Most summary updates per day", hint: "Each model run counts once; a long chat's first summary takes one run per 40 KB (default 100)." },
 ];
 const MAP_PART_LABELS: Record<KnowledgeMapPart, string> = {
