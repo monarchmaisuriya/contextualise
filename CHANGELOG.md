@@ -2,6 +2,15 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.37.0 - 2026-11-24
+
+### Changed
+
+- Project knowledge opens with About and Start here, keeping Activity and Agent context collapsed until requested. Recent work, change charts, risky files, knowledge preview, usage and Memorise status remain accessible.
+- Desktop navigation uses a stable view list and one project chooser. Search clears when switching views or projects, and project switches reset the overview disclosures.
+- Project maintenance actions, including re-reading and turning knowledge on or off for new agents, are grouped in the project menu. Running progress and errors stay visible.
+- Removed Project file from the attachment menu. Attach > Project, the Attached pill's Project files tab, and existing attachment contracts remain available.
+
 ## 0.36.0 - 2026-11-23
 
 ### Changed

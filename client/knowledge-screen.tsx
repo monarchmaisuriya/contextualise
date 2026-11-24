@@ -7,7 +7,7 @@ import { snapshotSettings } from "../shared/contracts";
 import { BRIEF_ID, describeProjectRpc, explainAreaRpc, fileConnectionsRpc, generateKnowledgeRpc, KIND_LABELS, type KnowledgeKind, knowledgeIntroRpc, knowledgeOverviewRpc, knowledgeUsageRpc, listProjectsRpc, listTasksRpc, pinEntryRpc, type Project, projectForWorkspaceRpc, readKnowledgeRpc, reindexRpc, type SearchHit, searchKnowledgeRpc, setProjectEnabledRpc } from "../shared/knowledge";
 import { errorText } from "./errors";
 import { ICONS } from "./icons";
-import { ActionSheet, ago, Button, IconButton, ListRow, Page, plural, Prose, ReaderSheet, SearchField, SectionHeader, Segmented, StateView, type Styles, Toggle, useActionSheet, usePagedList, useStyles } from "./kit";
+import { ActionSheet, ago, Button, IconButton, ListRow, Page, plural, Prose, ReaderSheet, SearchField, SectionHeader, Segmented, StateView, type Styles, useActionSheet, usePagedList, useStyles } from "./kit";
 import { KindFiles, type Pins } from "./knowledge/files";
 import { entryMeta, glanceLine, readerBody } from "./knowledge/text";
 import { LinkedProjects } from "./linked-projects";
@@ -107,11 +107,12 @@ function EntryReader({ repoKey, target, pins, onClose, styles }: { repoKey: stri
   );
 }
 
-// The overview, read top to bottom: what needs M, what the project is, what changed lately, where to
-// start, what is risky, recent work, and what agents get.
+// Keep project orientation visible; activity and agent diagnostics are available on request.
 function Overview({ project, hostKey, navigation, writing, memorise, change, onShow, onRead, styles }: { project: Project; hostKey: string; navigation: Navigation; writing: boolean; memorise: ReactNode; change(work: Promise<unknown>): void; onShow(view: ScreenView): void; onRead(target: ReadTarget): void; styles: Styles }) {
   const { repoKey } = project;
   const running = project.generation?.state === "running";
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
   const read = useRpc(readKnowledgeRpc);
   // The description is read like any entry; a project without one answers with an error, shown as nothing.
   const brief = useQuery({ queryKey: knowledgeKey("brief", repoKey), queryFn: () => read({ repoKey, id: BRIEF_ID }), retry: false });
@@ -121,12 +122,12 @@ function Overview({ project, hostKey, navigation, writing, memorise, change, onS
   const introId = intro.data?.intro?.id ?? null;
   const readme = useQuery({ queryKey: knowledgeKey("readme", repoKey).concat(introId ?? ""), queryFn: () => read({ repoKey, id: introId ?? "" }), enabled: brief.isError && introId !== null, retry: false });
   const listTasks = useRpc(listTasksRpc);
-  const tasks = useQuery({ queryKey: knowledgeKey("tasks", repoKey), queryFn: () => listTasks({ repoKey, limit: OVERVIEW_ROWS }) });
+  const tasks = useQuery({ queryKey: knowledgeKey("tasks", repoKey), queryFn: () => listTasks({ repoKey, limit: OVERVIEW_ROWS }), enabled: activityOpen });
   const getUsage = useRpc(knowledgeUsageRpc);
   // Advisory: a count that cannot be read shows nothing.
-  const usage = useQuery({ queryKey: knowledgeKey("usage", repoKey), queryFn: () => getUsage({ repoKey }) });
+  const usage = useQuery({ queryKey: knowledgeKey("usage", repoKey), queryFn: () => getUsage({ repoKey }), enabled: contextOpen });
   const getOverview = useRpc(knowledgeOverviewRpc);
-  const overview = useQuery({ queryKey: knowledgeKey("overview", repoKey), queryFn: () => getOverview({ repoKey }) });
+  const overview = useQuery({ queryKey: knowledgeKey("overview", repoKey), queryFn: () => getOverview({ repoKey }), enabled: contextOpen });
   const describe = useRpc(describeProjectRpc);
   const generate = useRpc(generateKnowledgeRpc);
   const pulse = usePulse(repoKey, hostKey);
@@ -164,11 +165,17 @@ function Overview({ project, hostKey, navigation, writing, memorise, change, onS
         <Text style={[styles.muted, pad]}>No description yet{writing ? "." : ". Turn on Write summaries of finished conversations in Settings > Contextualise to get one."}</Text>
       )}
 
-      <Period data={pulse} styles={styles} />
       <StartHere data={pulse} onReadIntro={readIntro} onOpenFile={setFile} styles={styles} />
-      <RiskyFiles data={pulse} onOpenFile={setFile} styles={styles} />
       {file ? <FileReader repoKey={repoKey} path={file} onClose={() => setFile(null)} styles={styles} /> : null}
 
+      <Pressable style={[styles.row, pad, { minHeight: 44, marginTop: 16, flexWrap: "wrap" }]} accessibilityRole="button" accessibilityLabel={activityOpen ? "Hide activity" : "Show activity"} accessibilityState={{ expanded: activityOpen }} onPress={() => setActivityOpen(!activityOpen)}>
+        <Icon name={activityOpen ? ICONS.expanded : ICONS.collapsed} size={16} color={styles.colors.foregroundMuted} />
+        <Text style={styles.heading}>Activity</Text>
+        <Text style={styles.note}>Changes and recent work</Text>
+      </Pressable>
+      {activityOpen ? <>
+      <Period data={pulse} styles={styles} />
+      <RiskyFiles data={pulse} onOpenFile={setFile} styles={styles} />
       <SectionHeader label="Recent work" count={total} action={total > OVERVIEW_ROWS ? { label: "Show all", onPress: () => onShow("tasks") } : undefined} styles={styles} />
       {tasks.isPending ? <StateView state="loading" styles={styles} /> : null}
       {tasks.error ? <StateView state="error" text={errorText(tasks.error)} styles={styles} /> : null}
@@ -181,7 +188,14 @@ function Overview({ project, hostKey, navigation, writing, memorise, change, onS
         />
       ) : null}
       {tasks.data?.tasks.map((task) => <TaskRow key={task.id} task={task} onOpen={onRead} styles={styles} />)}
+      </> : null}
 
+      <Pressable style={[styles.row, pad, { minHeight: 44, flexWrap: "wrap" }]} accessibilityRole="button" accessibilityLabel={contextOpen ? "Hide agent context" : "Show agent context"} accessibilityState={{ expanded: contextOpen }} onPress={() => setContextOpen(!contextOpen)}>
+        <Icon name={contextOpen ? ICONS.expanded : ICONS.collapsed} size={16} color={styles.colors.foregroundMuted} />
+        <Text style={styles.heading}>Agent context</Text>
+        <Text style={styles.note}>Preview and usage</Text>
+      </Pressable>
+      {contextOpen ? <>
       <SectionHeader
         label="What agents get"
         action={overview.data?.text ? { label: "Preview", onPress: () => {
@@ -194,6 +208,7 @@ function Overview({ project, hostKey, navigation, writing, memorise, change, onS
       {overview.data ? <Text style={[overview.data.state === "given" ? styles.body : styles.muted, pad]}>{overviewLine(overview.data)}</Text> : null}
       {used ? <Text style={[styles.note, pad]}>{used}</Text> : null}
       {memorise}
+      </> : null}
       {previewing ? (
         <ReaderSheet
           title="What agents get"
@@ -257,9 +272,11 @@ export function KnowledgeView(props: ({ fixedRepoKey: string } | { hostId: strin
   useEffect(() => {
     setView("overview");
     setKind(null);
+    setQuery("");
   }, [repoKey]);
   const [reading, setReading] = useState<ReadTarget | null>(null);
   const show = (next: ScreenView) => {
+    setQuery("");
     setView(next);
     setArea(null);
     setKind(next === "code" ? "code" : next === "tasks" ? "task" : null);
@@ -314,7 +331,8 @@ export function KnowledgeView(props: ({ fixedRepoKey: string } | { hostId: strin
   const running = project?.generation?.state === "running";
   const canPick = !fixedRepoKey && all.length > 1;
   const menu = useActionSheet(project?.name ?? "this project", [
-    // Choosing a project is the title's job, and re-indexing has its own button in the header.
+    { label: project?.enabled ? "Turn off knowledge for new agents" : "Turn on knowledge for new agents", onPress: () => project && change(setProjectEnabled({ repoKey: project.repoKey, enabled: !project.enabled })) },
+    { label: project?.indexing ? "Reading the project…" : "Read the project again", disabled: project?.indexing, onPress: () => project && change(reindex({ repoKey: project.repoKey })) },
     { label: "Add past conversations", disabled: running, onPress: () => project && change(generate({ repoKey: project.repoKey, generate: false })) },
     { label: writing ? "Summarise past conversations" : "Summarise past conversations (summaries are off in Settings)", disabled: running || !writing, onPress: () => project && change(generate({ repoKey: project.repoKey, generate: true })) },
   ], styles);
@@ -330,8 +348,7 @@ export function KnowledgeView(props: ({ fixedRepoKey: string } | { hostId: strin
   const views = VIEWS.filter(([value, , count]) => value === "overview" || value === "context" || value === "areas" || count(project) > 0).map(([value, label, count]) => ({ value, label, count: count(project) }));
   const named = (candidate: Project) => (all.filter((other) => other.name === candidate.name).length > 1 ? `${candidate.name} (${candidate.repoKey})` : candidate.name);
   const generation = project.generation;
-  // On a wide screen of its own, the projects and views sit in a rail beside the page, like a
-  // Notion sidebar; a phone or a workspace tab keeps them above it.
+  // Desktop keeps a stable view rail; compact layouts keep the views above the content.
   const railed = wide && !fixedRepoKey;
   const choosable = canPick && !railed;
   const memorise = note ? <Text style={[styles.note, pad]}>{`${note.text}${note.command ? ` Run: ${note.command}` : ""}`}</Text> : null;
@@ -347,16 +364,11 @@ export function KnowledgeView(props: ({ fixedRepoKey: string } | { hostId: strin
           {choosable ? <Icon name={ICONS.expanded} size={18} color={styles.colors.foregroundMuted} /> : null}
         </Pressable>
         <View style={styles.grow} />
-        <IconButton icon={ICONS.refresh} label={project.indexing ? "Reading the project" : "Read the project again"} disabled={project.indexing} onPress={() => change(reindex({ repoKey: project.repoKey }))} styles={styles} />
         {menu.button}
       </View>
       <Text style={styles.note}>{[readLine, ...(facts.data ? [glanceLine(facts.data.facts)] : [])].filter(Boolean).join(" · ")}</Text>
-      <View style={[styles.row, { marginTop: 4 }]}>
-        <Toggle value={project.enabled} onValueChange={(enabled) => change(setProjectEnabled({ repoKey: project.repoKey, enabled }))} label={`New agents get knowledge of ${project.name}`} styles={styles} />
-        <Text style={styles.body}>New agents get this project's knowledge</Text>
-      </View>
+      {project.enabled ? <Text style={styles.note}>Available to new agents</Text> : null}
       {generation?.state === "running" ? <Text style={styles.note}>{generation.message}…</Text> : null}
-      {generation?.state === "done" ? <Text style={styles.note}>Done {ago(generation.at)}: {generation.message}</Text> : null}
     </View>
   );
   const problems = (
@@ -392,7 +404,7 @@ export function KnowledgeView(props: ({ fixedRepoKey: string } | { hostId: strin
     ) : view === "documents" ? (
       DOCUMENT_KINDS.filter((entry) => project.counts[entry] > 0).map((entry) => <KindFiles key={entry} repoKey={project.repoKey} kind={entry} pins={pins} onRead={setReading} styles={styles} />)
     ) : (
-      <Overview project={project} hostKey={hostId ?? "workspace"} navigation={navigation} writing={writing} memorise={memorise} change={change} onShow={show} onRead={setReading} styles={styles} />
+      <Overview key={project.repoKey} project={project} hostKey={hostId ?? "workspace"} navigation={navigation} writing={writing} memorise={memorise} change={change} onShow={show} onRead={setReading} styles={styles} />
     );
   const sheets = (
     <>
@@ -401,10 +413,9 @@ export function KnowledgeView(props: ({ fixedRepoKey: string } | { hostId: strin
       {reading ? <EntryReader key={`${project.repoKey}:${reading.id}`} repoKey={project.repoKey} target={reading} pins={pins} onClose={() => setReading(null)} styles={styles} /> : null}
     </>
   );
-  const viewRow = (entry: (typeof views)[number], nested: boolean) => (
-    <View key={entry.value} style={nested ? { paddingLeft: 16 } : null}>
+  const viewRow = (entry: (typeof views)[number]) => (
+    <View key={entry.value}>
       <ListRow title={entry.label} meta={entry.count > 0 ? entry.count.toLocaleString("en-US") : undefined} selected={view === entry.value && area === null && query.trim() === ""} onPress={() => {
-        setQuery("");
         show(entry.value);
       }} styles={styles} />
     </View>
@@ -414,14 +425,8 @@ export function KnowledgeView(props: ({ fixedRepoKey: string } | { hostId: strin
     return (
       <View style={{ flex: 1, flexDirection: "row", backgroundColor: styles.colors.surface0 }}>
         <ScrollView style={{ width: RAIL_WIDTH, flexGrow: 0, flexShrink: 0, backgroundColor: styles.colors.surface1, borderRightWidth: 1, borderRightColor: styles.colors.border }} contentContainerStyle={{ padding: 8, gap: 2 }}>
-          {all.length > 1
-            ? all.map((candidate) => (
-                <View key={candidate.repoKey} style={{ gap: 2 }}>
-                  <ListRow title={named(candidate)} icon={ICONS.folder} selected={candidate.repoKey === repoKey && views.every((entry) => entry.value !== view)} onPress={() => setRepoKey(candidate.repoKey)} styles={styles} />
-                  {candidate.repoKey === repoKey ? views.map((entry) => viewRow(entry, true)) : null}
-                </View>
-              ))
-            : views.map((entry) => viewRow(entry, false))}
+          {canPick ? <ListRow title="Choose project" meta={project.name} icon={ICONS.folder} onPress={() => setChoosing(true)} styles={styles} /> : null}
+          {views.map(viewRow)}
           <Text style={[styles.note, { paddingHorizontal: 12, marginTop: 12 }]}>{plural(all.length, "project")} on this computer</Text>
         </ScrollView>
         <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">

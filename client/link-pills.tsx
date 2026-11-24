@@ -1,7 +1,6 @@
 import type { PluginButtonContentProps, PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
 import { View } from "react-native";
-import { attachedFileAttachmentSource, attachedFilesAvailableRpc, workspaceLinkCountRpc } from "../shared/linked-projects";
-import { followAvailability } from "./availability";
+import { workspaceLinkCountRpc } from "../shared/linked-projects";
 import { ICONS } from "./icons";
 import { useStyles } from "./kit";
 import { LinkedProjects, onLinksChanged } from "./linked-projects";
@@ -19,14 +18,6 @@ export function followLinkPills(client: PluginClientContext): () => void {
   const RECOUNT_MS = 5_000;
   let stopped = false;
   const lifetime = new AbortController();
-  // Attach > Project file searches every workspace's attached projects, so it is listed while any
-  // workspace has one, and checked whenever the pills recount. Paseo's Attach menu is one list for the
-  // whole host: it cannot follow one workspace.
-  const source = followAvailability(
-    async () => (await client.rpc(attachedFilesAvailableRpc, {})).available,
-    () => client.addAttachmentSource(attachedFileAttachmentSource),
-    (error) => console.error("[contextualise] could not check for attached projects", error),
-  );
 
   function Popover(props: PluginButtonContentProps) {
     const styles = useStyles(props.theme, props.layout.compact);
@@ -62,7 +53,6 @@ export function followLinkPills(client: PluginClientContext): () => void {
     try {
       counts.set(workspaceId, (await client.rpc(workspaceLinkCountRpc, { workspaceId })).count);
       for (const pill of pills.values()) if (pill.workspaceId === workspaceId) pill.registration.update({ label: label(workspaceId) });
-      source.refresh();
     } catch (error) {
       if (!stopped) console.error("[contextualise] could not count attached projects", error);
     }
@@ -88,7 +78,6 @@ export function followLinkPills(client: PluginClientContext): () => void {
     });
   }
 
-  source.refresh();
   const stopListening = onLinksChanged(() => {
     for (const workspaceId of new Set([...pills.values()].map((pill) => pill.workspaceId))) void refreshCount(workspaceId);
   });
@@ -121,6 +110,5 @@ export function followLinkPills(client: PluginClientContext): () => void {
     lifetime.abort();
     stopListening();
     for (const agentId of [...pills.keys()]) drop(agentId);
-    source.stop();
   };
 }

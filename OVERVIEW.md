@@ -8,6 +8,8 @@ Each new agent in a project, a git repository or a folder outside git (keyed the
 
 "Add past conversations" fills the task log from existing agents without a model. Generated knowledge, off until turned on, has locked-down background agents write a title and summary for each finished session and a short project brief; settings choose the map's parts, languages, globs, limits, and generation limits, and each project can be turned off or have entries pinned to its map.
 
+The project overview keeps About and Start here visible, with Activity and Agent context expandable when needed. Desktop navigation has one project chooser and a stable view list. The project menu groups re-reading, history import, summaries, and turning knowledge on or off for new agents.
+
 Contextualise never stores what agents learn while working (decisions, pitfalls, preferences): that is Memorise's job. With Memorise 0.10 or later running, search results show the Memorise memories about the same file, and when a function a memory is about is renamed or removed, or an ADR it cites is superseded, Contextualise suggests a fix that waits for you in Memorise. Without Memorise, Settings > Contextualise shows one line on what installing it would add.
 
 ## Tagging
@@ -32,13 +34,14 @@ Workspace context is loaded on demand: chats can find other chats in the same wo
 
 ## Attaching context
 
-The composer's Attach menu gets five sources:
+Contextualise adds four attachment sources (Tag appears while tags are on):
 
 - **Tag**: the tag's workspaces, links, and each tagged agent's most recent turns.
 - **Chat**: one agent's most recent turns, from any workspace or provider. Clicking the attachment opens that agent.
-- **Project file**: a file or folder of any attached project, by its absolute path, for the chat to read itself (Paseo's `@` searches only the chat's own folder).
 - **Terminal output**: the newest lines of any terminal.
-- **Project knowledge**: one document section, code symbol, or finished task from any indexed repository.
+- **Project**: a whole project, one document section, code symbol, or finished task from any indexed repository.
+
+Files and folders of attached projects remain in the Attached pill's Project files tab. Picking one copies its path to paste into your message.
 
 Each picker row says what is inside before you send, for example "2 agents: claude, codex; 1 workspace · ~3.4k tokens" (an estimate). Agents in a worktree are titled with the worktree's title, and their rows lead with when they were last active and the git branch, changes, and pull request. Conversations include your messages and the agents' replies; tool calls and reasoning are left out. Secret-shaped text such as API keys, tokens, and `password=` assignments is replaced with `[removed: <kind>]`. Every attachment starts with a note that it is reference material, not instructions. An agent whose history cannot be read is listed with the reason, and the rest still attaches.
 

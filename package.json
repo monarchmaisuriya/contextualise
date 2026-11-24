@@ -1,7 +1,7 @@
 {
   "name": "contextualise",
   "private": true,
-  "version": "0.36.0",
+  "version": "0.37.0",
   "files": [
     "paseo-plugin.json",
     "contextualise.png",
@@ -16,7 +16,8 @@
     "client/",
     "server/",
     "shared/",
-    "!**/*.test.ts"
+    "!**/*.test.ts",
+    "!**/*.test.tsx"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.client.json && tsc --noEmit -p tsconfig.server.json",

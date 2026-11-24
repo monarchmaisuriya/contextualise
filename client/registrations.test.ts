@@ -74,17 +74,17 @@ function fakeClient(settings: () => Record<string, unknown>) {
 const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 test("every name the plugin registers in the app is one Paseo accepts", async () => {
-  const { client, names, pills, registered } = fakeClient(() => ({ showPill: true, pillLabel: "count" }));
+  const { client, names, pills, registered, calls } = fakeClient(() => ({ showPill: true, pillLabel: "count" }));
   const { default: contribute } = await import("../index.client");
   const cleanup = contribute(client as never);
   await settled();
   expect(names("timeline renderer kind")).toEqual(["receipt", "history-note", "fetch-result"]);
-  // Attach > Tag is added once the settings say tags are on; Attach > Project file once a workspace
-  // has an attached project.
-  expect(names("addAttachmentSource").sort()).toEqual(["agent", "attached-file", "knowledge", "tag", "terminal"]);
+  // Project files stay in the Attached pill, not in the host-wide attachment menu.
+  expect(names("addAttachmentSource").sort()).toEqual(["agent", "knowledge", "tag", "terminal"]);
+  expect(calls).not.toContain("links.files-available");
   // Paseo lists sources in registration order: Project (knowledge) stays right after Chat, and Tag,
   // added once the settings are read, comes after the sources registered at start.
-  expect(names("addAttachmentSource").filter((name) => name !== "attached-file")).toEqual(["agent", "knowledge", "terminal", "tag"]);
+  expect(names("addAttachmentSource")).toEqual(["agent", "knowledge", "terminal", "tag"]);
   expect(names("addCommandCenterItem")).toEqual(["pin-agent", "unpin-agent", "open-knowledge", "open-workspace-knowledge", "tag-agent", "open-tags"]);
   expect(names("slash command name")).toEqual(["history", "tag", "untag", "tag-link", "tag-fetch"]);
   expect(names("addWorkspacePanel")).toEqual(["knowledge"]);

@@ -9,7 +9,7 @@ Requires Paseo 0.13.
 ## Install
 
 ```bash
-paseo plugin install git:monarchmaisuriya/contextualise --ref v0.35.0
+paseo plugin install git:monarchmaisuriya/contextualise --ref v0.37.0
 ```
 
 ## Tags
@@ -145,16 +145,15 @@ These are rebuilt whenever files change. On a 7,000-file Python repository the f
 - **Never generated here:** decisions, pitfalls, and preferences; Memorise keeps those.
 - **Generated titles** also name agents in Attach > Chat whose workspace has no title of its own, where Paseo has only the first request.
 
-**Where to look.** Project knowledge in the sidebar footer (or "Open project knowledge" in the Command Center) shows each project, opening on the one you looked at last. On a wide window a rail beside the page lists the projects and, under the one shown, its views with their counts, like a Notion sidebar; on a phone, the project name switches projects and the views are tabs. Each workspace also has a Project knowledge tab for its own project ("Open project knowledge for this workspace" in the Command Center, or the new-tab menu). Both show:
+**Where to look.** Project knowledge in the sidebar footer (or "Open project knowledge" in the Command Center) opens on the project you looked at last. On a wide window, a stable rail lists the views and their counts; **Choose project** switches projects. On a phone, the project name switches projects and the views are tabs. Changing a view or project clears search so the chosen page appears. Each workspace also has a Project knowledge tab for its own project ("Open project knowledge for this workspace" in the Command Center, or the new-tab menu). Both show:
 
-- **The page header:** the project name, one line with when it was read and its files, areas, and languages, and the switch "New agents get this project's knowledge". Re-read and a ⋮ menu (Add past conversations, Summarise past conversations) sit beside the name.
+- **The page header:** the project name, when it was read, its files, areas, and languages, and whether new agents receive its knowledge. The ⋮ menu contains Turn on/off knowledge for new agents, Read the project again, Add past conversations, and Summarise past conversations. Running progress and project errors remain visible.
 - **Overview**, read top to bottom:
   - **Needs you:** agents in this project waiting on a permission or stopped with an error (tap to open the agent), then tasks that failed in the last 48 hours unless the same agent finished one since. Hidden when there is nothing.
   - **About:** the written description, or the README's first section with prose (a logo or badges at its top are passed over).
-  - **This week** (or the last 30 or 90 days, remembered): a few sentences on commits and files changed, agent work finished and failed, agents running now, and often-changed files without tests, then bars per day, in your time zone, for whichever of agent tasks and commits has any.
   - **Start here:** the README and the files the most others use.
-  - **Risky to change:** code changed in the window, ranked by changes times the files that use it, with how many tests cover each ("no tests" only where its area has tests). Tap one for what it imports, what uses it, and its tests.
-  - Then recent work, and What agents get (how many agents used project knowledge lately, Preview, which shows the exact overview a new agent gets, and whether Memorise is there).
+  - **Activity**, collapsed initially: expand to see This week (or the last 30 or 90 days, remembered), daily task and commit bars, Risky to change, and Recent work. Risky files are ranked by changes times the files that use them, with test coverage; tap one for its imports, users, and tests.
+  - **Agent context**, collapsed initially: expand for What agents get, usage counts, the exact overview Preview, and Memorise status. Usage and preview data are requested when expanded. Switching projects resets both sections to collapsed.
   Usage keeps only counts, per project and day, for 30 days: no queries, paths, or agent ids.
 - **An area's page:** its explanation, the areas it uses and that use it, its key names, main files, busy files, documents, and recent work.
 - **Documents and Code** list files, not entries: documents under their kind (design documents, conventions, decisions, other docs), code under its folder, each with how many sections or symbols it holds. Open a file to see them in line order, without the heading every section of the file shares. **Areas** has the diagram of how they connect; **Past work** lists finished tasks a page at a time. Search covers all of it. Every entry opens in a reader with Copy and Pin; a code symbol shows its signature once.
@@ -162,6 +161,8 @@ These are rebuilt whenever files change. On a 7,000-file Python repository the f
 Diagrams are drawn by Paseo's own Markdown renderer (Mermaid), so they follow the theme and open full screen. The project's documents render as Markdown; text an agent wrote stays plain text, so it cannot carry links or images.
 
 Attach > Project opens on one **Whole project** row per project: the project's description, its main areas, the full text of its conventions, architecture documents, and decisions not superseded, and its recent work, in one attachment of at most 60,000 characters (about 15,000 tokens). A document that does not fit is left out whole and named. The row says how many documents fit and its size before you send it. Typing searches every project at once and offers one entry (a document section, a code symbol, or a task) per row. Each search checks every project for changed files at once and waits at most 0.3 s for them. A project whose check takes longer (a large folder outside git) answers from what was read before and says "updating"; its check finishes in the background.
+
+The attachment menu no longer lists **Project file**. Browse attached projects' files from the **Attached** pill's **Project files** tab instead. **Attach > Project** is unchanged.
 
 **Turning it off.** The "Project knowledge" switch in Settings > Contextualise turns all of it off:
 - new agents get no map or tools;
@@ -188,7 +189,7 @@ Attach another project to one workspace, and every new Claude, Codex, or OpenCod
 - **Attach** by picking the project in **Attach > Project**. In a new workspace's first message, the project is attached as the workspace is created, and the first chat starts with it. In any other chat, the attachment carries a one-time grant, valid for an hour, and the chat attaches the project with the `project_attach` Paseo tool (you approve the call). Or use the **Attached** button above the message box, or the Attached projects section of the workspace's Project knowledge tab: in the **Projects** tab search every Paseo project by name or folder, in the **Workspaces** tab any other workspace by title, project, or branch (worktrees included, so a chat can edit another project's exact branch checkout), or type a folder path. Both tabs list what was active most recently first. Every other workspace is one row: a worktree attaches its own folder; a local workspace (several can share one folder, such as `~/Develop`) is attached as a whole and shown as one Attached row named by its project and title. It brings the repositories its chats changed, read from the tasks Contextualise recorded (its own folder when that is one repository and nothing is recorded yet), and the row lists them. When one of its chats ends a turn in another repository, the next new chat here gets that one too. While project knowledge is off, the repositories recorded before are kept, no new ones are picked up, and new chats are told so. A new chat gets at most 10 attached folders; the rest are named in its prompt. Attached workspaces lapse when Paseo no longer has them. A worktree's folder can be attached only as its workspace, and is never brought by a local workspace. The home folder, the filesystem root, the workspace's own folder, and Paseo's data folder cannot be attached.
 - **Remove** one with the X beside it in the same button or section; attached projects are highlighted at the top. New chats stop getting the folder, and its knowledge is no longer searched, at once; running chats keep folder access until they end.
 - **Each new chat** gets the folders (Claude: additional directories, which also loads their CLAUDE.md, skills, and commands; Codex: writable roots, in its workspace-write sandbox; OpenCode: an "allow" rule for each folder in its outside-folder permission, unless you set that, or every permission, to one answer yourself) and a note listing them, with "use `git -C <folder>` and commit each project separately". Codex keeps an attached folder's `.git` read-only, so a commit there asks you first. An OpenCode chat in plan mode, or with edits set to ask or deny, is told edits there may need you. OpenCode takes these rules only when a chat starts. Other providers get the list only.
-- **Files and folders** of attached projects are in **Attach > Project file**, since Paseo's `@` list searches only the chat's own folder and a plugin cannot add to it. Paseo does not tell an Attach search which workspace it is for, so it offers the attached projects of every workspace, each row naming its project. It follows `@`: gitignored files are left out, and hidden files outside git. A row attaches the absolute path, and the chat reads the file itself; a chat that started before the project was attached may ask you first. The **Attached** button also gets a **Project files** tab once something is attached: it searches only this workspace's attached projects, and picking a row copies its path the way `@` writes one, to paste into your message. Attach > Project file is listed only while some workspace has an attached project.
+- **Files and folders** are in the **Attached** button's **Project files** tab once something is attached. It searches only this workspace's attached projects; picking a row copies its path the way `@` writes one, to paste into your message. Gitignored files are left out, and hidden files outside git. The chat reads the file itself; a chat that started before the project was attached may ask you first.
 - **Search** with `knowledge_search` covers the chat's project and every attached one, labelling each hit's project; an attached project's ids start with its key, so `knowledge_read` reads the right one.
 - **Chats already running** search a newly attached project at once, but keep the folders they started with: Paseo lets a plugin set folders only when a chat starts. **New Chat** in the Attached button starts one; **Fork Chat** starts one that carries the current conversation.
 - **Workspaces that share a folder** (local workspaces on the same folder) cannot be told apart when a chat starts from Paseo's own button, so those chats get no folders, and search only their own project; **New Chat** in the Attached button gives them everything. `project_attach` works there either way.
@@ -265,15 +266,14 @@ The setting "Let chats recover their own history" (on by default) turns all of t
 
 ## Attaching context
 
-In the composer, Attach offers five sources:
+In the composer, Contextualise offers four attachment sources (Tag appears while tags are on):
 
 | Source | Sends |
 | --- | --- |
 | **Tag** | The tag's workspaces (project, name, folder), its links, its fetched items, and each tagged agent's most recent turns |
 | **Chat** | One agent's most recent turns, from any workspace or provider on this host |
-| **Project file** | A file or folder of any attached project, by its absolute path: the chat reads it from there, as it does a path from `@`. The content is not copied |
 | **Terminal output** | The newest lines of any terminal on this host |
-| **Project knowledge** | A whole project (its description, areas, design documents, rules, decisions, and recent work), or one document section, code symbol, or finished task from any indexed repository |
+| **Project** | A whole project (its description, areas, design documents, rules, decisions, and recent work), or one document section, code symbol, or finished task from any indexed repository |
 
 Each picker row says what is inside before you send it: providers and member counts for a tag, workspace and length for a terminal, and for all of them an estimated size (`~1.2k tokens`: characters divided by 4, so code and non-English text can differ). Pinned agents come first and say "pinned".
 
