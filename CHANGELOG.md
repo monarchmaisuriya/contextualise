@@ -2,6 +2,16 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.38.0 - 2026-11-24
+
+### Changed
+
+- Project knowledge is a three-tab browser: Overview, Files and History, with no internal desktop sidebar or navigation counts.
+- Overview shows a short description and up to three starting points. Full descriptions remain readable on request; activity and agent-context disclosures are gone from the default page.
+- Files groups Documents and Code, with the area map available on request. History retains conversation filters and pagination, with project activity on a separate view.
+- Context preparation, diagnostics, agent context and project details open from the project menu with return paths. Preparation no longer mounts diagnostics queries; recording remains explicit.
+- The normal header contains only the project chooser and menu. Workspace attached-project management opens on request and remains accessible while knowledge is off.
+
 ## 0.37.0 - 2026-11-24
 
 ### Changed

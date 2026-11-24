@@ -7,12 +7,14 @@ const host = vi.hoisted(() => ({
   effects: [] as (() => void)[],
   queries: [] as { queryKey: string[]; enabled?: boolean }[],
   projects: [] as Record<string, unknown>[],
+  knowledgeEnabled: true,
 }));
 
 // The host hooks are external boundaries. Inspect real screen elements and invoke their handlers
 // without a DOM renderer, which this plugin does not depend on.
 vi.mock("react", async (original) => ({
   ...await original<typeof import("react")>(),
+  useMemo: (factory: () => unknown) => factory(),
   useState: (initial: unknown) => {
     const slot = host.cursor++;
     if (!(slot in host.state)) host.state[slot] = initial;
@@ -23,7 +25,7 @@ vi.mock("react", async (original) => ({
 vi.mock("react-native", () => ({ Pressable: "Pressable", Text: "Text", View: "View" }));
 vi.mock("@getpaseo/plugin/client", () => ({
   useRpc: () => vi.fn(async () => ({})),
-  useSettings: () => ({ status: "ready", values: { knowledgeGenerate: true } }),
+  useSettings: () => ({ status: "ready", values: { knowledgeGenerate: true, knowledgeEnabled: host.knowledgeEnabled } }),
 }));
 vi.mock("@getpaseo/plugin/client/ui", () => ({ ScrollView: "ScrollView", Icon: "Icon", useToast: () => ({ error: vi.fn() }) }));
 vi.mock("@tanstack/react-query", () => ({
@@ -36,7 +38,8 @@ vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
 }));
 
-import { KnowledgeView } from "./knowledge-screen";
+import { KnowledgeView, WorkspaceKnowledgePanel } from "./knowledge-screen";
+import { StartHere } from "./knowledge/pulse";
 
 type Element = ReactElement<Record<string, any>>;
 function elements(node: unknown): Element[] {
@@ -67,43 +70,52 @@ beforeEach(() => {
   host.cursor = 0;
   host.queries = [];
   host.projects = [project];
+  host.knowledgeEnabled = true;
   // Choose the project using the same synchronization effect as the host screen.
   render();
   host.effects.forEach((effect) => effect());
 });
 
-test("overview keeps About and Start here visible but collapses activity and agent context", () => {
+test("normal navigation has exactly three tabs at every width", () => {
+  expect(render().find((node) => node.props.label === "Project knowledge views")!.props.options).toEqual([
+    { value: "overview", label: "Overview" }, { value: "files", label: "Files" }, { value: "history", label: "History" },
+  ]);
+  expect(render(true).find((node) => node.props.label === "Project knowledge views")!.props.options).toEqual([
+    { value: "overview", label: "Overview" }, { value: "files", label: "Files" }, { value: "history", label: "History" },
+  ]);
+});
+
+test("overview keeps About and Start here visible but has no dashboard disclosures", () => {
   const nodes = overview()();
   expect(nodes.some((node) => node.props.label === "About")).toBe(true);
   expect(nodes.some((node) => typeof node.type === "function" && node.type.name === "StartHere")).toBe(true);
   expect(nodes.some((node) => node.props.label === "Recent work")).toBe(false);
   expect(nodes.some((node) => node.props.label === "What agents get")).toBe(false);
+  expect(nodes.some((node) => node.props.accessibilityLabel === "Show activity")).toBe(false);
+  expect(nodes.some((node) => node.props.accessibilityLabel === "Show agent context")).toBe(false);
 });
 
-test("activity disclosure opens and closes with an expanded accessibility state", () => {
-  const draw = overview();
-  const closed = draw().find((node) => node.props.accessibilityLabel === "Show activity")!;
-  expect(closed.props.accessibilityRole).toBe("button");
-  expect(closed.props.accessibilityState).toEqual({ expanded: false });
-  closed.props.onPress();
-  expect(draw().some((node) => node.props.label === "Recent work")).toBe(true);
-  const open = draw().find((node) => node.props.accessibilityLabel === "Hide activity")!;
-  expect(open.props.accessibilityState).toEqual({ expanded: true });
-  open.props.onPress();
-  expect(draw().some((node) => node.props.label === "Recent work")).toBe(false);
+test("history opens project activity and returns to the conversation list", () => {
+  render().find((node) => node.props.label === "Project knowledge views")!.props.onChange("history");
+  render().find((node) => node.props.label === "Project activity")!.props.onPress();
+  expect(render().some((node) => typeof node.type === "function" && node.type.name === "ProjectActivity")).toBe(true);
+  render().find((node) => node.props.label === "Back to history")!.props.onPress();
+  expect(render().some((node) => typeof node.type === "function" && node.type.name === "TaskList")).toBe(true);
 });
 
-test("agent context disclosure exposes diagnostics only when requested", () => {
-  const draw = overview();
-  draw().find((node) => node.props.accessibilityLabel === "Show agent context")!.props.onPress();
-  expect(draw().some((node) => node.props.label === "What agents get")).toBe(true);
-  draw().find((node) => node.props.accessibilityLabel === "Hide agent context")!.props.onPress();
-  expect(draw().some((node) => node.props.label === "What agents get")).toBe(false);
+test("advanced tools open from the menu and return to the prior tab", () => {
+  render().find((node) => node.props.label === "Project knowledge views")!.props.onChange("files");
+  const menu = render().find((node) => node.props.title === "api" && node.props.actions)!;
+  menu.props.actions.find((action: { label: string }) => action.label === "Agent context").onPress();
+  expect(render().some((node) => typeof node.type === "function" && node.type.name === "AgentContext")).toBe(true);
+  expect(render().some((node) => node.props.label === "Project knowledge views")).toBe(false);
+  render().find((node) => node.props.label === "Back to files")!.props.onPress();
+  expect(render().find((node) => node.props.label === "Project knowledge views")!.props.value).toBe("files");
 });
 
 test("compact navigation clears search before showing another view", () => {
   render().find((node) => node.props.label === "Search project knowledge")!.props.onChange("auth");
-  render().find((node) => node.props.label === "Project knowledge views")!.props.onChange("documents");
+  render().find((node) => node.props.label === "Project knowledge views")!.props.onChange("files");
   expect(render().find((node) => node.props.label === "Search project knowledge")!.props.value).toBe("");
 });
 
@@ -114,12 +126,13 @@ test("project synchronization clears search", () => {
   expect(render().find((node) => node.props.label === "Search project knowledge")!.props.value).toBe("");
 });
 
-test("desktop uses one project chooser instead of nesting view links under every project", () => {
+test("desktop project title is the chooser without a separate sidebar", () => {
   host.projects = [project, { ...project, repoKey: "acme/web", name: "web" }];
   const nodes = render(true);
-  expect(nodes.filter((node) => node.props.title === "Choose project").length).toBe(2);
+  expect(nodes.filter((node) => node.props.title === "Choose project").length).toBe(1);
   expect(nodes.some((node) => node.props.title === "web")).toBe(false);
-  expect(nodes.some((node) => node.props.title === "Overview")).toBe(true);
+  expect(nodes.some((node) => node.props.accessibilityLabel === "Project api; choose another of 2")).toBe(true);
+  expect(nodes.some((node) => node.type === "ScrollView")).toBe(false);
 });
 
 test("overview identity resets local disclosures when switching projects", () => {
@@ -127,17 +140,17 @@ test("overview identity resets local disclosures when switching projects", () =>
   expect(entry.key).toBe("acme/api");
 });
 
-test("closed overview defers recent work and diagnostic queries", () => {
+test("overview does not mount task or diagnostic queries", () => {
   overview()();
-  expect(host.queries.findLast((query) => query.queryKey.includes("tasks"))?.enabled).toBe(false);
-  expect(host.queries.findLast((query) => query.queryKey.includes("usage"))?.enabled).toBe(false);
-  expect(host.queries.findLast((query) => query.queryKey.includes("overview"))?.enabled).toBe(false);
+  expect(host.queries.some((query) => query.queryKey.includes("tasks"))).toBe(false);
+  expect(host.queries.some((query) => query.queryKey.includes("usage"))).toBe(false);
+  expect(host.queries.some((query) => query.queryKey.includes("overview"))).toBe(false);
 });
 
 test("project actions preserve indexing and generation restrictions", () => {
   host.projects = [{ ...project, indexing: true, generation: { state: "running", message: "Adding conversations" } }];
   const menu = render().find((node) => node.props.title === "api" && node.props.actions)!;
-  expect(menu.props.actions).toMatchObject([
+  expect(menu.props.actions.slice(-4)).toMatchObject([
     { label: "Turn off knowledge for new agents" },
     { label: "Reading the project…", disabled: true },
     { label: "Add past conversations", disabled: true },
@@ -148,5 +161,72 @@ test("project actions preserve indexing and generation restrictions", () => {
 test("disabled projects offer turning knowledge back on", () => {
   host.projects = [{ ...project, enabled: false }];
   const menu = render().find((node) => node.props.title === "api" && node.props.actions)!;
-  expect(menu.props.actions[0].label).toBe("Turn on knowledge for new agents");
+  expect(menu.props.actions.find((action: { label: string }) => action.label === "Turn on knowledge for new agents")).toBeDefined();
+});
+
+test("files retain document and code filters plus area map navigation", () => {
+  render().find((node) => node.props.label === "Project knowledge views")!.props.onChange("files");
+  expect(render().find((node) => node.props.label === "File type")!.props.value).toBe("documents");
+  render().find((node) => node.props.label === "File type")!.props.onChange("code");
+  expect(render().some((node) => node.props.kind === "code")).toBe(true);
+  render().find((node) => node.props.label === "Area map")!.props.onPress();
+  expect(render().some((node) => typeof node.type === "function" && node.type.name === "AreasView")).toBe(true);
+  render().find((node) => node.props.label === "Back to files")!.props.onPress();
+  expect(render().find((node) => node.props.label === "File type")!.props.value).toBe("documents");
+});
+
+test("empty files and history do not remove primary navigation", () => {
+  host.projects = [{ ...project, counts: { architecture: 0, convention: 0, adr: 0, doc: 0, code: 0, task: 0 } }];
+  render().find((node) => node.props.label === "Project knowledge views")!.props.onChange("files");
+  expect(render().find((node) => node.props.label === "Project knowledge views")!.props.options).toHaveLength(3);
+  expect(render().some((node) => node.props.children === "No documents indexed yet.")).toBe(true);
+});
+
+test("overview limits starting points to three", () => {
+  expect(overview()().find((node) => typeof node.type === "function" && node.type.name === "StartHere")!.props.maxItems).toBe(3);
+});
+
+test("starting point limit includes the README row", () => {
+  const nodes = elements(StartHere({ data: { pulse: { data: { readme: "README.md", startHere: [{ path: "one.ts", area: null, usedBy: 3 }, { path: "two.ts", area: null, usedBy: 2 }, { path: "three.ts", area: null, usedBy: 1 }] } } } as never, maxItems: 3, onReadIntro: vi.fn(), onOpenFile: vi.fn(), styles }));
+  expect(nodes.filter((node) => node.props.onPress).map((node) => node.props.title)).toEqual(["README.md", "one.ts", "two.ts"]);
+});
+
+test("workspace attachment management stays outside the disabled knowledge boundary", () => {
+  host.state = [];
+  host.cursor = 0;
+  host.knowledgeEnabled = false;
+  const props = { workspaceId: "w1", theme: { colors: {} }, navigation: undefined } as never;
+  const initial = elements(WorkspaceKnowledgePanel(props));
+  initial.find((node) => node.props.label === "Attached projects")!.props.onPress();
+  host.cursor = 0;
+  const opened = elements(WorkspaceKnowledgePanel(props));
+  expect(opened.some((node) => typeof node.type === "function" && node.type.name === "LinkedProjects")).toBe(true);
+  expect(opened.some((node) => typeof node.type === "function" && node.type.name === "KnowledgeOn")).toBe(false);
+  expect(opened.some((node) => node.props.label === "Back to knowledge")).toBe(true);
+});
+
+test("changing projects exits advanced tools and resets navigation", () => {
+  const menu = render().find((node) => node.props.title === "api" && node.props.actions)!;
+  menu.props.actions.find((action: { label: string }) => action.label === "Diagnostics").onPress();
+  expect(render().some((node) => typeof node.type === "function" && node.type.name === "DiagnosticsView")).toBe(true);
+  host.projects = [{ ...project, repoKey: "acme/web", name: "web" }];
+  render();
+  host.effects.forEach((effect) => effect());
+  render();
+  host.effects.forEach((effect) => effect());
+  expect(render().find((node) => node.props.label === "Project knowledge views")!.props.value).toBe("overview");
+});
+
+test("empty desktop knowledge has no nested scrolling page", () => {
+  host.projects = [];
+  const nodes = render(true);
+  expect(nodes.some((node) => typeof node.type === "function" && node.type.name === "Page")).toBe(false);
+  expect(nodes.some((node) => node.props.state === "empty")).toBe(true);
+});
+
+test("every advanced capability has a menu destination", () => {
+  const menu = render().find((node) => node.props.title === "api" && node.props.actions)!;
+  expect(menu.props.actions.slice(0, 5).map((action: { label: string }) => action.label)).toEqual([
+    "Prepare context", "Diagnostics", "Agent context", "Project details", "Write or rewrite description",
+  ]);
 });

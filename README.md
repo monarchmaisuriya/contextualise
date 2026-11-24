@@ -9,7 +9,7 @@ Requires Paseo 0.13.
 ## Install
 
 ```bash
-paseo plugin install git:monarchmaisuriya/contextualise --ref v0.37.0
+paseo plugin install git:monarchmaisuriya/contextualise --ref v0.38.0
 ```
 
 ## Tags
@@ -57,11 +57,11 @@ Fetched items can be refreshed automatically (Advanced, off by default): every 1
 
 ### Context workspace
 
-Open **Project knowledge > Context** to prepare an **Overview**, **Selected entries** (up to 20), or **Full project**. The preview reports exact JavaScript character units and UTF-8 bytes, approximate tokens (characters divided by four), freshness, and omitted entries. Grants and framing count toward the final 60,000-character project attachment limit. A document that does not fit is omitted whole; bounded descriptions and area lines may be explicitly shortened. Full-project document eligibility and ordering are unchanged. Attach > Project also offers the shorter Overview beside the existing full-project choice.
+Open **Project knowledge > ⋮ > Prepare context** to prepare an **Overview**, **Selected entries** (up to 20), or **Full project**. The preview reports exact JavaScript character units and UTF-8 bytes, approximate tokens (characters divided by four), freshness, and omitted entries. Grants and framing count toward the final 60,000-character project attachment limit. A document that does not fit is omitted whole; bounded descriptions and area lines may be explicitly shortened. Full-project document eligibility and ordering are unchanged. Attach > Project also offers the shorter Overview beside the existing full-project choice.
 
 **Copy prepared context** copies exactly the previewed text. It does not prove a model received it or attach a folder by itself. **Prepared**, **Configured**, and **Returned** describe plugin-side operations, not provider acknowledgements or bills.
 
-**Start recording** explicitly enables temporary diagnostics on the selected host, shared by connected clients. Recording defaults off after restart. The Context view shows retained retrieval calls, estimated sizes, errors, empty results, repeated equivalent results and handler durations. Repeated reads can be necessary after compaction. Invalid calls rejected before a handler may not appear. Use **All host activity** for attachments and history results without a project association.
+**Start recording**, under **⋮ > Diagnostics**, explicitly enables temporary diagnostics on the selected host, shared by connected clients. Recording defaults off after restart. Diagnostics shows retained retrieval calls, estimated sizes, errors, empty results, repeated equivalent results and handler durations. Repeated reads can be necessary after compaction. Invalid calls rejected before a handler may not appear. Use **All host activity** for attachments and history results without a project association.
 
 Diagnostics keep at most 200 metadata events for 30 minutes, in memory only. No transcript, query, result body, file path or grant is stored in events. Repetition uses keyed, process-local fingerprints. Stop retains unexpired events; Clear stops recording and clears events/fingerprints. Cleanup is scheduled at expiry but physical cleanup can be delayed while the host is suspended or its event loop is blocked. Expired events are never returned. Existing daily knowledge-use counters are unchanged.
 
@@ -145,18 +145,20 @@ These are rebuilt whenever files change. On a 7,000-file Python repository the f
 - **Never generated here:** decisions, pitfalls, and preferences; Memorise keeps those.
 - **Generated titles** also name agents in Attach > Chat whose workspace has no title of its own, where Paseo has only the first request.
 
-**Where to look.** Project knowledge in the sidebar footer (or "Open project knowledge" in the Command Center) opens on the project you looked at last. On a wide window, a stable rail lists the views and their counts; **Choose project** switches projects. On a phone, the project name switches projects and the views are tabs. Changing a view or project clears search so the chosen page appears. Each workspace also has a Project knowledge tab for its own project ("Open project knowledge for this workspace" in the Command Center, or the new-tab menu). Both show:
+**Where to look.** Project knowledge in the sidebar footer (or "Open project knowledge" in the Command Center) opens on the project you looked at last. The project title switches projects. Desktop and phone share three tabs: **Overview**, **Files**, and **History**, with no internal sidebar or navigation counts. Changing a view or project clears search. Each workspace also has a Project knowledge tab for its own project; its **Attached projects** action opens folder management, even while knowledge is off.
 
-- **The page header:** the project name, when it was read, its files, areas, and languages, and whether new agents receive its knowledge. The ⋮ menu contains Turn on/off knowledge for new agents, Read the project again, Add past conversations, and Summarise past conversations. Running progress and project errors remain visible.
+- **The page header:** project name and ⋮ menu. Healthy-state statistics live in **Project details** instead of the header. Disabled knowledge, running progress and project errors remain visible. The menu also opens **Prepare context**, **Diagnostics**, and **Agent context**, and contains description writing, Turn on/off knowledge for new agents, Read the project again, Add past conversations, and Summarise past conversations.
 - **Overview**, read top to bottom:
   - **Needs you:** agents in this project waiting on a permission or stopped with an error (tap to open the agent), then tasks that failed in the last 48 hours unless the same agent finished one since. Hidden when there is nothing.
-  - **About:** the written description, or the README's first section with prose (a logo or badges at its top are passed over).
-  - **Start here:** the README and the files the most others use.
-  - **Activity**, collapsed initially: expand to see This week (or the last 30 or 90 days, remembered), daily task and commit bars, Risky to change, and Recent work. Risky files are ranked by changes times the files that use them, with test coverage; tap one for its imports, users, and tests.
-  - **Agent context**, collapsed initially: expand for What agents get, usage counts, the exact overview Preview, and Memorise status. Usage and preview data are requested when expanded. Switching projects resets both sections to collapsed.
+  - **About:** a short plain-text excerpt of the description or README prose, at most 320 characters. **Read description** opens the complete entry when shortened.
+  - **Start here:** up to three rows, including the README and the files the most others use.
+  - No charts, diagnostic counters or Activity/Agent context disclosures appear here.
+  **Agent context** in the menu contains What agents get, usage, the exact overview Preview and Memorise status; its queries mount only when opened.
   Usage keeps only counts, per project and day, for 30 days: no queries, paths, or agent ids.
 - **An area's page:** its explanation, the areas it uses and that use it, its key names, main files, busy files, documents, and recent work.
-- **Documents and Code** list files, not entries: documents under their kind (design documents, conventions, decisions, other docs), code under its folder, each with how many sections or symbols it holds. Open a file to see them in line order, without the heading every section of the file shares. **Areas** has the diagram of how they connect; **Past work** lists finished tasks a page at a time. Search covers all of it. Every entry opens in a reader with Copy and Pin; a code symbol shows its signature once.
+- **Files** has Documents and Code filters: documents under their kind, code under its folder. Open a file for its sections or symbols. **Area map** opens the existing diagram and area pages, with a return to Files. Readers retain Copy and Pin.
+- **History** lists finished conversations with outcome filters, pagination and task relationships. **Project activity** opens the period summary, daily bars and risky files; Back returns to the conversation list.
+- Advanced menu destinations have a Back action to the prior tab. Preparation and Diagnostics are separate screens, so preparing context does not mount diagnostics or start recording.
 
 Diagrams are drawn by Paseo's own Markdown renderer (Mermaid), so they follow the theme and open full screen. The project's documents render as Markdown; text an agent wrote stays plain text, so it cannot carry links or images.
 

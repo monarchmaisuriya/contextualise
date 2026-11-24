@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { connectionGroups, entryMeta, fileName, filesByFolder, titlesInFile, glanceLine, languageShares, readerBody } from "./text";
+import { connectionGroups, descriptionExcerpt, entryMeta, fileName, filesByFolder, titlesInFile, glanceLine, languageShares, readerBody } from "./text";
 
 describe("project knowledge text", () => {
   it("sums a project up in one line: files, areas, and its main languages", () => {
@@ -55,4 +55,16 @@ describe("connectionGroups", () => {
     expect(titlesInFile(["README.md", "Api", "Api > Install"])).toEqual(["README.md", "Api", "Api > Install"]);
     expect(titlesInFile([])).toEqual([]);
   });
+});
+
+it("description excerpts preserve short text and strip Markdown decoration", () => {
+  expect(descriptionExcerpt("## Read [the docs](https://example.com)\n\nNow.")).toEqual({ text: "Read the docs Now.", truncated: false });
+  expect(descriptionExcerpt("")).toEqual({ text: "", truncated: false });
+});
+
+it("description excerpts bound long text without splitting Unicode characters", () => {
+  expect(descriptionExcerpt("word ".repeat(100)).text).toHaveLength(315);
+  expect(descriptionExcerpt("word ".repeat(100)).truncated).toBe(true);
+  expect(Array.from(descriptionExcerpt("🌱".repeat(321)).text)).toHaveLength(320);
+  expect(descriptionExcerpt("a".repeat(320))).toEqual({ text: "a".repeat(320), truncated: false });
 });

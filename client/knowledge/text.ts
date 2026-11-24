@@ -2,6 +2,14 @@ import { codeSignature, type FileConnections, type FileSummary, KIND_LABELS, typ
 import { plural } from "../plural";
 
 const GLANCE_LANGUAGES = 2;
+export function descriptionExcerpt(text: string): { text: string; truncated: boolean } {
+  const plain = text.replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/[#*`>_]/g, "").replace(/\s+/g, " ").trim();
+  const chars = Array.from(plain);
+  if (chars.length <= 320) return { text: plain, truncated: false };
+  const head = chars.slice(0, 319).join("");
+  const boundary = head.lastIndexOf(" ");
+  return { text: `${boundary > 0 ? head.slice(0, boundary) : head}…`, truncated: true };
+}
 const FENCE_LANGUAGE: Record<string, string> = { py: "python", ts: "typescript", tsx: "tsx", js: "javascript", jsx: "jsx", mjs: "javascript", cjs: "javascript", go: "go" };
 
 export function languageShares(languages: Record<string, number>): { language: string; count: number; percent: number }[] {

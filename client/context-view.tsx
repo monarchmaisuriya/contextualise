@@ -17,34 +17,17 @@ export function ContextView({ repoKey, styles }: { repoKey: string; styles: Styl
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<{ id: string; title: string }[]>([]);
   const [preview, setPreview] = useState(false);
-  const [allHost, setAllHost] = useState(false);
-  const [expanded, setExpanded] = useState<number | null>(null);
-  const getActivity = useRpc(contextActivityRpc);
-  const recording = useRpc(contextRecordingRpc);
   const prepare = useRpc(prepareContextRpc);
   const search = useRpc(searchKnowledgeRpc);
   const toast = useToast();
-  const client = useQueryClient();
-  const activity = useQuery({ queryKey: ["contextualise", "activity", allHost ? "host" : repoKey], queryFn: () => getActivity(allHost ? {} : { repoKey }), refetchInterval: (state) => state.state.data?.recording || state.state.data?.events.length ? 3_000 : false });
-  const control = useMutation({ mutationFn: recording, onSuccess: () => { void client.invalidateQueries({ queryKey: ["contextualise", "activity"] }); }, onError: (error) => toast.error(errorText(error)) });
   const prepared = useQuery({ queryKey: ["contextualise", "prepare", repoKey, mode, selected.map((entry) => entry.id)], queryFn: () => prepare({ repoKey, mode, ids: selected.map((entry) => entry.id) }), enabled: mode !== "selected" || selected.length > 0, retry: false, staleTime: 30_000 });
   const hits = useQuery({ queryKey: ["contextualise", "context-select", repoKey, query], queryFn: () => search({ repoKey, query, kinds: [], limit: 20 }), enabled: mode === "selected" && query.trim() !== "" });
-  const [clock, setClock] = useState(Date.now());
-  useEffect(() => {
-    const next = Math.min(...(activity.data?.events ?? []).map((event) => Date.parse(event.at) + 30 * 60_000).filter((at) => at > Date.now()));
-    if (!Number.isFinite(next)) return;
-    const timer = setTimeout(() => setClock(Date.now()), Math.max(1, next - Date.now()));
-    return () => clearTimeout(timer);
-  }, [activity.data, clock]);
-  const events = unexpiredEvents(activity.data?.events ?? [], Math.max(clock, Date.now()));
-  const totals = activityTotals(events);
   const r = prepared.data?.receipt;
   return <>
     <View style={[pad, { gap: 8, marginTop: 16 }]}>
-      <Text style={styles.title}>Prepare and inspect context</Text>
+      <Text style={styles.title}>Prepare context</Text>
       <Text style={styles.muted}>Prepare only what the next conversation needs. Sizes describe Contextualise's text, not the provider's full prompt or bill.</Text>
     </View>
-    <SectionHeader label="Prepare context" styles={styles} />
     <View style={[pad, { gap: 12 }]}>
       <Segmented<ContextMode> options={MODES} value={mode} onChange={setMode} label="Context to prepare" styles={styles} />
       <Text style={styles.note}>{mode === "overview" ? "A short project map. Search tools can retrieve the details later." : mode === "full" ? "The project description, areas, rules, architecture, active decisions and recent work. Whole documents that do not fit are named." : "Choose up to 20 specific entries. Nothing else is silently substituted."}</Text>
@@ -71,6 +54,29 @@ export function ContextView({ repoKey, styles }: { repoKey: string; styles: Styl
       </View> : null}
       <Text style={styles.note}>You can also choose Full project or Overview from Attach &gt; Project. Copying here does not attach a workspace until its grant is used in a supported chat flow.</Text>
     </View>
+    {preview && prepared.data ? <ReaderSheet title="Prepared context" text={prepared.data.text} meta={sizeLine(prepared.data.receipt)} plain onClose={() => setPreview(false)} styles={styles} /> : null}
+  </>;
+}
+
+export function DiagnosticsView({ repoKey, styles }: { repoKey: string; styles: Styles }) {
+  const [allHost, setAllHost] = useState(false);
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const getActivity = useRpc(contextActivityRpc);
+  const recording = useRpc(contextRecordingRpc);
+  const toast = useToast();
+  const client = useQueryClient();
+  const activity = useQuery({ queryKey: ["contextualise", "activity", allHost ? "host" : repoKey], queryFn: () => getActivity(allHost ? {} : { repoKey }), refetchInterval: (state) => state.state.data?.recording || state.state.data?.events.length ? 3_000 : false });
+  const control = useMutation({ mutationFn: recording, onSuccess: () => { void client.invalidateQueries({ queryKey: ["contextualise", "activity"] }); }, onError: (error) => toast.error(errorText(error)) });
+  const [clock, setClock] = useState(Date.now());
+  useEffect(() => {
+    const next = Math.min(...(activity.data?.events ?? []).map((event) => Date.parse(event.at) + 30 * 60_000).filter((at) => at > Date.now()));
+    if (!Number.isFinite(next)) return;
+    const timer = setTimeout(() => setClock(Date.now()), Math.max(1, next - Date.now()));
+    return () => clearTimeout(timer);
+  }, [activity.data, clock]);
+  const events = unexpiredEvents(activity.data?.events ?? [], Math.max(clock, Date.now()));
+  const totals = activityTotals(events);
+  return <>
     <SectionHeader label="Retrieval diagnostics" styles={styles} />
     <View style={[pad, { gap: 12 }]}>
       <View style={styles.wrap}>
@@ -90,6 +96,5 @@ export function ContextView({ repoKey, styles }: { repoKey: string; styles: Styl
       <ListRow title={event.tool ?? SOURCE_LABELS[event.source]} meta={`${event.state} · ~${event.tokens} tokens · ${event.outcome}`} onPress={() => setExpanded(expanded === event.id ? null : event.id)} accessibilityLabel={`${event.tool ?? SOURCE_LABELS[event.source]}, ${event.state}, ${event.tokens} estimated tokens; show details`} styles={styles} />
       {expanded === event.id ? <Text style={[styles.note, pad, { paddingBottom: 12 }]}>{sizeLine(event)}{"\n"}{event.at} · {event.included} included · {event.omitted} omitted{event.repeated ? " · same result observed again" : ""}{event.durationMs === null ? "" : ` · ${Math.round(event.durationMs)} ms handler time`}</Text> : null}
     </View>)}
-    {preview && prepared.data ? <ReaderSheet title="Prepared context" text={prepared.data.text} meta={sizeLine(prepared.data.receipt)} plain onClose={() => setPreview(false)} styles={styles} /> : null}
   </>;
 }

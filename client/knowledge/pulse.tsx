@@ -94,14 +94,14 @@ export function Period({ data, styles }: { data: PulseData; styles: Styles }) {
 }
 
 // Where to start reading: the README's opening, then the files the most code uses.
-export function StartHere({ data, onReadIntro, onOpenFile, styles }: { data: PulseData; onReadIntro(): void; onOpenFile(path: string): void; styles: Styles }) {
+export function StartHere({ data, onReadIntro, onOpenFile, styles, maxItems }: { data: PulseData; onReadIntro(): void; onOpenFile(path: string): void; styles: Styles; maxItems?: number }) {
   const pulse = data.pulse.data;
   if (!pulse || (!pulse.readme && pulse.startHere.length === 0)) return null;
   return (
     <>
       <SectionHeader label="Start here" styles={styles} />
       {pulse.readme ? <ListRow title={pulse.readme} meta="What the project says about itself" onPress={onReadIntro} styles={styles} /> : null}
-      {pulse.startHere.map((file) => (
+      {pulse.startHere.slice(0, maxItems === undefined ? undefined : Math.max(0, maxItems - (pulse.readme ? 1 : 0))).map((file) => (
         <ListRow key={file.path} title={file.path} meta={[...(file.area !== null ? [areaLabel(file.area)] : []), `used by ${file.usedBy}`].join(" · ")} onPress={() => onOpenFile(file.path)} styles={styles} />
       ))}
     </>

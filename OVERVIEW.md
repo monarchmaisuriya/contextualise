@@ -1,6 +1,6 @@
 Contextualise gives every agent searchable knowledge of its repository, lets you tag agents across workspaces and providers, fetch Jira, Sentry, Slack, and Notion items into tags, find it all again by tag, and attach context to a prompt: a whole tag, another agent's conversation, terminal output, or a piece of project knowledge.
 
-Project knowledge's Context view prepares an overview, selected entries or the full project, with exact emitted text sizes, approximate token counts and explicit omissions. Optional recording provides bounded, memory-only retrieval diagnostics without retaining queries or result text. Past work shows recorded parent/subtask relationships and outcome filters. See CREDITS.md for inspiration and third-party notices.
+Project knowledge's Prepare context menu action prepares an overview, selected entries or the full project, with exact emitted text sizes, approximate token counts and explicit omissions. The separate Diagnostics action offers explicit recording with bounded, memory-only retrieval diagnostics without retaining queries or result text. History shows recorded parent/subtask relationships and outcome filters. See CREDITS.md for inspiration and third-party notices.
 
 ## Project knowledge
 
@@ -8,7 +8,7 @@ Each new agent in a project, a git repository or a folder outside git (keyed the
 
 "Add past conversations" fills the task log from existing agents without a model. Generated knowledge, off until turned on, has locked-down background agents write a title and summary for each finished session and a short project brief; settings choose the map's parts, languages, globs, limits, and generation limits, and each project can be turned off or have entries pinned to its map.
 
-The project overview keeps About and Start here visible, with Activity and Agent context expandable when needed. Desktop navigation has one project chooser and a stable view list. The project menu groups re-reading, history import, summaries, and turning knowledge on or off for new agents.
+Desktop and phone share Overview, Files and History tabs, without an internal sidebar. Overview shows a short description and up to three starting points. Files groups documents and code, with an area map available on request. History includes conversations and optional project activity. The project-title chooser and menu keep advanced tools, project facts, agent-context preview and maintenance out of the everyday page.
 
 Contextualise never stores what agents learn while working (decisions, pitfalls, preferences): that is Memorise's job. With Memorise 0.10 or later running, search results show the Memorise memories about the same file, and when a function a memory is about is renamed or removed, or an ADR it cites is superseded, Contextualise suggests a fix that waits for you in Memorise. Without Memorise, Settings > Contextualise shows one line on what installing it would add.
 
