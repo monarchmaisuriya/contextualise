@@ -54,6 +54,45 @@ describe("contributeKnowledge", () => {
     for (const handler of on.get(name) ?? []) await (handler as (event: unknown, context: unknown) => Promise<void>)(event, { paseo });
   };
 
+  it("tells new chats to request approval for workspace attachments", async () => {
+    const made = await create(top);
+    expect(made.config.systemPrompt).toContain("workspace_attach with approval");
+    expect(made.config.systemPrompt).toContain("not this already-running process");
+  });
+
+  it("offers removable workspace references and applies only approved grants to the tool's receiver", async () => {
+    const api = realpathSync(mkdtempSync(join(tmpdir(), "workspace-source-")));
+    workspaceEntries.push({ id: "source-workspace", workspaceDirectory: api, workspaceKind: "local", name: "Backend work", projectDisplayName: "Backend" });
+    const payload = await call("links.workspaces-search", { query: "Backend" }) as { items: { id: string; text: string }[] };
+    expect(payload.items).toHaveLength(1);
+    expect(payload.items[0].id).toBe("source-workspace|workspace");
+    const file = join(home, "plugin-data", "contextualise", "knowledge", "links.json");
+    expect(existsSync(file)).toBe(false);
+    const opened = await (before.get("agent.session_open") as (input: unknown, context: unknown) => Promise<{ tools: { name: string; execute(input: unknown, context: unknown): Promise<{ text: string; isError?: boolean }> }[] }>)({ request: { cwd: top, tools: [] } }, { paseo });
+    const tool = opened.tools.find((tool) => tool.name === "workspace_attach")!;
+    const grant = payload.items[0].text.split("\n")[0].split(": ")[1];
+    expect((await tool.execute({ grant: "forged" }, { agent: { workspaceId: "w-top" }, paseo })).isError).toBe(true);
+    const wrongKind = (await contribution.conversationGrant("a2"))!.split("\n")[0].split("with grant: ")[1];
+    expect((await tool.execute({ grant: wrongKind }, { agent: { workspaceId: "w-top" }, paseo })).isError).toBe(true);
+    expect((await tool.execute({ grant }, { agent: { workspaceId: null }, paseo })).isError).toBe(true);
+    const source = workspaceEntries.find((entry) => entry.id === "source-workspace")!;
+    source.workspaceDirectory = top;
+    expect((await tool.execute({ grant }, { agent: { workspaceId: "w-top" }, paseo })).isError).toBe(true);
+    source.workspaceDirectory = api;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.now() + 3_600_001);
+      expect((await tool.execute({ grant }, { agent: { workspaceId: "w-top" }, paseo })).isError).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(existsSync(file)).toBe(false);
+    const applied = await tool.execute({ grant }, { agent: { workspaceId: "w-top" }, paseo });
+    expect(applied.text).toContain("New Chat");
+    expect(JSON.parse(readFileSync(file, "utf8")).attachedWorkspaces["w-top"][0].workspaceId).toBe("source-workspace");
+    expect((await tool.execute({ grant }, { agent: { workspaceId: "source-workspace" }, paseo })).isError).toBe(true);
+  });
+
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), "contextualise-plugin-home-"));
     top = realpathSync(mkdtempSync(join(tmpdir(), "contextualise-plugin-repo-")));
@@ -740,7 +779,10 @@ describe("contributeKnowledge", () => {
       expect(first).not.toContain("before the attachment");
       // Remembered: the next turn needs no grant, and has nothing new.
       expect((await updates.execute({}, asChat)).text).toContain("Nothing new in this chat's 1 attachment");
-      expect((await updates.execute({ grants: [`${grant.slice(0, -2)}xx`] }, asChat)).text).toContain("1 grant refused");
+      const [payload, signature] = grant.split(".");
+      const tampered = Buffer.from(signature, "base64url");
+      tampered[0] ^= 1;
+      expect((await updates.execute({ grants: [`${payload}.${tampered.toString("base64url")}`] }, asChat)).text).toContain("1 grant refused");
       // Attached a second time: still followed once.
       const again = (await contribution.conversationGrant("a2"))!.split("Contextualise attachment grant: ")[1].trim();
       expect(again).not.toBe(grant);

@@ -13,3 +13,11 @@ test("keeps the chosen tab while the links load, so the popover does not jump", 
   expect(shownTab("files", null)).toBe("files");
   expect(attachTabs(null).map((tab) => tab.value)).toContain("files");
 });
+
+test("offers Chats only to a composer-capable pill and preserves the panel fallback", () => {
+  expect(attachTabs(0, true).map((tab) => tab.value)).toEqual(["projects", "workspaces", "chats"]);
+  expect(attachTabs(1, true).map((tab) => tab.value)).toEqual(["projects", "workspaces", "chats", "files"]);
+  expect(attachTabs(1).map((tab) => tab.value)).not.toContain("chats");
+  expect(shownTab("chats", 0)).toBe("projects");
+  expect(shownTab("chats", null, true)).toBe("chats");
+});

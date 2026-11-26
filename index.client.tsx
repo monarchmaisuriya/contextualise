@@ -31,6 +31,7 @@ import {
 } from "./shared/contracts";
 import { knowledgeAttachmentSource } from "./shared/knowledge";
 import { followLinkPills } from "./client/link-pills";
+import { workspaceAttachmentSource } from "./shared/linked-projects";
 import { HistoryNoteRow } from "./client/history-row";
 import { HISTORY_ROW_KIND, historyCommandRpc, historyNoteSchema, parseHistoryCommand } from "./shared/history";
 
@@ -132,6 +133,7 @@ export default function contribute(client: PluginClientContext) {
     // Paseo's Attach menu lists sources in this order: Project sits right after Chat.
     client.addAttachmentSource(agentAttachmentSource),
     client.addAttachmentSource(knowledgeAttachmentSource),
+    client.addAttachmentSource(workspaceAttachmentSource),
     client.addAttachmentSource(terminalAttachmentSource),
     // Tagging no longer adds timeline rows; this still draws the rows v0.2.1 added.
     client.addTimelineRenderer({ kind: RECEIPT_KIND, version: 1, schema: receiptSchema, Component: (props) => <ReceiptRow {...props} openTags={openTagsFor} /> }),

@@ -4,7 +4,7 @@
 
 A [Paseo](https://paseo.sh) plugin that gives every agent searchable knowledge of its repository (architecture docs, conventions, ADRs, code symbols, and the tasks agents finished there), tags agents across workspaces and providers, fetches Jira, Sentry, Slack, and Notion items into tags, and attaches context to a prompt: a whole tag, another agent's conversation, terminal output, or a piece of project knowledge.
 
-Requires Paseo 0.13.
+Requires Paseo 0.17.4 or newer.
 
 ## Install
 
@@ -185,6 +185,12 @@ The knowledge tool server keeps listening so that agents already given it still 
 Paseo plugins cannot call each other, so this goes through files Memorise publishes for other plugins ([Memorise's INTEROP.md](https://github.com/monarchmaisuriya/memorise/blob/main/INTEROP.md)). Without Memorise, everything above the heading still works, and Settings > Contextualise says what installing, turning on, or updating Memorise would add.
 
 ## Attached projects
+
+The composer menu also offers **Attach > Workspace**. Picking a workspace adds a removable reference to your draft; it does not grant access yet. After you send, approve the `workspace_attach` tool call to persistently attach it to the receiving workspace. This applies to new workspaces too. Grants expire after one hour and cannot be reused after successful attachment. A worktree brings its exact checkout; a local workspace brings its recorded repositories, using the same checks as the Attached button. Already-running chats need **New Chat** or **Fork Chat** to receive new folder permissions.
+
+The **Attached** pill also offers **Chats**. Search and pick a chat to add the same snapshot as **Attach > Chat** to that exact chat's draft. Nothing is sent automatically, and no workspace link is created. The Project knowledge panel keeps its existing project/workspace controls without a Chats tab.
+
+Workspace-grant replay records are stored until expiry. Before downgrading to an older writer of `links.json`, stop workspace-grant redemption and wait one hour for outstanding grants to expire; older writers do not preserve these records. Existing links remain detachable through Attached.
 
 Attach another project to one workspace, and every new Claude, Codex, or OpenCode chat in that workspace can search, read, and edit it as well as its own folder: a frontend workspace with its backend, for example. Other workspaces, including other workspaces of the same project, are not affected.
 

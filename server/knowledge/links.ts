@@ -44,6 +44,7 @@ const fileSchema = z.object({
   workspaces: z.record(z.string(), z.array(linkSchema).max(MAX_LINKS)),
   attachedWorkspaces: z.record(z.string(), z.array(attachedWorkspaceSchema).max(MAX_LINKS)).default({}),
   usedGrants: z.array(z.string()).max(USED_GRANTS_KEPT).default([]),
+  spentWorkspaceGrants: z.array(z.object({ id: z.string().min(1).max(40), expires: z.string().datetime() })).default([]),
 });
 type LinksFile = z.infer<typeof fileSchema>;
 
@@ -91,7 +92,7 @@ export class WorkspaceLinks {
       if (Reflect.get(Object(error), "code") === "ENOENT") return null;
       throw error;
     });
-    if (text === null) return { version: 1, workspaces: {}, attachedWorkspaces: {}, usedGrants: [] };
+    if (text === null) return { version: 1, workspaces: {}, attachedWorkspaces: {}, usedGrants: [], spentWorkspaceGrants: [] };
     const parsed = fileSchema.safeParse(JSON.parse(text));
     if (!parsed.success) throw new Error(`${path} could not be read (${parsed.error.issues[0]?.message}); fix or remove it to clear attached projects`);
     return parsed.data;
@@ -154,6 +155,22 @@ export class WorkspaceLinks {
     return this.write((file) => {
       if (file.usedGrants.includes(id)) throw new Error("This attachment was already used to attach its project. Pick the project again in Attach > Project.");
       file.usedGrants = [...file.usedGrants, id].slice(-USED_GRANTS_KEPT);
+    });
+  }
+
+  applyWorkspaceGrant(workspaceId: string, grant: { id: string; expires: string }, target: { link: WorkspaceLink } | { workspace: AttachedWorkspace }, now: string): Promise<boolean> {
+    return this.write((file) => {
+      if (!Number.isFinite(Date.parse(grant.expires)) || Date.parse(grant.expires) <= Date.parse(now)) throw new Error("This workspace attachment has expired; pick it again in Attach > Workspace.");
+      file.spentWorkspaceGrants = file.spentWorkspaceGrants.filter((used) => Date.parse(used.expires) > Date.parse(now));
+      if (file.spentWorkspaceGrants.some((used) => used.id === grant.id)) throw new Error("This workspace attachment was already used; pick it again in Attach > Workspace.");
+      const links = file.workspaces[workspaceId] ?? [];
+      const attached = file.attachedWorkspaces[workspaceId] ?? [];
+      if ("link" in target ? links.some((link) => link.path === target.link.path) : attached.some((entry) => entry.workspaceId === target.workspace.workspaceId)) return false;
+      if (links.length + attached.length >= MAX_LINKS) throw new Error(`A workspace can attach at most ${MAX_LINKS} folders and workspaces; remove one first`);
+      if ("link" in target) file.workspaces[workspaceId] = [...links, target.link];
+      else file.attachedWorkspaces[workspaceId] = [...attached, target.workspace];
+      file.spentWorkspaceGrants.push(grant);
+      return true;
     });
   }
 

@@ -80,6 +80,35 @@ describe("WorkspaceLinks", () => {
     expect(JSON.parse(readFileSync(join(dir, "links.json"), "utf8")).workspaces.w1).toHaveLength(MAX_LINKS - 1);
   });
 
+  it("atomically spends workspace grants and remembers them beyond project grant eviction", async () => {
+    const grant = { id: "workspace-grant", expires: "2026-11-26T11:30:00.000Z" };
+    const now = "2026-11-26T11:00:00.000Z";
+    const entry = { workspaceId: "source", addedAt: now, folders: [], foldersAt: now };
+    expect(await links.applyWorkspaceGrant("receiver", grant, { workspace: entry }, now)).toBe(true);
+    for (let i = 0; i < 501; i += 1) await links.useGrant(`project-${i}`);
+    const reloaded = new WorkspaceLinks(async () => dir);
+    await expect(reloaded.applyWorkspaceGrant("outsider", grant, { workspace: entry }, now)).rejects.toThrow("already used");
+    expect((await reloaded.all()).attached.outsider).toBeUndefined();
+  });
+
+  it("leaves a workspace grant unspent after a full store rejects its link", async () => {
+    const now = "2026-11-26T11:00:00.000Z";
+    const grant = { id: "retryable", expires: "2026-11-26T11:30:00.000Z" };
+    for (let i = 0; i < MAX_LINKS; i += 1) await links.add("full", link(`/folder-${i}`));
+    await expect(links.applyWorkspaceGrant("full", grant, { link: link("/other") }, now)).rejects.toThrow("at most");
+    expect(await links.applyWorkspaceGrant("another", grant, { link: link("/other") }, now)).toBe(true);
+    await expect(links.applyWorkspaceGrant("empty", { id: "expired", expires: "2026-11-26T10:00:00.000Z" }, { link: link("/expired") }, now)).rejects.toThrow("expired");
+    expect(await links.list("empty")).toEqual([]);
+  });
+
+  it("does not consume a fresh grant for an existing workspace link", async () => {
+    const now = "2026-11-26T11:00:00.000Z";
+    const grant = { id: "unspent", expires: "2026-11-26T11:30:00.000Z" };
+    await links.add("receiver", link("/already"));
+    expect(await links.applyWorkspaceGrant("receiver", grant, { link: link("/already") }, now)).toBe(false);
+    expect(await links.applyWorkspaceGrant("other", grant, { link: link("/already") }, now)).toBe(true);
+  });
+
   it("drops a workspace from the file when its last link is removed, and serializes writes", async () => {
     await Promise.all([links.add("w1", link("/a")), links.add("w1", link("/b")), links.add("w2", link("/a"))]);
     expect((await links.list("w1")).map((found) => found.path).sort()).toEqual(["/a", "/b"]);

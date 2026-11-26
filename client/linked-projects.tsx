@@ -1,4 +1,5 @@
 import { useRpc } from "@getpaseo/plugin/client";
+import type { PluginAttachmentItem } from "@getpaseo/plugin";
 import { copyText, Icon, ScrollView, useToast } from "@getpaseo/plugin/client/ui";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -9,6 +10,7 @@ import { errorText } from "./errors";
 import { ICONS } from "./icons";
 import { Button, IconButton, ListRow, SearchField, Segmented, StateView, type Styles } from "./kit";
 import { broughtLine, projectMeta, workspaceRows } from "./workspace-rows";
+import { ChatAttachments } from "./chat-attachments";
 
 export const linksQuery = (workspaceId: string) => ["contextualise", "links", workspaceId];
 // Rows drawn at first; scrolling near the end of the list draws this many more.
@@ -40,7 +42,7 @@ const typedFolder = (text: string) => (/^[~/.]/.test(text.trim()) ? text.trim() 
 // One workspace's attached projects: the folders every new Claude, Codex, or OpenCode chat in it can read and
 // edit. Used by the composer pill's popover (with `agentId`, so it can start chats like that one) and
 // by the workspace panel.
-export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { workspaceId: string; agentId?: string; styles: Styles; openAgent?: (agentId: string) => void }) {
+export function LinkedProjects({ workspaceId, agentId, hostId, styles, openAgent, attachChat }: { workspaceId: string; agentId?: string; hostId?: string; styles: Styles; openAgent?: (agentId: string) => void; attachChat?: (item: PluginAttachmentItem) => "added" | "already-attached" }) {
   const queryClient = useQueryClient();
   const toast = useToast();
   const list = useRpc(workspaceLinksRpc);
@@ -78,7 +80,8 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
   // Attached rows: folders and whole workspaces, each one.
   const attachedCount = data ? links.length + attachedWorkspaces.length : null;
   const attachedFolders = [...links.map((link) => link.path), ...attachedWorkspaces.flatMap((entry) => entry.folders)];
-  const tab = shownTab(chosen, attachedCount);
+  const canAttachChat = Boolean(agentId && attachChat);
+  const tab = shownTab(chosen, attachedCount, canAttachChat);
   const words = search.trim().toLowerCase();
   const has = (...texts: (string | null)[]) => words === "" || texts.some((text) => text?.toLowerCase().includes(words));
   // One row shape for both tabs: a project by its folder; a workspace by its title (a local one is
@@ -114,7 +117,7 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
         </View>
       ) : null}
       <Segmented
-        options={attachTabs(attachedCount)}
+        options={attachTabs(attachedCount, canAttachChat)}
         value={tab}
         onChange={(next) => {
           lastTab = next;
@@ -123,9 +126,9 @@ export function LinkedProjects({ workspaceId, agentId, styles, openAgent }: { wo
         }}
         label="Attached button tabs"
         styles={styles}
-        stretch
+        stretch={!canAttachChat}
       />
-      {tab === "files" ? (
+      {tab === "chats" && agentId && attachChat ? <ChatAttachments hostId={hostId} agentId={agentId} workspaceId={workspaceId} styles={styles} attach={attachChat} /> : tab === "files" ? (
         <ProjectFiles workspaceId={workspaceId} attached={attachedFolders} maxHeight={listHeight(attachedCount ?? 0)} styles={styles} />
       ) : (
         <>

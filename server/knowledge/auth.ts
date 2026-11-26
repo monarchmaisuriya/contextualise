@@ -26,6 +26,7 @@ export type AgentScope = z.infer<typeof agentScopeSchema>;
 const grantSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("conversation"), agentId: z.string().min(1).max(200), upTo: z.string().min(1).max(40) }).strict(),
   z.object({ kind: z.literal("project"), repoKey: z.string().min(1).max(600), top: z.string().min(1).max(1_000), id: z.string().min(1).max(40), expires: z.string().min(1).max(40) }).strict(),
+  z.object({ kind: z.literal("workspace"), workspaceId: z.string().min(1).max(200), top: z.string().min(1).max(1_000), worktree: z.boolean(), id: z.string().min(1).max(40), expires: z.string().datetime() }).strict(),
   // Updates grants, for attachment_updates: what later changed in an attached chat or tag (after
   // `upTo`), terminal (after `lines`), or file (after `upTo`). Each has its own prefix, so no older
   // grant (a conversation grant in a transcript) becomes one. Like a project grant it can be copied
@@ -77,6 +78,10 @@ export class TokenAuthority {
 
   mintProjectGrant(repoKey: string, top: string, now = new Date()): string {
     return this.mintGrant({ kind: "project", repoKey, top, id: randomBytes(12).toString("base64url"), expires: new Date(now.getTime() + PROJECT_GRANT_MS).toISOString() });
+  }
+
+  mintWorkspaceGrant(workspaceId: string, top: string, worktree: boolean, now = new Date()): string {
+    return this.mintGrant({ kind: "workspace", workspaceId, top, worktree, id: randomBytes(12).toString("base64url"), expires: new Date(now.getTime() + PROJECT_GRANT_MS).toISOString() });
   }
 
   // A grant of the expected kind with a valid signature, or null.

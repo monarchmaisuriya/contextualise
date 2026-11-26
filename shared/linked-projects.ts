@@ -10,6 +10,11 @@ export const LINK_WORKSPACE_ENV = "CONTEXTUALISE_LINK_WORKSPACE";
 
 const workspaceInput = z.object({ workspaceId: z.string().min(1).max(200) });
 
+export const WORKSPACE_ATTACH_TOOL = "workspace_attach";
+export const WORKSPACE_GRANT_LABEL = `Attach grant (${WORKSPACE_ATTACH_TOOL}):`;
+export const searchWorkspacesRpc = defineRpc({ name: "links.workspaces-search", input: z.object({ query: z.string().max(500) }), output: PluginAttachmentSearchPayloadSchema });
+export const workspaceAttachmentSource = defineAttachmentSource({ id: "workspace", title: "Workspace", icon: "FolderGit2", pickerTitle: "Attach a workspace", searchPlaceholder: "Search workspaces by project, title, or branch", search: searchWorkspacesRpc });
+
 export const linkedProjectSchema = z.object({
   path: z.string(),
   name: z.string(),
