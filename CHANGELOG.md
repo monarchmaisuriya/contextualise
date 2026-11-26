@@ -2,6 +2,19 @@
 
 All notable changes follow [semantic versioning](https://semver.org).
 
+## 0.39.0 - 2026-11-26
+
+### Added
+
+- Attach > Workspace prepares a signed workspace reference without granting access while browsing. After sending, approve `workspace_attach` to create the existing persistent workspace link; new or forked chats receive its folder permissions.
+- The Attached pill's Chats tab adds the existing Chat snapshot to that exact chat's draft, with duplicate feedback and no automatic send.
+
+### Changed
+
+- Requires Paseo 0.17.4 for exact-agent composer attachment support; the build SDK remains pinned to 0.13.0.
+- Workspace grant spending and link creation persist atomically. Spent workspace grants are retained until expiry, independently of capped project-grant history. Before downgrade to an old links-file writer, stop workspace redemption and wait one hour for outstanding grants to expire.
+- The tampered-signature regression test flips a decoded signature byte instead of changing base64 padding bits, making tampering deterministic.
+
 ## 0.38.0 - 2026-11-24
 
 ### Changed

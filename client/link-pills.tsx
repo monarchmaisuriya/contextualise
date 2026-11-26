@@ -4,6 +4,7 @@ import { workspaceLinkCountRpc } from "../shared/linked-projects";
 import { ICONS } from "./icons";
 import { useStyles } from "./kit";
 import { LinkedProjects, onLinksChanged } from "./linked-projects";
+import { attachChat, supportsComposerAttachments } from "./composer-attachments";
 
 const PILL_ID = "linked-projects";
 
@@ -32,7 +33,7 @@ export function followLinkPills(client: PluginClientContext): () => void {
     return (
       // Paseo's popover already pads its content, as Shell Yeah's relies on; no second padding here.
       <View style={{ maxWidth: 420 }}>
-        <LinkedProjects workspaceId={props.workspaceId} agentId={props.agentId} styles={styles} openAgent={openAgent} />
+        <LinkedProjects key={`${props.host.id}:${props.workspaceId}:${props.agentId}`} hostId={props.host.id} workspaceId={props.workspaceId} agentId={props.agentId} styles={styles} openAgent={openAgent} attachChat={supportsComposerAttachments(client) ? (item) => attachChat(client, props.agentId, item) : undefined} />
       </View>
     );
   }

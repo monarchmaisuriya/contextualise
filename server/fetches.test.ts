@@ -149,14 +149,20 @@ test("no more workers run at once than the setting allows", async () => {
 
 test("a fetch started from an agent is reported to it when it ends, and its refresh reports to it again", async () => {
   const { sent, report } = reports();
-  const instance = fetcher(worker('{"found":true,"title":"Login fails","url":null,"text":"Status: open"}'), {}, report);
+  let completed: () => void;
+  let reported = new Promise<void>((resolve) => { completed = resolve; });
+  const instance = fetcher(worker('{"found":true,"title":"Login fails","url":null,"text":"Status: open"}'), {}, async (...args) => {
+    await report(...args);
+    completed();
+  });
   const { noteId } = await instance.start(paseo, "auth", { vendor: "jira", ref: "PROJ-1" }, undefined, "a1");
-  await settle();
+  await reported;
   expect(sent).toEqual([["a1", { tag: "auth", noteId, vendor: "jira", ref: "PROJ-1", title: "Login fails", status: "ready", error: null, chars: 12 }]]);
   expect((await store.read()).auth.notes[0].notifyAgentId).toBe("a1");
   // A refresh from anywhere (the Tags screen has no agent) reports to the agent stored on the note.
+  reported = new Promise<void>((resolve) => { completed = resolve; });
   await instance.refresh(paseo, "auth", noteId);
-  await settle();
+  await reported;
   expect(sent.map(([agentId, result]) => [agentId, result.noteId])).toEqual([
     ["a1", noteId],
     ["a1", noteId],

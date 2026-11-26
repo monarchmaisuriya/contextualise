@@ -34,12 +34,15 @@ Workspace context is loaded on demand: chats can find other chats in the same wo
 
 ## Attaching context
 
-Contextualise adds four attachment sources (Tag appears while tags are on):
+Contextualise adds five attachment sources (Tag appears while tags are on), on Paseo 0.17.4 or newer:
 
 - **Tag**: the tag's workspaces, links, and each tagged agent's most recent turns.
 - **Chat**: one agent's most recent turns, from any workspace or provider. Clicking the attachment opens that agent.
 - **Terminal output**: the newest lines of any terminal.
 - **Project**: a whole project, one document section, code symbol, or finished task from any indexed repository.
+- **Workspace**: a removable reference that grants no access until sent and approved with `workspace_attach`. It creates the same persistent workspace link as the Attached button; new folder permissions require a new or forked chat.
+
+The Attached pill's **Chats** tab also adds the existing Chat snapshot to that exact chat's draft. It does not send the message or create a persistent link. The workspace Project knowledge panel does not offer this composer-specific action.
 
 Files and folders of attached projects remain in the Attached pill's Project files tab. Picking one copies its path to paste into your message.
 

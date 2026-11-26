@@ -80,11 +80,11 @@ test("every name the plugin registers in the app is one Paseo accepts", async ()
   await settled();
   expect(names("timeline renderer kind")).toEqual(["receipt", "history-note", "fetch-result"]);
   // Project files stay in the Attached pill, not in the host-wide attachment menu.
-  expect(names("addAttachmentSource").sort()).toEqual(["agent", "knowledge", "tag", "terminal"]);
+  expect(names("addAttachmentSource").sort()).toEqual(["agent", "knowledge", "tag", "terminal", "workspace"]);
   expect(calls).not.toContain("links.files-available");
   // Paseo lists sources in registration order: Project (knowledge) stays right after Chat, and Tag,
   // added once the settings are read, comes after the sources registered at start.
-  expect(names("addAttachmentSource")).toEqual(["agent", "knowledge", "terminal", "tag"]);
+  expect(names("addAttachmentSource")).toEqual(["agent", "knowledge", "workspace", "terminal", "tag"]);
   expect(names("addCommandCenterItem")).toEqual(["pin-agent", "unpin-agent", "open-knowledge", "open-workspace-knowledge", "tag-agent", "open-tags"]);
   expect(names("slash command name")).toEqual(["history", "tag", "untag", "tag-link", "tag-fetch"]);
   expect(names("addWorkspacePanel")).toEqual(["knowledge"]);
